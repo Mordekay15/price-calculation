@@ -197,17 +197,17 @@ def _render_sheet_usage(lookup: dict, material: str, thickness: str,
     for _size_label, sw, sh, price_per_tonne in candidates:
         sheets, failed  = pack(pieces, sw, sh, allow_rotation=True)
         summary         = summarise(sw, sh, sheets, len(failed))
+        has_failures    = summary["failed_pieces"] > 0
         sheet_weight_kg = sw * sh * thickness_mm * STEEL_DENSITY_KG_PER_MM3
         total_kg        = sheet_weight_kg * summary["sheets_needed"]
         total_eur       = total_kg * (price_per_tonne / 1000)
         rows.append({
             "Sheet size":     f"{_fmt_m(sw)} × {_fmt_m(sh)} m",
             "Price (€/tn)":   f"{price_per_tonne:,.2f}",
-            "Sheets needed":  summary["sheets_needed"],
-            "Pieces too big": summary["failed_pieces"],
-            "Utilisation":    f"{summary['utilization'] * 100:.1f} %",
-            "Sheet kg":       round(total_kg, 2),
-            "Total €":        round(total_eur, 2),
+            "Sheets needed":  "" if has_failures else summary["sheets_needed"],
+            "Utilisation":    "" if has_failures else f"{summary['utilization'] * 100:.1f} %",
+            "Sheet kg":       "" if has_failures else round(total_kg, 2),
+            "Total €":        "" if has_failures else round(total_eur, 2),
             "_total":         total_eur,
             "_failed":        summary["failed_pieces"],
         })
@@ -233,9 +233,3 @@ def _render_sheet_usage(lookup: dict, material: str, thickness: str,
         for r in rows
     ]
     st.dataframe(display_rows, use_container_width=True, hide_index=True)
-
-    if any(r["_failed"] > 0 for r in rows):
-        st.warning(
-            "Some pieces are larger than certain sheet sizes — those sheet "
-            "sizes cannot fulfil the order on their own."
-        )
