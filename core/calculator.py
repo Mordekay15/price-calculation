@@ -9,6 +9,7 @@ To add a new calculation type (e.g. weight-based, area-based):
 """
 
 THICKNESS_KEY = "Paksuus (mm)"
+STEEL_DENSITY_KG_PER_MM3 = 7.85e-6  # 7.85 g/cm³ expressed in kg/mm³
 
 
 # ── Lookup builder ────────────────────────────────────────────────────────────
@@ -35,7 +36,7 @@ def build_lookup(data: dict) -> dict:
 def thickness_sort_key(t: str) -> float:
     """Sort thickness strings numerically, push non-numeric ones to the end."""
     try:
-        return float(t.replace(",", ".").split("x")[0]) if t and t[0].isdigit() else 999
+        return float(t.replace(",", ".").split("/")[0].split("x")[0]) if t and t[0].isdigit() else 999
     except (ValueError, IndexError):
         return 999
 
@@ -51,6 +52,53 @@ def sorted_thicknesses(lookup: dict, product: str | None = None) -> list[str]:
     else:
         items = [t for (t, _) in lookup]
     return sorted(set(items), key=thickness_sort_key)
+
+
+# ── Material / size helpers ───────────────────────────────────────────────────
+
+def extract_material_and_size(product_label: str) -> tuple[str, str]:
+    """Split 'Material | Size' label into (material, size). Size is '' when absent."""
+    if " | " in product_label:
+        mat, sz = product_label.split(" | ", 1)
+        return mat.strip(), sz.strip()
+    return product_label, ""
+
+
+def get_materials(lookup: dict) -> list[str]:
+    """Sorted list of unique material names."""
+    return sorted({extract_material_and_size(lbl)[0] for (_, lbl) in lookup})
+
+
+def get_sizes_for_material(lookup: dict, material: str) -> list[str]:
+    """Sorted list of available sizes for a given material."""
+    sizes = {
+        extract_material_and_size(lbl)[1]
+        for (_, lbl) in lookup
+        if extract_material_and_size(lbl)[0] == material
+    }
+    sizes.discard("")
+    return sorted(sizes)
+
+
+def get_thicknesses_for_material_size(lookup: dict, material: str, size: str) -> list[str]:
+    """Sorted thicknesses available for the given material + size combination."""
+    target = f"{material} | {size}" if size else material
+    return sorted({t for (t, lbl) in lookup if lbl == target}, key=thickness_sort_key)
+
+
+# ── Weight calculation ────────────────────────────────────────────────────────
+
+def parse_thickness_mm(thickness_str: str) -> float | None:
+    """Convert a thickness label like '0,7/0,75' or '1,25' to mm as float."""
+    try:
+        return float(thickness_str.replace(",", ".").split("/")[0].split("x")[0])
+    except (ValueError, IndexError, AttributeError):
+        return None
+
+
+def piece_weight_kg(width_mm: float, height_mm: float, thickness_mm: float) -> float:
+    """Weight of a rectangular steel plate in kg (density 7.85 g/cm³)."""
+    return width_mm * height_mm * thickness_mm * STEEL_DENSITY_KG_PER_MM3
 
 
 # ── Price calculation ─────────────────────────────────────────────────────────
