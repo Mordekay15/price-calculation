@@ -16,7 +16,7 @@ import pathlib
 
 import streamlit as st
 from core.parser import parse_pdf
-from view import calculator, tables
+from view import calculator
 
 DATA_FILE = pathlib.Path("price_data.json")
 
@@ -24,19 +24,24 @@ DATA_FILE = pathlib.Path("price_data.json")
 
 st.set_page_config(
     page_title="Stremet Price Tool",
-    page_icon="🏗️",
     layout="wide",
 )
 
-st.title("🏗️ Stremet Price Tool")
+st.title("Stremet Price Tool")
 
 # ── Persistent storage helpers ────────────────────────────────────────────────
 
+@st.cache_resource
+def _load_stored_data_cached(mtime: float) -> dict | None:
+    """Load JSON keyed by file mtime so the cache auto-invalidates on save."""
+    with open(DATA_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 def load_stored_data() -> dict | None:
-    if DATA_FILE.exists():
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return None
+    if not DATA_FILE.exists():
+        return None
+    return _load_stored_data_cached(DATA_FILE.stat().st_mtime)
 
 
 def save_data(data: dict, filename: str) -> dict:
@@ -67,7 +72,7 @@ with st.sidebar:
     )
 
     if uploaded:
-        with st.spinner("Parsing PDF…"):
+        with st.spinner("Parsing PDF... this may take a few seconds"):
             parsed = parse_pdf(uploaded.read())
             stored = save_data(parsed, uploaded.name)
         st.success(f"Saved price data from **{uploaded.name}**.")
@@ -81,18 +86,6 @@ if stored is None:
 
 data = stored["data"]
 
-# ── Tabs ──────────────────────────────────────────────────────────────────────
+# ── Main content ──────────────────────────────────────────────────────────────
 
-tab_calc, tab_thin, tab_thick, tab_forecast, tab_extra = st.tabs([
-    "🧮 Price calculator",
-    "📋 Thin sheets",
-    "📋 Thick sheets",
-    "📦 Forecast",
-    "➕ Surcharges",
-])
-
-with tab_calc:     calculator.render(data)
-with tab_thin:     tables.render_thin_sheets(data)
-with tab_thick:    tables.render_thick_sheets(data)
-with tab_forecast: tables.render_forecast(data)
-with tab_extra:    tables.render_surcharges(data)
+calculator.render(data)
