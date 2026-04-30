@@ -4,11 +4,11 @@ view/calculator.py
 Price calculator tab.
 
 Flow:
-  1. User picks a material name.
+  1. User picks a material name (placeholder shown until chosen).
   2. Available sizes for that material appear.
   3. Available thicknesses for that material+size appear.
-  4. Price per tonne and per kg is displayed.
-  5. User adds one or more products (width × height in mm).
+  4. Price per tonne and per kg appears to the right of the selectors.
+  5. User adds products (width × height in mm, default 0).
      Weight and cost are calculated per piece and in total.
 """
 
@@ -22,7 +22,10 @@ from core.calculator import (
     piece_weight_kg,
 )
 
-_DEFAULT_PRODUCT = {"width": 1000.0, "height": 2000.0, "qty": 1}
+_PLACEHOLDER_MAT   = "— Select material —"
+_PLACEHOLDER_SIZE  = "— Select size —"
+_PLACEHOLDER_THICK = "— Select thickness —"
+_DEFAULT_PRODUCT   = {"width": 0.0, "height": 0.0, "qty": 1}
 
 
 def _init_products() -> None:
@@ -39,45 +42,61 @@ def render(data: dict) -> None:
 
     st.subheader("Price calculator")
 
-    # ── Step 1: Material ──────────────────────────────────────────────────────
+    # ── Selectors (left) + Price (right) ─────────────────────────────────────
 
-    materials = get_materials(lookup)
-    material = st.selectbox("1. Material", materials)
+    col_sel, col_price = st.columns([3, 2])
+    price_per_tonne = None
+    price_per_kg    = None
+    thickness_mm    = None
+    material        = None
+    size            = None
+    thickness       = None
 
-    # ── Step 2: Size ──────────────────────────────────────────────────────────
+    with col_sel:
+        # Step 1 — material
+        mat_opts = [_PLACEHOLDER_MAT] + get_materials(lookup)
+        mat_raw  = st.selectbox("1. Material", mat_opts, index=0)
+        if mat_raw != _PLACEHOLDER_MAT:
+            material = mat_raw
 
-    sizes = get_sizes_for_material(lookup, material)
-    if sizes:
-        size = st.selectbox("2. Sheet size", sizes)
-    else:
-        size = ""
-        st.caption("No size variants available for this material.")
+        # Step 2 — size (only when material chosen)
+        if material is not None:
+            sizes = get_sizes_for_material(lookup, material)
+            if sizes:
+                sz_opts = [_PLACEHOLDER_SIZE] + sizes
+                sz_raw  = st.selectbox("2. Sheet size", sz_opts, index=0)
+                if sz_raw != _PLACEHOLDER_SIZE:
+                    size = sz_raw
+            else:
+                size = ""  # material has no size variants; skip step
 
-    # ── Step 3: Thickness ─────────────────────────────────────────────────────
+        # Step 3 — thickness (only when size resolved)
+        if material is not None and size is not None:
+            thicknesses = get_thicknesses_for_material_size(lookup, material, size)
+            if thicknesses:
+                th_opts = [_PLACEHOLDER_THICK] + thicknesses
+                th_raw  = st.selectbox("3. Thickness (mm)", th_opts, index=0)
+                if th_raw != _PLACEHOLDER_THICK:
+                    thickness = th_raw
 
-    thicknesses = get_thicknesses_for_material_size(lookup, material, size)
-    if not thicknesses:
-        st.warning("No price data found for this combination.")
-        return
+    # ── Price panel (right) ───────────────────────────────────────────────────
 
-    thickness = st.selectbox("3. Thickness (mm)", thicknesses)
+    with col_price:
+        if thickness is not None:
+            target_label    = f"{material} | {size}" if size else material
+            price_per_tonne = lookup.get((thickness, target_label))
 
-    # ── Price display ─────────────────────────────────────────────────────────
+            if price_per_tonne is not None:
+                price_per_kg = price_per_tonne / 1000
+                thickness_mm = parse_thickness_mm(thickness)
+                st.markdown("#### Price")
+                st.metric("€ / tonne", f"{price_per_tonne:,.2f}")
+                st.metric("€ / kg",    f"{price_per_kg:.4f}")
 
-    target_label = f"{material} | {size}" if size else material
-    price_per_tonne = lookup.get((thickness, target_label))
+    # ── Guard: wait for full selection before showing products ─────────────────
 
     if price_per_tonne is None:
-        st.warning("No price found for this combination.")
         return
-
-    price_per_kg = price_per_tonne / 1000
-    thickness_mm = parse_thickness_mm(thickness)
-
-    st.divider()
-    c1, c2 = st.columns(2)
-    c1.metric("Price (€/tonne)", f"{price_per_tonne:,.2f}")
-    c2.metric("Price (€/kg)", f"{price_per_kg:.4f}")
 
     # ── Products ──────────────────────────────────────────────────────────────
 
@@ -91,13 +110,10 @@ def render(data: dict) -> None:
 
     _init_products()
 
-    if st.button("＋ Add product"):
-        st.session_state.calc_products.append(_DEFAULT_PRODUCT.copy())
-
-    to_delete = None
+    to_delete       = None
     total_weight_kg = 0.0
-    total_cost_eur = 0.0
-    table_rows = []
+    total_cost_eur  = 0.0
+    table_rows      = []
 
     for i, prod in enumerate(st.session_state.calc_products):
         with st.container():
@@ -109,11 +125,11 @@ def render(data: dict) -> None:
 
             inp_cols = st.columns(3)
             w = inp_cols[0].number_input(
-                "Width (mm)", min_value=1.0, value=float(prod["width"]),
+                "Width (mm)", min_value=0.0, value=float(prod["width"]),
                 step=10.0, key=f"w_{i}",
             )
             h = inp_cols[1].number_input(
-                "Height (mm)", min_value=1.0, value=float(prod["height"]),
+                "Height (mm)", min_value=0.0, value=float(prod["height"]),
                 step=10.0, key=f"h_{i}",
             )
             q = inp_cols[2].number_input(
@@ -121,29 +137,35 @@ def render(data: dict) -> None:
                 step=1, key=f"q_{i}",
             )
 
-            st.session_state.calc_products[i]["width"] = w
+            st.session_state.calc_products[i]["width"]  = w
             st.session_state.calc_products[i]["height"] = h
-            st.session_state.calc_products[i]["qty"] = q
+            st.session_state.calc_products[i]["qty"]    = q
 
-            if thickness_mm:
-                one_weight = piece_weight_kg(w, h, thickness_mm)
+            if thickness_mm and w > 0 and h > 0:
+                one_weight   = piece_weight_kg(w, h, thickness_mm)
                 batch_weight = one_weight * q
-                batch_cost = batch_weight * price_per_kg
+                batch_cost   = batch_weight * price_per_kg
                 total_weight_kg += batch_weight
-                total_cost_eur += batch_cost
+                total_cost_eur  += batch_cost
                 table_rows.append({
-                    "#": i + 1,
-                    "Width (mm)": w,
+                    "#":           i + 1,
+                    "Width (mm)":  w,
                     "Height (mm)": h,
-                    "Qty (pcs)": q,
-                    "kg/pc": round(one_weight, 3),
-                    "Total kg": round(batch_weight, 3),
-                    "Total €": round(batch_cost, 2),
+                    "Qty (pcs)":   q,
+                    "kg/pc":       round(one_weight,   3),
+                    "Total kg":    round(batch_weight, 3),
+                    "Total €":     round(batch_cost,   2),
                 })
                 res_cols = st.columns(3)
                 res_cols[0].caption(f"Per piece: **{one_weight:.3f} kg**")
                 res_cols[1].caption(f"Batch weight: **{batch_weight:.3f} kg**")
                 res_cols[2].caption(f"Batch cost: **{batch_cost:.2f} €**")
+
+    # ── Add product button (below the list) ───────────────────────────────────
+
+    if st.button("＋ Add product"):
+        st.session_state.calc_products.append(_DEFAULT_PRODUCT.copy())
+        st.rerun()
 
     if to_delete is not None:
         st.session_state.calc_products.pop(to_delete)
@@ -156,6 +178,6 @@ def render(data: dict) -> None:
         st.markdown("**Summary**")
         t1, t2 = st.columns(2)
         t1.metric("Total weight (kg)", f"{total_weight_kg:.3f}")
-        t2.metric("Total cost (€)", f"{total_cost_eur:.2f}")
+        t2.metric("Total cost (€)",    f"{total_cost_eur:.2f}")
 
         st.dataframe(table_rows, use_container_width=True, hide_index=True)
