@@ -32,11 +32,17 @@ st.title("🏗️ Stremet Price Tool")
 
 # ── Persistent storage helpers ────────────────────────────────────────────────
 
+@st.cache_resource
+def _load_stored_data_cached(mtime: float) -> dict | None:
+    """Load JSON keyed by file mtime so the cache auto-invalidates on save."""
+    with open(DATA_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 def load_stored_data() -> dict | None:
-    if DATA_FILE.exists():
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return None
+    if not DATA_FILE.exists():
+        return None
+    return _load_stored_data_cached(DATA_FILE.stat().st_mtime)
 
 
 def save_data(data: dict, filename: str) -> dict:
@@ -67,7 +73,7 @@ with st.sidebar:
     )
 
     if uploaded:
-        with st.spinner("Parsing PDF…"):
+        with st.spinner("Parsing PDF… this may take a few seconds"):
             parsed = parse_pdf(uploaded.read())
             stored = save_data(parsed, uploaded.name)
         st.success(f"Saved price data from **{uploaded.name}**.")

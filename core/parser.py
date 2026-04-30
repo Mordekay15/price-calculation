@@ -10,7 +10,6 @@ To add support for a new PDF layout:
 
 import io
 import pdfplumber
-import streamlit as st
 
 
 # ── Low-level helpers ─────────────────────────────────────────────────────────
@@ -114,7 +113,6 @@ def parse_special(table: list) -> list[dict]:
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-@st.cache_data(show_spinner="Parsing PDF…")
 def parse_pdf(file_bytes: bytes) -> dict:
     """
     Parse a Stremet / Tata Steel price list PDF.
