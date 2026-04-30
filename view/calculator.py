@@ -130,7 +130,7 @@ def render(data: dict) -> None:
             hdr_cols = st.columns([6, 1])
             hdr_cols[0].markdown(f"**Product {i + 1}**")
             if len(st.session_state.calc_products) > 1:
-                if hdr_cols[1].button("✕ Remove", key=f"del_{i}"):
+                if hdr_cols[1].button("Remove", key=f"del_{i}"):
                     to_delete = i
 
             inp_cols = st.columns(3)
@@ -173,7 +173,7 @@ def render(data: dict) -> None:
 
     # ── Add product button (below the list) ───────────────────────────────────
 
-    if st.button("＋ Add product"):
+    if st.button("+ Add product"):
         st.session_state.calc_products.append(_DEFAULT_PRODUCT.copy())
         st.rerun()
 
