@@ -53,31 +53,41 @@ def render(data: dict) -> None:
     thickness       = None
 
     with col_sel:
-        # Step 1 — material
+        # Material
         mat_opts = [_PLACEHOLDER_MAT] + get_materials(lookup)
         mat_raw  = st.selectbox("1. Material", mat_opts, index=0)
         if mat_raw != _PLACEHOLDER_MAT:
             material = mat_raw
 
-        # Step 2 — size (only when material chosen)
+        # Size — always shown; options depend on material selection
         if material is not None:
             sizes = get_sizes_for_material(lookup, material)
-            if sizes:
-                sz_opts = [_PLACEHOLDER_SIZE] + sizes
-                sz_raw  = st.selectbox("2. Sheet size", sz_opts, index=0)
-                if sz_raw != _PLACEHOLDER_SIZE:
-                    size = sz_raw
-            else:
-                size = ""  # material has no size variants; skip step
+        else:
+            sizes = []
 
-        # Step 3 — thickness (only when size resolved)
+        if sizes:
+            sz_opts = [_PLACEHOLDER_SIZE] + sizes
+            sz_raw  = st.selectbox("2. Sheet size", sz_opts, index=0)
+            if sz_raw != _PLACEHOLDER_SIZE:
+                size = sz_raw
+        elif material is not None:
+            size = ""  # material has no size variants
+        else:
+            st.selectbox("2. Sheet size", [_PLACEHOLDER_SIZE], index=0, disabled=True)
+
+        # Thickness — always shown; options depend on material + size
         if material is not None and size is not None:
             thicknesses = get_thicknesses_for_material_size(lookup, material, size)
-            if thicknesses:
-                th_opts = [_PLACEHOLDER_THICK] + thicknesses
-                th_raw  = st.selectbox("3. Thickness (mm)", th_opts, index=0)
-                if th_raw != _PLACEHOLDER_THICK:
-                    thickness = th_raw
+        else:
+            thicknesses = []
+
+        if thicknesses:
+            th_opts = [_PLACEHOLDER_THICK] + thicknesses
+            th_raw  = st.selectbox("3. Thickness (mm)", th_opts, index=0)
+            if th_raw != _PLACEHOLDER_THICK:
+                thickness = th_raw
+        else:
+            st.selectbox("3. Thickness (mm)", [_PLACEHOLDER_THICK], index=0, disabled=True)
 
     # ── Price panel (right) ───────────────────────────────────────────────────
 
