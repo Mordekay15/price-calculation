@@ -1,4 +1,19 @@
 """
+Parsed price data is saved to disk (price_data.json) so it persists across
+sessions. Upload a new PDF only when the monthly price list is updated — the
+upload widget lives in the sidebar.
+
+Install & run:
+    pip install streamlit pdfplumber
+    streamlit run app.py
+"""
+
+import io
+import csv
+import json
+import datetime
+import pathlib
+import pdfplumber
 app.py
 ======
 Entry point — only responsible for:
@@ -15,6 +30,8 @@ import streamlit as st
 from core.parser import parse_pdf
 from view import calculator, tables
 
+DATA_FILE = pathlib.Path("price_data.json")
+
 # ── Page config ───────────────────────────────────────────────────────────────
 
 st.set_page_config(
@@ -24,14 +41,13 @@ st.set_page_config(
 )
 
 st.title("🏗️ Stremet Price Tool")
-st.caption("Upload a Tata Steel / Stremet PDF price list to get started.")
 
 # ── File upload ───────────────────────────────────────────────────────────────
 
-uploaded = st.file_uploader("Upload PDF price list", type="pdf")
+stored = load_stored_data()
 
-if not uploaded:
-    st.info("Upload a PDF to continue.")
+if stored is None:
+    st.info("No price data found. Upload a PDF in the sidebar to get started.")
     st.stop()
 
 data = parse_pdf(uploaded.read())
