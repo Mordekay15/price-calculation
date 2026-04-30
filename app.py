@@ -1,11 +1,9 @@
 """
 Stremet Price Tool — Streamlit App
 ===================================
-Upload any Tata Steel / Stremet price list PDF and:
-  - Browse all extracted pricing tables
-  - Calculate total cost for any material + quantity
-  - Apply margin, currency conversion, or custom multiplier
-  - Download results as CSV
+Parsed price data is saved to disk (price_data.json) so it persists across
+sessions. Upload a new PDF only when the monthly price list is updated — the
+upload widget lives in the sidebar.
 
 Install & run:
     pip install streamlit pdfplumber
@@ -14,8 +12,13 @@ Install & run:
 
 import io
 import csv
+import json
+import datetime
+import pathlib
 import pdfplumber
 import streamlit as st
+
+DATA_FILE = pathlib.Path("price_data.json")
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -26,7 +29,6 @@ st.set_page_config(
 )
 
 st.title("🏗️ Stremet Price Tool")
-st.caption("Upload a Tata Steel / Stremet PDF price list to get started.")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -49,9 +51,26 @@ def rows_to_csv_bytes(rows):
     writer.writerows(rows)
     return buf.getvalue().encode("utf-8-sig")
 
+# ── Persistent storage ────────────────────────────────────────────────────────
+
+def load_stored_data():
+    if DATA_FILE.exists():
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return None
+
+def save_data(data, filename):
+    payload = {
+        "data": data,
+        "source_file": filename,
+        "updated_at": datetime.datetime.now().isoformat(timespec="seconds"),
+    }
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    return payload
+
 # ── PDF parser ────────────────────────────────────────────────────────────────
 
-@st.cache_data(show_spinner="Parsing PDF…")
 def parse_pdf(file_bytes):
     thin_rows   = []
     thick_rows  = []
@@ -142,7 +161,6 @@ def parse_pdf(file_bytes):
 # ── Build flat price lookup for the calculator ────────────────────────────────
 
 def build_price_lookup(data):
-    """Returns a dict: (thickness, product_label) -> price_eur_per_ton"""
     lookup = {}
     for row in data["thin"]:
         t = row["Paksuus (mm)"]
@@ -161,18 +179,34 @@ def build_price_lookup(data):
                 lookup[(t, col)] = val
     return lookup
 
-# ── File upload ───────────────────────────────────────────────────────────────
+# ── Sidebar — monthly PDF update ──────────────────────────────────────────────
 
-uploaded = st.file_uploader("Upload PDF price list", type="pdf")
+with st.sidebar:
+    st.header("Update price list")
+    st.caption("Upload a new PDF when the monthly price list arrives.")
+    uploaded = st.file_uploader("PDF price list", type="pdf", label_visibility="collapsed")
 
-if not uploaded:
-    st.info("Upload a PDF to continue.")
+    if uploaded:
+        with st.spinner("Parsing PDF…"):
+            parsed = parse_pdf(uploaded.read())
+        payload = save_data(parsed, uploaded.name)
+        st.success(f"Saved — {uploaded.name}")
+        st.rerun()
+
+# ── Load data (from disk or prompt first upload) ──────────────────────────────
+
+stored = load_stored_data()
+
+if stored is None:
+    st.info("No price data found. Upload a PDF in the sidebar to get started.")
     st.stop()
 
-data   = parse_pdf(uploaded.read())
+data   = stored["data"]
 lookup = build_price_lookup(data)
 
-st.success("PDF parsed successfully.")
+updated_at  = stored.get("updated_at", "unknown")
+source_file = stored.get("source_file", "unknown")
+st.caption(f"Price list: **{source_file}** — last updated {updated_at}")
 st.divider()
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
@@ -191,7 +225,7 @@ with tab_calc:
     st.subheader("Price calculator")
     st.caption("Pick a material, enter quantity, and apply any adjustments.")
 
-    all_products   = sorted(set(label for (_, label) in lookup.keys()))
+    all_products    = sorted(set(label for (_, label) in lookup.keys()))
     all_thicknesses = sorted(set(t for (t, _) in lookup.keys()),
                              key=lambda x: float(x.replace(",", ".").split("x")[0]) if x[0].isdigit() else 999)
 
@@ -236,14 +270,13 @@ with tab_calc:
 
         st.divider()
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Base price (€/tn)",      f"{base_price:,.2f}")
+        m1.metric("Base price (€/tn)",       f"{base_price:,.2f}")
         m2.metric("After margin & surcharge", f"{price_with_surcharge:,.2f}")
-        m3.metric("After currency adj.",     f"{price_converted:,.2f}")
+        m3.metric("After currency adj.",      f"{price_converted:,.2f}")
         m4.metric(f"Total for {quantity} tn", f"{total_cost:,.2f}")
 
         st.divider()
 
-        # Comparison table across all thicknesses for this product
         st.markdown(f"**All thicknesses for** *{product}*")
         comp_rows = []
         for t in available:
