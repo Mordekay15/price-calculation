@@ -21,6 +21,7 @@ from core.calculator import (
     parse_thickness_mm,
     piece_weight_kg,
 )
+from core.nesting import expand_products, pack, parse_size, summarise
 
 _PLACEHOLDER_MAT   = "— Select material —"
 _PLACEHOLDER_SIZE  = "— Select size —"
@@ -191,3 +192,84 @@ def render(data: dict) -> None:
         t2.metric("Total cost (€)",    f"{total_cost_eur:.2f}")
 
         st.dataframe(table_rows, use_container_width=True, hide_index=True)
+
+        _render_sheet_usage(
+            lookup=lookup,
+            material=material,
+            thickness=thickness,
+            thickness_mm=thickness_mm,
+        )
+
+
+# ── Sheet usage comparison ────────────────────────────────────────────────────
+
+def _render_sheet_usage(lookup: dict, material: str, thickness: str,
+                        thickness_mm: float) -> None:
+    """
+    Compare every sheet size available for the chosen material + thickness:
+    how many physical sheets are needed for the entered products, sheet
+    utilisation, and the cost of buying that many whole sheets.
+    """
+    products = st.session_state.get("calc_products", [])
+    pieces   = expand_products(products)
+    if not pieces:
+        return
+
+    candidates: list[tuple[str, int, int, float]] = []
+    for size_label in get_sizes_for_material(lookup, material):
+        price = lookup.get((thickness, f"{material} | {size_label}"))
+        if price is None:
+            continue
+        for w_mm, h_mm in parse_size(size_label):
+            candidates.append((size_label, w_mm, h_mm, price))
+
+    if not candidates:
+        return
+
+    st.divider()
+    st.markdown("**Sheet usage** — how many sheets to buy")
+    st.caption(
+        "Pieces from different products share leftover space on the same sheet "
+        "(rotation allowed). Packing is a greedy heuristic, so real-world "
+        "savings may be slightly better with manual nesting."
+    )
+
+    rows = []
+    for size_label, sw, sh, price_per_tonne in candidates:
+        sheets, failed = pack(pieces, sw, sh, allow_rotation=True)
+        summary = summarise(sw, sh, sheets, len(failed))
+        sheet_weight_kg = sw * sh * thickness_mm * 7.85e-6
+        total_kg        = sheet_weight_kg * summary["sheets_needed"]
+        total_eur       = total_kg * (price_per_tonne / 1000)
+        rows.append({
+            "Sheet size":     f"{sw}×{sh} mm",
+            "Price (€/tn)":   f"{price_per_tonne:,.2f}",
+            "Sheets needed":  summary["sheets_needed"],
+            "Pieces too big": summary["failed_pieces"],
+            "Utilisation":    f"{summary['utilization'] * 100:.1f} %",
+            "Sheet kg":       round(total_kg, 2),
+            "Total €":        round(total_eur, 2),
+            "_total":         total_eur,
+            "_failed":        summary["failed_pieces"],
+        })
+
+    valid_rows = [r for r in rows if r["_failed"] == 0]
+    if valid_rows:
+        cheapest = min(valid_rows, key=lambda r: r["_total"])
+        for r in rows:
+            r["Best"] = "◀" if r is cheapest else ""
+    else:
+        for r in rows:
+            r["Best"] = ""
+
+    display_rows = [
+        {k: v for k, v in r.items() if not k.startswith("_")}
+        for r in rows
+    ]
+    st.dataframe(display_rows, use_container_width=True, hide_index=True)
+
+    if any(r["_failed"] > 0 for r in rows):
+        st.warning(
+            "Some pieces are larger than certain sheet sizes — those sheet "
+            "sizes cannot fulfil the order on their own."
+        )
