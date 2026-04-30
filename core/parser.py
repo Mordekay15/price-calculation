@@ -77,12 +77,12 @@ def parse_thick_sheets(table: list) -> list[dict]:
         if not thickness:
             continue
         rows.append({
-            "Paksuus (mm)":                   thickness,
-            "S355MC P+O | 1250x2500":         to_float(row[1]),
-            "S355MC P+O | 1500x3000":         to_float(row[2]),
-            "S355MC | 1500x3000":             to_float(row[3]),
-            "S650MC P+O | 1500x3000":         to_float(row[4]),
-            "S650MC | 1500x3000":             to_float(row[5]),
+            "Paksuus (mm)":                             thickness,
+            "Kuumavalssattu S355MC P+O | 1250x2500":    to_float(row[1]),
+            "Kuumavalssattu S355MC P+O | 1500x3000":    to_float(row[2]),
+            "Kuumavalssattu S355MC | 1500x3000":        to_float(row[3]),
+            "Kuumavalssattu S650MC P+O | 1500x3000":    to_float(row[4]),
+            "Kuumavalssattu S650MC | 1500x3000":        to_float(row[5]),
         })
     return rows
 
