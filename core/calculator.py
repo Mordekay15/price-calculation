@@ -86,6 +86,15 @@ def get_thicknesses_for_material_size(lookup: dict, material: str, size: str) ->
     return sorted({t for (t, lbl) in lookup if lbl == target}, key=thickness_sort_key)
 
 
+def get_thicknesses_for_material(lookup: dict, material: str) -> list[str]:
+    """Sorted thicknesses available for a material across all of its sizes."""
+    thicks = {
+        t for (t, lbl) in lookup
+        if extract_material_and_size(lbl)[0] == material
+    }
+    return sorted(thicks, key=thickness_sort_key)
+
+
 # ── Weight calculation ────────────────────────────────────────────────────────
 
 def parse_thickness_mm(thickness_str: str) -> float | None:
