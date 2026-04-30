@@ -99,7 +99,7 @@ def render(data: dict) -> None:
             if price_per_tonne is not None:
                 price_per_kg = price_per_tonne / 1000
                 thickness_mm = parse_thickness_mm(thickness)
-                st.markdown("#### Price")
+                st.markdown("**Price**")
                 st.metric("€ / tonne", f"{price_per_tonne:,.2f}")
                 st.metric("€ / kg",    f"{price_per_kg:.4f}")
 
