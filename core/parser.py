@@ -1,11 +1,11 @@
 """
 core/parser.py
 ==============
-Extracts all pricing tables from a Tata Steel / Stremet PDF.
+Extracts pricing tables from supplier PDFs.
 
-To add support for a new PDF layout:
-  - Add a new parse_* function below
-  - Call it from parse_pdf() based on page count or a header keyword
+Each supplier has its own parser:
+  - parse_stremet_pdf  → Tata Steel / Stremet monthly price list
+  - parse_tibnor_pdf   → Tibnor / Stremet Oy monthly price list
 """
 
 import io
@@ -28,7 +28,7 @@ def to_float(value: str | None) -> float | None:
         return None
 
 
-# ── Page-level parsers ────────────────────────────────────────────────────────
+# ── Tata Steel / Stremet — page-level parsers ─────────────────────────────────
 
 def parse_forecast(page) -> list[dict]:
     """Page 2 — quantity forecast table."""
@@ -111,15 +111,13 @@ def parse_special(table: list) -> list[dict]:
     return rows
 
 
-# ── Main entry point ──────────────────────────────────────────────────────────
-
-def parse_pdf(file_bytes: bytes) -> dict:
+def parse_stremet_pdf(file_bytes: bytes) -> dict:
     """
-    Parse a Stremet / Tata Steel price list PDF.
+    Parse a Tata Steel / Stremet price list PDF.
 
     Returns a dict with keys:
         thin, thick, forecast, surcharges, special
-    Each value is a list of row dicts (ready for st.dataframe or csv export).
+    Each value is a list of row dicts.
     """
     result = {
         "thin":       [],
@@ -145,5 +143,183 @@ def parse_pdf(file_bytes: bytes) -> dict:
                 result["surcharges"] = parse_surcharges(tables[2])
             if len(tables) > 3:
                 result["special"]    = parse_special(tables[3])
+
+    return result
+
+
+# Backwards-compatible alias.
+parse_pdf = parse_stremet_pdf
+
+
+# ── Tibnor — config ───────────────────────────────────────────────────────────
+
+# Sheet sizes Tibnor stocks (from the page-1 free-text note).
+TIBNOR_SIZES = ["1000x2000", "1250x2500", "1500x3000", "1500x6000", "1520x3020"]
+
+# Page 1 — non-ferrous & stainless (€/kg, multiplied ×1000 to normalise to €/tn).
+# Each tuple is (header_keyword_lowercase, output_label).
+TIBNOR_NONFERROUS = [
+    ("al.1050",  "Alumiini 1050"),
+    ("al.5754",  "Alumiini 5754"),
+    ("al.5005",  "Alumiini 5005+Kalv"),
+    ("rst 2b",   "RST 2B"),
+    ("rst 2k",   "RST 2K+pe"),
+    ("hst 2b",   "HST 2B"),
+    ("1.4016",   "RST 1.4016 2R"),
+]
+
+# Page 2 — main steel grades (€/1000kg = €/tn, no conversion needed).
+TIBNOR_STEEL = [
+    ("am o/i",   "KY-VA DC01 AM O/I"),
+    ("z275",     "KU-SI DX51D+Z275"),
+    ("ze 25",    "SÄ-SI DC01+ZE 25/25"),
+    ("s650mc",   "S650MC Peitatty"),
+    ("s235",     "S235 Peitatty"),
+    ("s355mc",   "S355MC Peitatty"),
+]
+
+# Page 2 — sub-tables for special items.
+TIBNOR_SPECIAL = [
+    ("z100",     "KU-SI DX51D+Z100"),
+    ("laser",    "LASER 355ML Plus"),
+]
+
+
+# ── Tibnor — generic table parser ─────────────────────────────────────────────
+
+def _identify_columns(
+    header_cells: list[str],
+    products: list[tuple[str, str]],
+) -> dict[int, str]:
+    """Map column index → output label by matching header text (case-insensitive).
+
+    Each header column may consist of several stacked rows; pass the joined
+    text per column.
+    """
+    col_map: dict[int, str] = {}
+    for idx, text in enumerate(header_cells):
+        t = text.lower()
+        if not t:
+            continue
+        for keyword, label in products:
+            if keyword in t and idx not in col_map:
+                col_map[idx] = label
+                break
+    return col_map
+
+
+def _join_header_rows(table: list, max_header_rows: int = 3) -> list[str]:
+    """Concatenate the first few rows of a table per column to handle multi-line headers."""
+    if not table:
+        return []
+    n_cols = max((len(r) for r in table[:max_header_rows]), default=0)
+    joined = [""] * n_cols
+    for r in table[:max_header_rows]:
+        for c in range(min(len(r), n_cols)):
+            joined[c] = (joined[c] + " " + clean(r[c])).strip()
+    return joined
+
+
+def _thickness_col_for(headers: list[str], data_col: int) -> int:
+    """Return the thickness column that applies to a given data column.
+
+    The Tibnor page-2 layout has two side-by-side tables, each with its own
+    'mm' header. Walks back from `data_col` to the nearest 'mm' / 'paks'
+    column; falls back to column 0 if none is found.
+    """
+    for i in range(data_col - 1, -1, -1):
+        text = headers[i].lower() if i < len(headers) else ""
+        if "mm" in text or "paks" in text:
+            return i
+    return 0
+
+
+def _parse_tibnor_table(
+    table: list,
+    products: list[tuple[str, str]],
+    sizes: list[str],
+    price_multiplier: float = 1.0,
+) -> list[dict]:
+    """Parse one pdfplumber table into rows shaped like the Stremet parser.
+
+    Each output row keys prices by 'Material | Size', one row per thickness.
+    When the table contains side-by-side sub-tables (a second 'mm' header
+    further right), each product reads its thickness from its own 'mm'
+    anchor column.
+
+    Skips the table entirely if no expected product header is found.
+    """
+    if not table or len(table) < 2:
+        return []
+
+    headers = _join_header_rows(table)
+    col_map = _identify_columns(headers, products)
+    if not col_map:
+        return []
+
+    thickness_cols = {c: _thickness_col_for(headers, c) for c in col_map}
+
+    by_thickness: dict[str, dict] = {}
+    for row in table:
+        if not row:
+            continue
+        for data_col, label in col_map.items():
+            if data_col >= len(row):
+                continue
+            t_col = thickness_cols[data_col]
+            thickness = clean(row[t_col]) if t_col < len(row) else ""
+            if not thickness or not thickness[0].isdigit():
+                continue
+            price = to_float(row[data_col])
+            if price is None:
+                continue
+            price_per_tn = price * price_multiplier
+            entry = by_thickness.setdefault(
+                thickness, {"Paksuus (mm)": thickness}
+            )
+            for size in sizes:
+                entry[f"{label} | {size}"] = price_per_tn
+
+    return list(by_thickness.values())
+
+
+# ── Tibnor — main entry point ─────────────────────────────────────────────────
+
+def parse_tibnor_pdf(file_bytes: bytes) -> dict:
+    """Parse a Tibnor / Stremet Oy price list PDF.
+
+    Returns a dict with keys:
+        tibnor_nonferrous, tibnor_steel, tibnor_special
+    Each value is a list of row dicts in the same shape as parse_stremet_pdf.
+    All prices are normalised to €/tn so they share the calculator pipeline.
+    """
+    result: dict = {
+        "tibnor_nonferrous": [],
+        "tibnor_steel":      [],
+        "tibnor_special":    [],
+    }
+
+    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        if len(pdf.pages) >= 1:
+            for table in pdf.pages[0].extract_tables() or []:
+                rows = _parse_tibnor_table(
+                    table, TIBNOR_NONFERROUS, TIBNOR_SIZES,
+                    price_multiplier=1000.0,   # €/kg → €/tn
+                )
+                result["tibnor_nonferrous"].extend(rows)
+
+        if len(pdf.pages) >= 2:
+            for table in pdf.pages[1].extract_tables() or []:
+                steel_rows = _parse_tibnor_table(
+                    table, TIBNOR_STEEL, TIBNOR_SIZES,
+                    price_multiplier=1.0,
+                )
+                result["tibnor_steel"].extend(steel_rows)
+
+                special_rows = _parse_tibnor_table(
+                    table, TIBNOR_SPECIAL, TIBNOR_SIZES,
+                    price_multiplier=1.0,
+                )
+                result["tibnor_special"].extend(special_rows)
 
     return result
