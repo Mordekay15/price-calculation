@@ -9,7 +9,32 @@ To add a new calculation type (e.g. weight-based, area-based):
 """
 
 THICKNESS_KEY = "Paksuus (mm)"
-STEEL_DENSITY_KG_PER_MM3 = 7.85e-6  # 7.85 g/cm³ expressed in kg/mm³
+
+# Material densities in kg/mm³. A 1 mm sheet of 1 m² weighs density × 1e6 kg,
+# so the kg/m²·mm value equals the g/cm³ value.
+STEEL_DENSITY_KG_PER_MM3 = 7.85e-6   # Steel / RST / HST — 7.85 g/cm³
+DENSITIES_KG_PER_MM3 = {
+    "steel":    7.85e-6,
+    "alumiini": 2.7e-6,
+    "kupari":   9.0e-6,
+    "pvc":      2.2e-6,
+}
+
+
+def density_for_material(material: str | None) -> float:
+    """Pick a density (kg/mm³) by matching keywords in the material name.
+
+    Falls back to steel for anything unrecognised — covers RST/HST, all the
+    Tata/Stremet and Tibnor steel grades (DC01, DX51D, S235, S355MC, etc.).
+    """
+    name = (material or "").lower()
+    if "alumiini" in name:
+        return DENSITIES_KG_PER_MM3["alumiini"]
+    if "kupari" in name:
+        return DENSITIES_KG_PER_MM3["kupari"]
+    if "pvc" in name or "pleksi" in name:
+        return DENSITIES_KG_PER_MM3["pvc"]
+    return DENSITIES_KG_PER_MM3["steel"]
 
 
 # ── Lookup builder ────────────────────────────────────────────────────────────
@@ -112,9 +137,14 @@ def parse_thickness_mm(thickness_str: str) -> float | None:
         return None
 
 
-def piece_weight_kg(width_mm: float, height_mm: float, thickness_mm: float) -> float:
-    """Weight of a rectangular steel plate in kg (density 7.85 g/cm³)."""
-    return width_mm * height_mm * thickness_mm * STEEL_DENSITY_KG_PER_MM3
+def piece_weight_kg(
+    width_mm: float,
+    height_mm: float,
+    thickness_mm: float,
+    material: str | None = None,
+) -> float:
+    """Weight of a rectangular plate in kg, using the material's density."""
+    return width_mm * height_mm * thickness_mm * density_for_material(material)
 
 
 # ── Price calculation ─────────────────────────────────────────────────────────
