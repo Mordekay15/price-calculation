@@ -18,6 +18,7 @@ import uuid
 import streamlit as st
 from core.calculator import (
     build_lookup,
+    calculate,
     density_for_material,
     get_materials,
     get_sizes_for_material,
@@ -56,6 +57,15 @@ def render(data: dict) -> None:
 
     st.subheader("Price calculator")
     materials = get_materials(lookup)
+
+    margin_pct = st.number_input(
+        "Material margin / kate (%)",
+        min_value=10.0,
+        max_value=20.0,
+        value=15.0,
+        step=0.5,
+        key="calc_margin_pct",
+    )
 
     _init_products()
 
@@ -160,6 +170,7 @@ def render(data: dict) -> None:
                 material=material,
                 thickness=thickness,
                 products=group_prods,
+                margin_pct=margin_pct,
             )
             if cheapest_eur is not None:
                 grand_total_eur += cheapest_eur
@@ -230,6 +241,7 @@ def _render_sheet_usage_group(
     material: str,
     thickness: str,
     products: list[dict],
+    margin_pct: float = 0.0,
 ) -> tuple[float | None, float | None]:
     """
     Render one sheet-usage table for products sharing the same material and
@@ -266,18 +278,20 @@ def _render_sheet_usage_group(
         has_failures    = summary["failed_pieces"] > 0
         sheet_weight_kg = sw * sh * thickness_mm * density_for_material(material)
         total_kg        = sheet_weight_kg * summary["sheets_needed"]
-        total_eur       = total_kg * (price_per_tonne / 1000)
+        result          = calculate(price_per_tonne, total_kg / 1000, margin_pct=margin_pct)
+        adjusted_ppt    = result["after_margin"]
+        total_eur       = result["total"]
         cost_per_pc     = round(total_eur / n_pieces, 2) if (not has_failures and n_pieces) else ""
         rows.append({
             "Sheet size":     f"{_fmt_m(sw)} × {_fmt_m(sh)} m",
-            "Price (€/tn)":   f"{price_per_tonne:,.2f}",
+            "Price (€/tn)":   f"{adjusted_ppt:,.2f}",
             "Sheets needed":  "" if has_failures else summary["sheets_needed"],
             "Utilisation":    "" if has_failures else f"{summary['utilization'] * 100:.1f} %",
             "Sheet kg":       "" if has_failures else round(total_kg, 2),
             "Total €":        "" if has_failures else round(total_eur, 2),
             "€/pc":           cost_per_pc,
             "_total":         total_eur,
-            "_ppt":           price_per_tonne,
+            "_ppt":           adjusted_ppt,
             "_failed":        summary["failed_pieces"],
         })
 
