@@ -156,55 +156,79 @@ parse_pdf = parse_stremet_pdf
 # Sheet sizes Tibnor stocks (from the page-1 free-text note).
 TIBNOR_SIZES = ["1000x2000", "1250x2500", "1500x3000", "1500x6000", "1520x3020"]
 
+# Each product: (col_index, header_keyword, output_label, thickness_col).
+# col_index is the canonical position in the supplier's table; header_keyword
+# lets us recover when pdfplumber shifts columns; thickness_col tells us where
+# to read the thickness from (different for the side-by-side LASER sub-table).
+
 # Page 1 — non-ferrous & stainless (€/kg, multiplied ×1000 to normalise to €/tn).
-# Each tuple is (header_keyword_lowercase, output_label).
 TIBNOR_NONFERROUS = [
-    ("al.1050",  "Alumiini 1050"),
-    ("al.5754",  "Alumiini 5754"),
-    ("al.5005",  "Alumiini 5005+Kalv"),
-    ("rst 2b",   "RST 2B"),
-    ("rst 2k",   "RST 2K+pe"),
-    ("hst 2b",   "HST 2B"),
-    ("1.4016",   "RST 1.4016 2R"),
+    (1, "al.1050",  "Alumiini 1050",       0),
+    (2, "al.5754",  "Alumiini 5754",       0),
+    (3, "al.5005",  "Alumiini 5005+Kalv",  0),
+    (4, "rst 2b",   "RST 2B",              0),
+    (5, "rst 2k",   "RST 2K+pe",           0),
+    (6, "hst 2b",   "HST 2B",              0),
+    (7, "1.4016",   "RST 1.4016 2R",       0),
 ]
 
 # Page 2 — main steel grades (€/1000kg = €/tn, no conversion needed).
 TIBNOR_STEEL = [
-    ("am o/i",   "KY-VA DC01 AM O/I"),
-    ("z275",     "KU-SI DX51D+Z275"),
-    ("ze 25",    "SÄ-SI DC01+ZE 25/25"),
-    ("s650mc",   "S650MC Peitatty"),
-    ("s235",     "S235 Peitatty"),
-    ("s355mc",   "S355MC Peitatty"),
+    (1, "am o/i",   "KY-VA DC01 AM O/I",       0),
+    (2, "z275",     "KU-SI DX51D+Z275",        0),
+    (3, "ze 25",    "SÄ-SI DC01+ZE 25/25",     0),
+    (4, "s650mc",   "S650MC Peitatty",         0),
+    (5, "s235",     "S235 Peitatty",           0),
+    (6, "s355mc",   "S355MC Peitatty",         0),
 ]
 
-# Page 2 — sub-tables for special items.
+# Page 2 — sub-tables for special items. The two tables are side-by-side, so
+# LASER reads its thickness from its own 'mm' column at index 2.
 TIBNOR_SPECIAL = [
-    ("z100",     "KU-SI DX51D+Z100"),
-    ("laser",    "LASER 355ML Plus"),
+    (1, "z100",     "KU-SI DX51D+Z100",        0),
+    (3, "laser",    "LASER 355ML Plus",        2),
 ]
 
 
 # ── Tibnor — generic table parser ─────────────────────────────────────────────
 
+def _norm(text: str) -> str:
+    """Lowercase and strip all whitespace — robust to multi-line / extra-space cells."""
+    return "".join((text or "").lower().split())
+
+
 def _identify_columns(
     header_cells: list[str],
-    products: list[tuple[str, str]],
-) -> dict[int, str]:
-    """Map column index → output label by matching header text (case-insensitive).
+    products: list[tuple[int, str, str, int]],
+) -> dict[int, tuple[str, int]]:
+    """Map data-column index → (output_label, thickness_col) by header keyword.
 
-    Each header column may consist of several stacked rows; pass the joined
-    text per column.
+    Falls back to the canonical column index from the product config when
+    keyword matching fails for a given product (e.g. headers rendered as
+    page text outside the gridded table).
     """
-    col_map: dict[int, str] = {}
-    for idx, text in enumerate(header_cells):
-        t = text.lower()
-        if not t:
-            continue
-        for keyword, label in products:
-            if keyword in t and idx not in col_map:
-                col_map[idx] = label
+    normalized = [_norm(c) for c in header_cells]
+
+    col_map: dict[int, tuple[str, int]] = {}
+    matched_labels: set[str] = set()
+
+    # Pass 1: keyword match.
+    for col_idx, kw, label, t_col in products:
+        kw_n = _norm(kw)
+        for idx, h in enumerate(normalized):
+            if h and kw_n in h and idx not in col_map:
+                col_map[idx] = (label, t_col)
+                matched_labels.add(label)
                 break
+
+    # Pass 2: positional fallback for products that didn't keyword-match.
+    for col_idx, _kw, label, t_col in products:
+        if label in matched_labels:
+            continue
+        if col_idx in col_map:
+            continue
+        col_map[col_idx] = (label, t_col)
+
     return col_map
 
 
@@ -220,36 +244,28 @@ def _join_header_rows(table: list, max_header_rows: int = 3) -> list[str]:
     return joined
 
 
-def _thickness_col_for(headers: list[str], data_col: int) -> int:
-    """Return the thickness column that applies to a given data column.
-
-    The Tibnor page-2 layout has two side-by-side tables, each with its own
-    'mm' header. Walks back from `data_col` to the nearest 'mm' / 'paks'
-    column; falls back to column 0 if none is found.
-    """
-    for i in range(data_col - 1, -1, -1):
-        text = headers[i].lower() if i < len(headers) else ""
-        if "mm" in text or "paks" in text:
-            return i
-    return 0
+def _table_max_cols(table: list) -> int:
+    return max((len(r) for r in table), default=0)
 
 
 def _parse_tibnor_table(
     table: list,
-    products: list[tuple[str, str]],
+    products: list[tuple[int, str, str, int]],
     sizes: list[str],
     price_multiplier: float = 1.0,
 ) -> list[dict]:
     """Parse one pdfplumber table into rows shaped like the Stremet parser.
 
     Each output row keys prices by 'Material | Size', one row per thickness.
-    When the table contains side-by-side sub-tables (a second 'mm' header
-    further right), each product reads its thickness from its own 'mm'
-    anchor column.
-
-    Skips the table entirely if no expected product header is found.
+    Header columns are matched by keyword first, then by canonical position
+    if the header text is missing or split across page text.
     """
-    if not table or len(table) < 2:
+    if not table:
+        return []
+
+    # Skip tables that obviously don't have enough columns to hold the products.
+    needed_cols = max((c for c, *_ in products), default=0) + 1
+    if _table_max_cols(table) < needed_cols:
         return []
 
     headers = _join_header_rows(table)
@@ -257,16 +273,13 @@ def _parse_tibnor_table(
     if not col_map:
         return []
 
-    thickness_cols = {c: _thickness_col_for(headers, c) for c in col_map}
-
     by_thickness: dict[str, dict] = {}
     for row in table:
         if not row:
             continue
-        for data_col, label in col_map.items():
+        for data_col, (label, t_col) in col_map.items():
             if data_col >= len(row):
                 continue
-            t_col = thickness_cols[data_col]
             thickness = clean(row[t_col]) if t_col < len(row) else ""
             if not thickness or not thickness[0].isdigit():
                 continue
