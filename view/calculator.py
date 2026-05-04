@@ -18,6 +18,7 @@ import uuid
 import streamlit as st
 from core.calculator import (
     build_lookup,
+    density_for_material,
     get_materials,
     get_sizes_for_material,
     get_thicknesses_for_material,
@@ -28,8 +29,6 @@ from core.nesting import expand_products, pack, parse_size, summarise
 
 _PLACEHOLDER_MAT   = "— Select material —"
 _PLACEHOLDER_THICK = "— Select thickness —"
-
-STEEL_DENSITY_KG_PER_MM3 = 7.85e-6
 
 
 def _new_product() -> dict:
@@ -183,7 +182,7 @@ def render(data: dict) -> None:
         thickness_mm = parse_thickness_mm(prod["thickness"]) if prod["thickness"] else None
         if thickness_mm is None:
             continue
-        one_weight   = piece_weight_kg(prod["width"], prod["height"], thickness_mm)
+        one_weight   = piece_weight_kg(prod["width"], prod["height"], thickness_mm, prod["material"])
         batch_weight = one_weight * prod["qty"]
         total_weight_kg += batch_weight
 
@@ -265,7 +264,7 @@ def _render_sheet_usage_group(
         sheets, failed  = pack(pieces, sw, sh, allow_rotation=True)
         summary         = summarise(sw, sh, sheets, len(failed))
         has_failures    = summary["failed_pieces"] > 0
-        sheet_weight_kg = sw * sh * thickness_mm * STEEL_DENSITY_KG_PER_MM3
+        sheet_weight_kg = sw * sh * thickness_mm * density_for_material(material)
         total_kg        = sheet_weight_kg * summary["sheets_needed"]
         total_eur       = total_kg * (price_per_tonne / 1000)
         cost_per_pc     = round(total_eur / n_pieces, 2) if (not has_failures and n_pieces) else ""
