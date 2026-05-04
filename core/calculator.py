@@ -19,12 +19,19 @@ def build_lookup(data: dict) -> dict:
     Flatten all price tables into a single dict:
         (thickness: str, product: str) -> price_eur_per_ton: float
 
-    Works for any table that has a 'Paksuus (mm)' column.
+    Picks up any section in `data` whose rows carry a 'Paksuus (mm)' column,
+    so new supplier parsers plug in without changes here.
     """
     lookup = {}
-    for section in ("thin", "thick", "special"):
-        for row in data.get(section, []):
-            t = row.get(THICKNESS_KEY, "")
+    for section_rows in data.values():
+        if not isinstance(section_rows, list):
+            continue
+        for row in section_rows:
+            if not isinstance(row, dict):
+                continue
+            t = row.get(THICKNESS_KEY)
+            if not t:
+                continue
             for col, val in row.items():
                 if col != THICKNESS_KEY and val is not None:
                     lookup[(t, col)] = val

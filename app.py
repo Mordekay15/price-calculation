@@ -1,13 +1,9 @@
 """
 Stremet Price Tool — Streamlit App
 
-Parsed price data is saved to price_data.json so it survives browser refreshes
-and server restarts. Upload a new PDF only when the monthly price list changes;
-the upload widget lives in the sidebar.
-
-Install & run:
-    pip install streamlit pdfplumber
-    streamlit run app.py
+Each supplier has its own named upload slot in the sidebar. Parsed price data
+is saved to per-supplier JSON files so it survives browser refreshes and server
+restarts. Re-upload only when the monthly price list changes.
 """
 
 import json
@@ -15,10 +11,22 @@ import datetime
 import pathlib
 
 import streamlit as st
-from core.parser import parse_pdf
+from core.parser import parse_stremet_pdf, parse_tibnor_pdf
 from view import calculator
 
-DATA_FILE = pathlib.Path("price_data.json")
+# Each supplier: (label, json path, parser function).
+SUPPLIERS = {
+    "stremet": {
+        "label":  "Tata Steel / Stremet",
+        "path":   pathlib.Path("price_data.json"),
+        "parser": parse_stremet_pdf,
+    },
+    "tibnor": {
+        "label":  "Tibnor",
+        "path":   pathlib.Path("price_data_tibnor.json"),
+        "parser": parse_tibnor_pdf,
+    },
+}
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -32,60 +40,74 @@ st.title("Stremet Price Tool")
 # ── Persistent storage helpers ────────────────────────────────────────────────
 
 @st.cache_resource
-def _load_stored_data_cached(mtime: float) -> dict | None:
-    """Load JSON keyed by file mtime so the cache auto-invalidates on save."""
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
+def _load_stored_data_cached(path_str: str, mtime: float) -> dict | None:
+    """Load JSON keyed by (path, mtime) so the cache auto-invalidates on save."""
+    with open(path_str, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def load_stored_data() -> dict | None:
-    if not DATA_FILE.exists():
+def load_stored_data(path: pathlib.Path) -> dict | None:
+    if not path.exists():
         return None
-    return _load_stored_data_cached(DATA_FILE.stat().st_mtime)
+    return _load_stored_data_cached(str(path), path.stat().st_mtime)
 
 
-def save_data(data: dict, filename: str) -> dict:
+def save_data(path: pathlib.Path, data: dict, filename: str) -> dict:
     payload = {
         "data": data,
         "source_file": filename,
         "updated_at": datetime.datetime.now().isoformat(timespec="seconds"),
     }
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     return payload
 
-# ── Sidebar: upload (only needed once a month) ────────────────────────────────
+
+# ── Sidebar: one upload slot per supplier ─────────────────────────────────────
+
+merged_data: dict = {}
 
 with st.sidebar:
-    st.header("Price list")
-    stored = load_stored_data()
+    st.header("Price lists")
+    st.caption("Upload each supplier's monthly PDF separately.")
 
-    if stored:
-        st.success(
-            f"Loaded: **{stored['source_file']}**\n\n"
-            f"Updated: {stored['updated_at']}"
+    for key, cfg in SUPPLIERS.items():
+        st.divider()
+        st.markdown(f"**{cfg['label']}**")
+
+        stored = load_stored_data(cfg["path"])
+        if stored:
+            st.success(
+                f"Loaded: **{stored['source_file']}**\n\n"
+                f"Updated: {stored['updated_at']}"
+            )
+
+        uploaded = st.file_uploader(
+            f"Upload new {cfg['label']} PDF" if stored else f"Upload {cfg['label']} PDF",
+            type="pdf",
+            key=f"upload_{key}",
         )
 
-    uploaded = st.file_uploader(
-        "Upload new PDF to replace" if stored else "Upload PDF price list",
-        type="pdf",
-    )
+        # st.file_uploader keeps the file across reruns; track the file_id so
+        # we only parse + save once per upload (otherwise updated_at ticks).
+        seen_key = f"processed_upload_{key}"
+        if uploaded and st.session_state.get(seen_key) != uploaded.file_id:
+            with st.spinner(f"Parsing {cfg['label']} PDF..."):
+                parsed = cfg["parser"](uploaded.read())
+                stored = save_data(cfg["path"], parsed, uploaded.name)
+            st.session_state[seen_key] = uploaded.file_id
+            st.success(f"Saved {cfg['label']} prices from **{uploaded.name}**.")
+            st.rerun()
 
-    if uploaded:
-        with st.spinner("Parsing PDF... this may take a few seconds"):
-            parsed = parse_pdf(uploaded.read())
-            stored = save_data(parsed, uploaded.name)
-        st.success(f"Saved price data from **{uploaded.name}**.")
-        st.rerun()
+        if stored:
+            merged_data.update(stored["data"])
 
 # ── Guard: nothing to show yet ────────────────────────────────────────────────
 
-if stored is None:
+if not merged_data:
     st.info("No price data found. Upload a PDF in the sidebar to get started.")
     st.stop()
 
-data = stored["data"]
-
 # ── Main content ──────────────────────────────────────────────────────────────
 
-calculator.render(data)
+calculator.render(merged_data)
