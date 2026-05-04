@@ -246,6 +246,101 @@ def _fmt_m(mm: int) -> str:
     return s + "0" if s.endswith(".") else s
 
 
+def _render_breakdown(
+    material: str,
+    thickness: str,
+    thickness_mm: float,
+    margin_pct: float,
+    charge_full_sheet: bool,
+    n_pieces: int,
+    data: dict,
+) -> None:
+    """Show a step-by-step table of how the cheapest sheet's price was calculated."""
+    sw              = data["sw"]
+    sh              = data["sh"]
+    base_ppt        = data["base_ppt"]
+    adjusted_ppt    = data["adjusted_ppt"]
+    sheet_weight_kg = data["sheet_weight_kg"]
+    sheets_needed   = data["sheets_needed"]
+    sheet_kg        = data["sheet_kg"]
+    pieces_kg       = data["pieces_kg"]
+    billable_kg     = data["billable_kg"]
+    total_eur       = data["total_eur"]
+    cost_per_pc     = data["cost_per_pc"]
+
+    density_kg_mm3 = density_for_material(material)
+    density_g_cm3  = density_kg_mm3 * 1e6
+    margin_factor  = 1 + margin_pct / 100
+    mode_label     = "full sheet" if charge_full_sheet else "ordered pieces"
+
+    steps = [
+        {
+            "Step":        "1. Base price (from price list)",
+            "Calculation": f"{material}, {thickness} mm",
+            "Value":       f"{base_ppt:,.2f} €/tn",
+        },
+        {
+            "Step":        f"2. Apply margin (+{margin_pct:g}%)",
+            "Calculation": f"{base_ppt:,.2f} × {margin_factor:.4f}",
+            "Value":       f"{adjusted_ppt:,.2f} €/tn",
+        },
+        {
+            "Step":        "3. Material density",
+            "Calculation": f"density({material})",
+            "Value":       f"{density_g_cm3:.2f} g/cm³",
+        },
+        {
+            "Step":        "4. Weight of one sheet",
+            "Calculation": f"{sw} × {sh} × {thickness_mm:g} mm × {density_g_cm3:.2f} g/cm³",
+            "Value":       f"{sheet_weight_kg:,.2f} kg",
+        },
+        {
+            "Step":        "5. Sheets needed (from nesting)",
+            "Calculation": f"{n_pieces} piece(s) packed onto {_fmt_m(sw)} × {_fmt_m(sh)} m",
+            "Value":       f"{sheets_needed}",
+        },
+        {
+            "Step":        "6. Total sheet weight",
+            "Calculation": f"{sheet_weight_kg:,.2f} × {sheets_needed}",
+            "Value":       f"{sheet_kg:,.2f} kg",
+        },
+        {
+            "Step":        "7. Pieces total weight",
+            "Calculation": "Σ (w × h × t × density × qty)",
+            "Value":       f"{pieces_kg:,.2f} kg",
+        },
+        {
+            "Step":        f"8. Billable weight ({mode_label})",
+            "Calculation": "sheet kg" if charge_full_sheet else "pieces kg",
+            "Value":       f"{billable_kg:,.2f} kg",
+        },
+        {
+            "Step":        "9. Total cost",
+            "Calculation": f"{adjusted_ppt:,.2f} €/tn × {billable_kg:,.2f} kg / 1000",
+            "Value":       f"{total_eur:,.2f} €",
+        },
+    ]
+    if n_pieces and isinstance(cost_per_pc, (int, float)):
+        steps.append({
+            "Step":        "10. Cost per piece",
+            "Calculation": f"{total_eur:,.2f} € / {n_pieces} pc",
+            "Value":       f"{cost_per_pc:,.2f} €/pc",
+        })
+
+    with st.expander("Show calculation breakdown"):
+        st.dataframe(steps, use_container_width=True, hide_index=True)
+        if charge_full_sheet and pieces_kg:
+            effective_ppt = adjusted_ppt * (sheet_kg / pieces_kg)
+            st.caption(
+                f"In **Full sheet** mode, the {sheet_kg:,.2f} kg of sheet is billed "
+                f"across {pieces_kg:,.2f} kg of actual pieces. The pieces-summary "
+                f"table allocates this back per piece by weight share, using an "
+                f"effective rate of "
+                f"{adjusted_ppt:,.2f} × ({sheet_kg:,.2f} / {pieces_kg:,.2f}) = "
+                f"**{effective_ppt:,.2f} €/tn**."
+            )
+
+
 def _render_sheet_usage_group(
     lookup: dict,
     material: str,
@@ -314,6 +409,19 @@ def _render_sheet_usage_group(
             "_total":         total_eur,
             "_ppt":           bill_rate_ppt,
             "_failed":        summary["failed_pieces"],
+            "_breakdown": {
+                "sw":              sw,
+                "sh":              sh,
+                "base_ppt":        price_per_tonne,
+                "adjusted_ppt":    adjusted_ppt,
+                "sheet_weight_kg": sheet_weight_kg,
+                "sheets_needed":   summary["sheets_needed"],
+                "sheet_kg":        sheet_kg,
+                "pieces_kg":       pieces_kg,
+                "billable_kg":     billable_kg,
+                "total_eur":       total_eur,
+                "cost_per_pc":     cost_per_pc,
+            },
         })
 
     valid_rows         = [r for r in rows if r["_failed"] == 0]
@@ -331,6 +439,15 @@ def _render_sheet_usage_group(
             f"**{cheapest['€/pc']} €/pc**, "
             f"total **{cheapest['Total €']:,.2f} €** "
             f"at {cheapest['Utilisation']} utilisation."
+        )
+        _render_breakdown(
+            material=material,
+            thickness=thickness,
+            thickness_mm=thickness_mm,
+            margin_pct=margin_pct,
+            charge_full_sheet=charge_full_sheet,
+            n_pieces=n_pieces,
+            data=cheapest["_breakdown"],
         )
     else:
         for r in rows:
