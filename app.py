@@ -88,10 +88,14 @@ with st.sidebar:
             key=f"upload_{key}",
         )
 
-        if uploaded:
+        # st.file_uploader keeps the file across reruns; track the file_id so
+        # we only parse + save once per upload (otherwise updated_at ticks).
+        seen_key = f"processed_upload_{key}"
+        if uploaded and st.session_state.get(seen_key) != uploaded.file_id:
             with st.spinner(f"Parsing {cfg['label']} PDF..."):
                 parsed = cfg["parser"](uploaded.read())
                 stored = save_data(cfg["path"], parsed, uploaded.name)
+            st.session_state[seen_key] = uploaded.file_id
             st.success(f"Saved {cfg['label']} prices from **{uploaded.name}**.")
             st.rerun()
 
