@@ -152,10 +152,11 @@ def render(data: dict) -> None:
             "save a few % more."
         )
 
-        grand_total_eur = 0.0
-        any_priced      = False
+        grand_total_eur  = 0.0
+        any_priced       = False
+        cheapest_prices: dict[tuple[str, str], float] = {}
         for (material, thickness), group_prods in groups.items():
-            cheapest_eur = _render_sheet_usage_group(
+            cheapest_eur, cheapest_ppt = _render_sheet_usage_group(
                 lookup=lookup,
                 material=material,
                 thickness=thickness,
@@ -164,6 +165,8 @@ def render(data: dict) -> None:
             if cheapest_eur is not None:
                 grand_total_eur += cheapest_eur
                 any_priced = True
+            if cheapest_ppt is not None:
+                cheapest_prices[(material, thickness)] = cheapest_ppt
 
         if any_priced and len(groups) > 1:
             st.divider()
@@ -173,6 +176,7 @@ def render(data: dict) -> None:
 
     table_rows      = []
     total_weight_kg = 0.0
+    total_cost_eur  = 0.0
     for i, prod in enumerate(products):
         if prod["width"] <= 0 or prod["height"] <= 0:
             continue
@@ -182,6 +186,14 @@ def render(data: dict) -> None:
         one_weight   = piece_weight_kg(prod["width"], prod["height"], thickness_mm)
         batch_weight = one_weight * prod["qty"]
         total_weight_kg += batch_weight
+
+        ppt          = cheapest_prices.get((prod["material"], prod["thickness"]))
+        price_per_kg = ppt / 1000 if ppt else None
+        one_cost     = round(one_weight   * price_per_kg, 4) if price_per_kg else ""
+        batch_cost   = round(batch_weight * price_per_kg, 2) if price_per_kg else ""
+        if price_per_kg:
+            total_cost_eur += batch_weight * price_per_kg
+
         table_rows.append({
             "#":             i + 1,
             "Material":      prod["material"] or "",
@@ -191,12 +203,18 @@ def render(data: dict) -> None:
             "Qty (pcs)":     prod["qty"],
             "kg/pc":         round(one_weight,   3),
             "Total kg":      round(batch_weight, 3),
+            "€/pc":          one_cost,
+            "Total €":       batch_cost,
         })
 
     if table_rows:
         st.divider()
         st.markdown("**Pieces summary**")
-        st.metric("Total piece weight (kg)", f"{total_weight_kg:.3f}")
+        m1, m2 = st.columns(2)
+        m1.metric("Total piece weight (kg)", f"{total_weight_kg:.3f}")
+        if total_cost_eur:
+            m2.metric("Total material cost (€)", f"{total_cost_eur:,.2f}")
+        st.caption("€/pc uses the cheapest available sheet size price × piece weight (no waste).")
         st.dataframe(table_rows, use_container_width=True, hide_index=True)
 
 
@@ -213,19 +231,21 @@ def _render_sheet_usage_group(
     material: str,
     thickness: str,
     products: list[dict],
-) -> float | None:
+) -> tuple[float | None, float | None]:
     """
     Render one sheet-usage table for products sharing the same material and
-    thickness. Returns the cheapest total in euros, or None if no priced
-    sheet size can fit the order.
+    thickness. Returns (cheapest_total_eur, cheapest_price_per_tonne), both
+    None when no priced sheet size can fulfil the order.
     """
     pieces = expand_products(products)
     if not pieces:
-        return None
+        return None, None
 
     thickness_mm = parse_thickness_mm(thickness)
     if thickness_mm is None:
-        return None
+        return None, None
+
+    n_pieces = len(pieces)
 
     candidates: list[tuple[str, int, int, float]] = []
     for size_label in get_sizes_for_material(lookup, material):
@@ -238,7 +258,7 @@ def _render_sheet_usage_group(
     st.markdown(f"**{material}** · **{thickness} mm**")
     if not candidates:
         st.info("No sheet-size pricing available for this combination.")
-        return None
+        return None, None
 
     rows = []
     for _size_label, sw, sh, price_per_tonne in candidates:
@@ -248,6 +268,7 @@ def _render_sheet_usage_group(
         sheet_weight_kg = sw * sh * thickness_mm * STEEL_DENSITY_KG_PER_MM3
         total_kg        = sheet_weight_kg * summary["sheets_needed"]
         total_eur       = total_kg * (price_per_tonne / 1000)
+        cost_per_pc     = round(total_eur / n_pieces, 2) if (not has_failures and n_pieces) else ""
         rows.append({
             "Sheet size":     f"{_fmt_m(sw)} × {_fmt_m(sh)} m",
             "Price (€/tn)":   f"{price_per_tonne:,.2f}",
@@ -255,20 +276,25 @@ def _render_sheet_usage_group(
             "Utilisation":    "" if has_failures else f"{summary['utilization'] * 100:.1f} %",
             "Sheet kg":       "" if has_failures else round(total_kg, 2),
             "Total €":        "" if has_failures else round(total_eur, 2),
+            "€/pc":           cost_per_pc,
             "_total":         total_eur,
+            "_ppt":           price_per_tonne,
             "_failed":        summary["failed_pieces"],
         })
 
-    valid_rows    = [r for r in rows if r["_failed"] == 0]
-    cheapest_eur  = None
+    valid_rows         = [r for r in rows if r["_failed"] == 0]
+    cheapest_eur       = None
+    cheapest_ppt       = None
     if valid_rows:
-        cheapest = min(valid_rows, key=lambda r: r["_total"])
+        cheapest     = min(valid_rows, key=lambda r: r["_total"])
         cheapest_eur = cheapest["_total"]
+        cheapest_ppt = cheapest["_ppt"]
         for r in rows:
             r["Best"] = "◀" if r is cheapest else ""
         st.success(
             f"Cheapest: **{cheapest['Sheet size']}** — "
             f"{cheapest['Sheets needed']} sheet(s), "
+            f"**{cheapest['€/pc']} €/pc**, "
             f"total **{cheapest['Total €']:,.2f} €** "
             f"at {cheapest['Utilisation']} utilisation."
         )
@@ -282,4 +308,4 @@ def _render_sheet_usage_group(
     ]
     st.dataframe(display_rows, use_container_width=True, hide_index=True)
 
-    return cheapest_eur
+    return cheapest_eur, cheapest_ppt
