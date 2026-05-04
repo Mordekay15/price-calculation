@@ -166,12 +166,6 @@ def render(data: dict) -> None:
     if groups:
         st.divider()
         st.markdown("**Sheet usage** — which sheet size is cheapest")
-        st.caption(
-            "Pieces from different products that share the same material and "
-            "thickness also share leftover space on the same sheet (rotation "
-            "allowed). Packing is a greedy heuristic, so manual nesting may "
-            "save a few % more."
-        )
 
         grand_total_eur  = 0.0
         any_priced       = False
