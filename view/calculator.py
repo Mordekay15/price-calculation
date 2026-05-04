@@ -67,6 +67,18 @@ def render(data: dict) -> None:
         key="calc_margin_pct",
     )
 
+    charge_mode = st.radio(
+        "Charge customer for",
+        ["Ordered quantity", "Full sheet"],
+        horizontal=True,
+        key="calc_charge_mode",
+        help=(
+            "Ordered quantity: bill only the delivered pieces (no waste). "
+            "Full sheet: bill the whole sheet, including off-cuts."
+        ),
+    )
+    charge_full_sheet = charge_mode == "Full sheet"
+
     _init_products()
 
     # ── Products ──────────────────────────────────────────────────────────────
@@ -154,12 +166,6 @@ def render(data: dict) -> None:
     if groups:
         st.divider()
         st.markdown("**Sheet usage** — which sheet size is cheapest")
-        st.caption(
-            "Pieces from different products that share the same material and "
-            "thickness also share leftover space on the same sheet (rotation "
-            "allowed). Packing is a greedy heuristic, so manual nesting may "
-            "save a few % more."
-        )
 
         grand_total_eur  = 0.0
         any_priced       = False
@@ -171,6 +177,7 @@ def render(data: dict) -> None:
                 thickness=thickness,
                 products=group_prods,
                 margin_pct=margin_pct,
+                charge_full_sheet=charge_full_sheet,
             )
             if cheapest_eur is not None:
                 grand_total_eur += cheapest_eur
@@ -224,7 +231,10 @@ def render(data: dict) -> None:
         m1.metric("Total piece weight (kg)", f"{total_weight_kg:.3f}")
         if total_cost_eur:
             m2.metric("Total material cost (€)", f"{total_cost_eur:,.2f}")
-        st.caption("€/pc uses the cheapest available sheet size price × piece weight (no waste).")
+        if charge_full_sheet:
+            st.caption("€/pc allocates the full-sheet cost across pieces by weight share.")
+        else:
+            st.caption("€/pc uses the cheapest available sheet size price × piece weight (no waste).")
         st.dataframe(table_rows, use_container_width=True, hide_index=True)
 
 
@@ -242,6 +252,7 @@ def _render_sheet_usage_group(
     thickness: str,
     products: list[dict],
     margin_pct: float = 0.0,
+    charge_full_sheet: bool = False,
 ) -> tuple[float | None, float | None]:
     """
     Render one sheet-usage table for products sharing the same material and
@@ -271,27 +282,37 @@ def _render_sheet_usage_group(
         st.info("No sheet-size pricing available for this combination.")
         return None, None
 
+    pieces_kg = sum(
+        piece_weight_kg(p["width"], p["height"], thickness_mm, material) * p["qty"]
+        for p in products
+    )
+
     rows = []
     for _size_label, sw, sh, price_per_tonne in candidates:
         sheets, failed  = pack(pieces, sw, sh, allow_rotation=True)
         summary         = summarise(sw, sh, sheets, len(failed))
         has_failures    = summary["failed_pieces"] > 0
         sheet_weight_kg = sw * sh * thickness_mm * density_for_material(material)
-        total_kg        = sheet_weight_kg * summary["sheets_needed"]
-        result          = calculate(price_per_tonne, total_kg / 1000, margin_pct=margin_pct)
+        sheet_kg        = sheet_weight_kg * summary["sheets_needed"]
+        billable_kg     = sheet_kg if charge_full_sheet else pieces_kg
+        result          = calculate(price_per_tonne, billable_kg / 1000, margin_pct=margin_pct)
         adjusted_ppt    = result["after_margin"]
         total_eur       = result["total"]
         cost_per_pc     = round(total_eur / n_pieces, 2) if (not has_failures and n_pieces) else ""
+        # Effective rate to apply against piece weight so the pieces-summary
+        # totals add up to the sheet-usage total in both charge modes.
+        bill_rate_ppt   = adjusted_ppt * (sheet_kg / pieces_kg) if (charge_full_sheet and pieces_kg) else adjusted_ppt
         rows.append({
             "Sheet size":     f"{_fmt_m(sw)} × {_fmt_m(sh)} m",
             "Price (€/tn)":   f"{adjusted_ppt:,.2f}",
             "Sheets needed":  "" if has_failures else summary["sheets_needed"],
             "Utilisation":    "" if has_failures else f"{summary['utilization'] * 100:.1f} %",
-            "Sheet kg":       "" if has_failures else round(total_kg, 2),
+            "Sheet kg":       "" if has_failures else round(sheet_kg, 2),
+            "Billable kg":    "" if has_failures else round(billable_kg, 2),
             "Total €":        "" if has_failures else round(total_eur, 2),
             "€/pc":           cost_per_pc,
             "_total":         total_eur,
-            "_ppt":           adjusted_ppt,
+            "_ppt":           bill_rate_ppt,
             "_failed":        summary["failed_pieces"],
         })
 
