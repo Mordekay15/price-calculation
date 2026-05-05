@@ -490,7 +490,6 @@ def _render_sheet_usage_group(
     ]
 
     select_key = f"sheet_select::{material}::{thickness}"
-    st.caption("Klikkaa riviä valitaksesi levykoon. Liian pieniä levyjä (🚫) ei voi valita.")
     event = st.dataframe(
         display_rows,
         use_container_width=True,

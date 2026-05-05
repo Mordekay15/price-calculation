@@ -17,7 +17,7 @@ from view import calculator
 # Each supplier: (label, json path, parser function).
 SUPPLIERS = {
     "stremet": {
-        "label":  "Tata Steel / Stremet",
+        "label":  "Tata Steel",
         "path":   pathlib.Path("price_data.json"),
         "parser": parse_stremet_pdf,
     },
