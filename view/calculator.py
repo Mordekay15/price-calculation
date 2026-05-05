@@ -152,6 +152,19 @@ def render(data: dict) -> None:
         st.session_state.calc_products.pop(to_delete)
         st.rerun()
 
+    rankavali_mm = int(st.number_input(
+        "Rankaväli (mm)",
+        min_value=0,
+        value=0,
+        step=1,
+        key="calc_rankavali_mm",
+        help=(
+            "Kappaleiden välinen rankaväli (leikkausvara). Lisätään jokaisen "
+            "kappaleen leveyteen ja korkeuteen sijoittelussa, jotta vierekkäiset "
+            "kappaleet pysyvät tämän etäisyyden päässä toisistaan."
+        ),
+    ))
+
     use_kynsiraina = st.checkbox(
         "Käytä kynsirainaa (pitkä sivu)",
         value=False,
@@ -200,6 +213,7 @@ def render(data: dict) -> None:
                 margin_pct=margin_pct,
                 charge_full_sheet=charge_full_sheet,
                 long_side_clamp_mm=long_side_clamp_mm,
+                rankavali_mm=rankavali_mm,
             )
             if cheapest_eur is not None:
                 grand_total_eur += cheapest_eur
@@ -371,6 +385,7 @@ def _render_sheet_usage_group(
     margin_pct: float = 0.0,
     charge_full_sheet: bool = False,
     long_side_clamp_mm: int = 0,
+    rankavali_mm: int = 0,
 ) -> tuple[float | None, float | None]:
     """
     Render one sheet-usage table for products sharing the same material and
@@ -382,6 +397,15 @@ def _render_sheet_usage_group(
     pieces = expand_products(products)
     if not pieces:
         return None, None
+
+    # Inflate each piece by the rankaväli so the packer leaves a gap between
+    # adjacent pieces. The packer still uses the gross sheet size; the long-
+    # side claw strip (below) is applied separately to the sheet dims.
+    if rankavali_mm > 0:
+        pieces = [
+            (p_idx, c_idx, w + rankavali_mm, h + rankavali_mm)
+            for p_idx, c_idx, w, h in pieces
+        ]
 
     thickness_mm = parse_thickness_mm(thickness)
     if thickness_mm is None:
