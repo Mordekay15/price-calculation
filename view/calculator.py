@@ -351,8 +351,10 @@ def _render_sheet_usage_group(
 ) -> tuple[float | None, float | None]:
     """
     Render one sheet-usage table for products sharing the same material and
-    thickness. Returns (cheapest_total_eur, cheapest_price_per_tonne), both
-    None when no priced sheet size can fulfil the order.
+    thickness. The user can click a row to override the default cheapest pick;
+    rows where pieces don't fit are ignored if clicked. Returns the (total_eur,
+    price_per_tonne) of the active row, or (None, None) when no priced sheet
+    size can fulfil the order.
     """
     pieces = expand_products(products)
     if not pieces:
@@ -424,15 +426,65 @@ def _render_sheet_usage_group(
             },
         })
 
-    valid_rows         = [r for r in rows if r["_failed"] == 0]
-    cheapest_eur       = None
-    cheapest_ppt       = None
-    if valid_rows:
-        cheapest     = min(valid_rows, key=lambda r: r["_total"])
-        cheapest_eur = cheapest["_total"]
-        cheapest_ppt = cheapest["_ppt"]
-        for r in rows:
-            r["Paras"] = "◀" if r is cheapest else ""
+    valid_indices = [i for i, r in enumerate(rows) if r["_failed"] == 0]
+    cheapest_idx: int | None = (
+        min(valid_indices, key=lambda i: rows[i]["_total"]) if valid_indices else None
+    )
+
+    for i, r in enumerate(rows):
+        if r["_failed"] > 0:
+            r["Paras"] = "🚫"
+        elif i == cheapest_idx:
+            r["Paras"] = "◀ edullisin"
+        else:
+            r["Paras"] = ""
+
+    display_rows = [
+        {k: v for k, v in r.items() if not k.startswith("_")}
+        for r in rows
+    ]
+
+    select_key = f"sheet_select::{material}::{thickness}"
+    st.caption("Klikkaa riviä valitaksesi levykoon. Liian pieniä levyjä (🚫) ei voi valita.")
+    event = st.dataframe(
+        display_rows,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key=select_key,
+    )
+
+    selected_idx = cheapest_idx
+    user_overrode = False
+    sel_rows = list(getattr(event.selection, "rows", []) or [])
+    if sel_rows:
+        idx = sel_rows[0]
+        if 0 <= idx < len(rows) and rows[idx]["_failed"] == 0:
+            selected_idx = idx
+            user_overrode = idx != cheapest_idx
+        else:
+            st.warning(
+                f"**{rows[idx]['Levykoko']}** on liian pieni — "
+                f"{rows[idx]['_failed']} kpl ei mahdu. Käytetään edullisinta levykokoa."
+            )
+
+    if selected_idx is None:
+        return None, None
+
+    active = rows[selected_idx]
+    cheapest = rows[cheapest_idx] if cheapest_idx is not None else None
+
+    if user_overrode and cheapest is not None:
+        delta = active["_total"] - cheapest["_total"]
+        st.info(
+            f"Valittu: **{active['Levykoko']}** — "
+            f"{active['Tarvittavat levyt']} levyä, "
+            f"**{active['€/kpl']} €/kpl**, "
+            f"yhteensä **{active['Yhteensä €']:,.2f} €** "
+            f"(+{delta:,.2f} € verrattuna edullisimpaan {cheapest['Levykoko']})."
+        )
+    elif cheapest is not None:
         st.success(
             f"Edullisin: **{cheapest['Levykoko']}** — "
             f"{cheapest['Tarvittavat levyt']} levyä, "
@@ -440,23 +492,15 @@ def _render_sheet_usage_group(
             f"yhteensä **{cheapest['Yhteensä €']:,.2f} €**, "
             f"käyttöaste {cheapest['Käyttöaste']}."
         )
-        _render_breakdown(
-            material=material,
-            thickness=thickness,
-            thickness_mm=thickness_mm,
-            margin_pct=margin_pct,
-            charge_full_sheet=charge_full_sheet,
-            n_pieces=n_pieces,
-            data=cheapest["_breakdown"],
-        )
-    else:
-        for r in rows:
-            r["Paras"] = ""
 
-    display_rows = [
-        {k: v for k, v in r.items() if not k.startswith("_")}
-        for r in rows
-    ]
-    st.dataframe(display_rows, use_container_width=True, hide_index=True)
+    _render_breakdown(
+        material=material,
+        thickness=thickness,
+        thickness_mm=thickness_mm,
+        margin_pct=margin_pct,
+        charge_full_sheet=charge_full_sheet,
+        n_pieces=n_pieces,
+        data=active["_breakdown"],
+    )
 
-    return cheapest_eur, cheapest_ppt
+    return active["_total"], active["_ppt"]
