@@ -710,13 +710,6 @@ def _sheet_svg(
             f'font-family="sans-serif" font-size="{font_size * 0.65:.0f}" '
             f'fill="#0f172a">{orig_w:g}×{orig_h:g}</text>'
         )
-        if placement.rotated:
-            parts.append(
-                f'<text x="{placement.x + dw - 20}" y="{placement.y + 60}" '
-                f'text-anchor="end" '
-                f'font-family="sans-serif" font-size="{font_size * 0.7:.0f}" '
-                f'fill="#dc2626" font-weight="700">↻ 90°</text>'
-            )
 
     parts.append("</svg>")
     return "".join(parts)
