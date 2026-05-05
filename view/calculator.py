@@ -79,27 +79,6 @@ def render(data: dict) -> None:
     )
     charge_full_sheet = charge_mode == "Koko levy"
 
-    use_kynsiraina = st.checkbox(
-        "Käytä kynsirainaa (pitkä sivu)",
-        value=False,
-        key="calc_use_kynsiraina",
-        help=(
-            "Kynsiraina on levyn pitkän sivun reunavyöhyke, johon koneen kynnet "
-            "tarttuvat — aluetta ei voi käyttää kappaleiden sijoitteluun. "
-            "Levy ostetaan silti täysikokoisena, joten paino ja hinta lasketaan "
-            "bruttomitoista."
-        ),
-    )
-    long_side_clamp_mm = 0
-    if use_kynsiraina:
-        long_side_clamp_mm = int(st.number_input(
-            "Pitkän sivun kynsirainan leveys (mm)",
-            min_value=0,
-            value=40,
-            step=1,
-            key="calc_long_side_clamp_mm",
-        ))
-
     _init_products()
 
     # ── Products ──────────────────────────────────────────────────────────────
@@ -172,6 +151,27 @@ def render(data: dict) -> None:
     if to_delete is not None:
         st.session_state.calc_products.pop(to_delete)
         st.rerun()
+
+    use_kynsiraina = st.checkbox(
+        "Käytä kynsirainaa (pitkä sivu)",
+        value=False,
+        key="calc_use_kynsiraina",
+        help=(
+            "Kynsiraina on levyn pitkän sivun reunavyöhyke, johon koneen kynnet "
+            "tarttuvat — aluetta ei voi käyttää kappaleiden sijoitteluun. "
+            "Levy ostetaan silti täysikokoisena, joten paino ja hinta lasketaan "
+            "bruttomitoista."
+        ),
+    )
+    long_side_clamp_mm = 0
+    if use_kynsiraina:
+        long_side_clamp_mm = int(st.number_input(
+            "Pitkän sivun kynsirainan leveys (mm)",
+            min_value=0,
+            value=40,
+            step=1,
+            key="calc_long_side_clamp_mm",
+        ))
 
     # ── Sheet usage (per material + thickness group) ─────────────────────────
 
