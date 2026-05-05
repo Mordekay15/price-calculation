@@ -456,6 +456,7 @@ def _render_sheet_usage_group(
             "_total":         total_eur,
             "_ppt":           bill_rate_ppt,
             "_failed":        summary["failed_pieces"],
+            "_utilization":   summary["utilization"],
             "_breakdown": {
                 "sw":              sw,
                 "sh":              sh,
@@ -471,9 +472,14 @@ def _render_sheet_usage_group(
             },
         })
 
+    # Tiebreak on utilization (descending) so that when sheet sizes produce the
+    # same total cost — e.g. in "Tilattu määrä" mode where billable kg equals
+    # piece kg regardless of sheet — the most efficient sheet wins instead of
+    # whichever happened to be listed first.
     valid_indices = [i for i, r in enumerate(rows) if r["_failed"] == 0]
     cheapest_idx: int | None = (
-        min(valid_indices, key=lambda i: rows[i]["_total"]) if valid_indices else None
+        min(valid_indices, key=lambda i: (rows[i]["_total"], -rows[i]["_utilization"]))
+        if valid_indices else None
     )
 
     for i, r in enumerate(rows):
