@@ -79,6 +79,27 @@ def render(data: dict) -> None:
     )
     charge_full_sheet = charge_mode == "Koko levy"
 
+    use_kynsiraina = st.checkbox(
+        "Käytä kynsirainaa (pitkä sivu)",
+        value=False,
+        key="calc_use_kynsiraina",
+        help=(
+            "Kynsiraina on levyn pitkän sivun reunavyöhyke, johon koneen kynnet "
+            "tarttuvat — aluetta ei voi käyttää kappaleiden sijoitteluun. "
+            "Levy ostetaan silti täysikokoisena, joten paino ja hinta lasketaan "
+            "bruttomitoista."
+        ),
+    )
+    long_side_clamp_mm = 0
+    if use_kynsiraina:
+        long_side_clamp_mm = int(st.number_input(
+            "Pitkän sivun kynsirainan leveys (mm)",
+            min_value=0,
+            value=40,
+            step=1,
+            key="calc_long_side_clamp_mm",
+        ))
+
     _init_products()
 
     # ── Products ──────────────────────────────────────────────────────────────
@@ -178,6 +199,7 @@ def render(data: dict) -> None:
                 products=group_prods,
                 margin_pct=margin_pct,
                 charge_full_sheet=charge_full_sheet,
+                long_side_clamp_mm=long_side_clamp_mm,
             )
             if cheapest_eur is not None:
                 grand_total_eur += cheapest_eur
@@ -348,6 +370,7 @@ def _render_sheet_usage_group(
     products: list[dict],
     margin_pct: float = 0.0,
     charge_full_sheet: bool = False,
+    long_side_clamp_mm: int = 0,
 ) -> tuple[float | None, float | None]:
     """
     Render one sheet-usage table for products sharing the same material and
@@ -386,7 +409,12 @@ def _render_sheet_usage_group(
 
     rows = []
     for _size_label, sw, sh, price_per_tonne in candidates:
-        sheets, failed  = pack(pieces, sw, sh, allow_rotation=True)
+        # Long-side claw strip eats into the perpendicular (short) dimension.
+        if sw >= sh:
+            eff_w, eff_h = sw, max(0, sh - long_side_clamp_mm)
+        else:
+            eff_w, eff_h = max(0, sw - long_side_clamp_mm), sh
+        sheets, failed  = pack(pieces, eff_w, eff_h, allow_rotation=True)
         summary         = summarise(sw, sh, sheets, len(failed))
         has_failures    = summary["failed_pieces"] > 0
         sheet_weight_kg = sw * sh * thickness_mm * density_for_material(material)
