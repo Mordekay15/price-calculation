@@ -644,7 +644,7 @@ def _render_nesting(
     sw_px       = sheet_w * scale
     sh_px       = sheet_h * scale
 
-    cols_per_row = 2 if len(sheets) > 1 else 1
+    cols_per_row = min(4, len(sheets))
     for row_start in range(0, len(sheets), cols_per_row):
         row = sheets[row_start:row_start + cols_per_row]
         cols = st.columns(cols_per_row)
