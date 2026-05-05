@@ -68,8 +68,8 @@ def save_data(path: pathlib.Path, data: dict, filename: str) -> dict:
 merged_data: dict = {}
 
 with st.sidebar:
-    st.header("Price lists")
-    st.caption("Upload each supplier's monthly PDF separately.")
+    st.header("Hinnastot")
+    st.caption("Lataa kunkin toimittajan kuukausittainen PDF erikseen.")
 
     for key, cfg in SUPPLIERS.items():
         st.divider()
@@ -78,12 +78,12 @@ with st.sidebar:
         stored = load_stored_data(cfg["path"])
         if stored:
             st.success(
-                f"Loaded: **{stored['source_file']}**\n\n"
-                f"Updated: {stored['updated_at']}"
+                f"Ladattu: **{stored['source_file']}**\n\n"
+                f"Päivitetty: {stored['updated_at']}"
             )
 
         uploaded = st.file_uploader(
-            f"Upload new {cfg['label']} PDF" if stored else f"Upload {cfg['label']} PDF",
+            f"Lataa uusi {cfg['label']} PDF" if stored else f"Lataa {cfg['label']} PDF",
             type="pdf",
             key=f"upload_{key}",
         )
@@ -92,11 +92,11 @@ with st.sidebar:
         # we only parse + save once per upload (otherwise updated_at ticks).
         seen_key = f"processed_upload_{key}"
         if uploaded and st.session_state.get(seen_key) != uploaded.file_id:
-            with st.spinner(f"Parsing {cfg['label']} PDF..."):
+            with st.spinner(f"Käsitellään {cfg['label']} PDF..."):
                 parsed = cfg["parser"](uploaded.read())
                 stored = save_data(cfg["path"], parsed, uploaded.name)
             st.session_state[seen_key] = uploaded.file_id
-            st.success(f"Saved {cfg['label']} prices from **{uploaded.name}**.")
+            st.success(f"Tallennettu {cfg['label']}-hinnat tiedostosta **{uploaded.name}**.")
             st.rerun()
 
         if stored:
@@ -105,7 +105,7 @@ with st.sidebar:
 # ── Guard: nothing to show yet ────────────────────────────────────────────────
 
 if not merged_data:
-    st.info("No price data found. Upload a PDF in the sidebar to get started.")
+    st.info("Hintatietoja ei löytynyt. Lataa PDF sivupalkista aloittaaksesi.")
     st.stop()
 
 # ── Main content ──────────────────────────────────────────────────────────────

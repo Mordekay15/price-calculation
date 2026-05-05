@@ -28,8 +28,8 @@ from core.calculator import (
 )
 from core.nesting import expand_products, pack, parse_size, summarise
 
-_PLACEHOLDER_MAT   = "— Select material —"
-_PLACEHOLDER_THICK = "— Select thickness —"
+_PLACEHOLDER_MAT   = "— Valitse materiaali —"
+_PLACEHOLDER_THICK = "— Valitse paksuus —"
 
 
 def _new_product() -> dict:
@@ -52,14 +52,14 @@ def render(data: dict) -> None:
     lookup = build_lookup(data)
 
     if not lookup:
-        st.info("No price data available.")
+        st.info("Hintatietoja ei saatavilla.")
         return
 
-    st.subheader("Price calculator")
+    st.subheader("Hintalaskuri")
     materials = get_materials(lookup)
 
     margin_pct = st.number_input(
-        "Material margin / kate (%)",
+        "Materiaalin kate (%)",
         min_value=10.0,
         max_value=20.0,
         value=15.0,
@@ -68,37 +68,37 @@ def render(data: dict) -> None:
     )
 
     charge_mode = st.radio(
-        "Charge customer for",
-        ["Ordered quantity", "Full sheet"],
+        "Veloitus asiakkaalta",
+        ["Tilattu määrä", "Koko levy"],
         horizontal=True,
         key="calc_charge_mode",
         help=(
-            "Ordered quantity: bill only the delivered pieces (no waste). "
-            "Full sheet: bill the whole sheet, including off-cuts."
+            "Tilattu määrä: laskuta vain toimitetut kappaleet (ei hukkaa). "
+            "Koko levy: laskuta koko levy, hukkapalat mukaan lukien."
         ),
     )
-    charge_full_sheet = charge_mode == "Full sheet"
+    charge_full_sheet = charge_mode == "Koko levy"
 
     _init_products()
 
     # ── Products ──────────────────────────────────────────────────────────────
 
-    st.markdown("**Products**")
+    st.markdown("**Tuotteet**")
 
     to_delete = None
     for i, prod in enumerate(st.session_state.calc_products):
         pid = prod["id"]
         with st.container(border=True):
             hdr_cols = st.columns([6, 1])
-            hdr_cols[0].markdown(f"**Product {i + 1}**")
+            hdr_cols[0].markdown(f"**Tuote {i + 1}**")
             if len(st.session_state.calc_products) > 1:
-                if hdr_cols[1].button("Remove", key=f"del_{pid}"):
+                if hdr_cols[1].button("Poista", key=f"del_{pid}"):
                     to_delete = i
 
             mat_opts = [_PLACEHOLDER_MAT] + materials
             mat_default = prod["material"] if prod["material"] in materials else _PLACEHOLDER_MAT
             mat_raw = st.selectbox(
-                "Material",
+                "Materiaali",
                 mat_opts,
                 index=mat_opts.index(mat_default),
                 key=f"mat_{pid}",
@@ -114,27 +114,27 @@ def render(data: dict) -> None:
                 th_opts = [_PLACEHOLDER_THICK] + thicknesses
                 th_default = prod["thickness"] if prod["thickness"] in thicknesses else _PLACEHOLDER_THICK
                 th_raw = st.selectbox(
-                    "Thickness (mm)",
+                    "Paksuus (mm)",
                     th_opts,
                     index=th_opts.index(th_default),
                     key=f"th_{pid}",
                 )
                 thickness = th_raw if th_raw != _PLACEHOLDER_THICK else None
             else:
-                st.selectbox("Thickness (mm)", [_PLACEHOLDER_THICK], index=0, disabled=True, key=f"th_{pid}_disabled")
+                st.selectbox("Paksuus (mm)", [_PLACEHOLDER_THICK], index=0, disabled=True, key=f"th_{pid}_disabled")
                 thickness = None
 
             inp_cols = st.columns(3)
             w = inp_cols[0].number_input(
-                "Width (mm)", min_value=0.0, value=float(prod["width"]),
+                "Leveys (mm)", min_value=0.0, value=float(prod["width"]),
                 step=10.0, key=f"w_{pid}",
             )
             h = inp_cols[1].number_input(
-                "Height (mm)", min_value=0.0, value=float(prod["height"]),
+                "Korkeus (mm)", min_value=0.0, value=float(prod["height"]),
                 step=10.0, key=f"h_{pid}",
             )
             q = inp_cols[2].number_input(
-                "Quantity (pcs)", min_value=1, value=int(prod["qty"]),
+                "Määrä (kpl)", min_value=1, value=int(prod["qty"]),
                 step=1, key=f"q_{pid}",
             )
 
@@ -144,7 +144,7 @@ def render(data: dict) -> None:
             prod["height"]    = h
             prod["qty"]       = q
 
-    if st.button("+ Add product"):
+    if st.button("+ Lisää tuote"):
         st.session_state.calc_products.append(_new_product())
         st.rerun()
 
@@ -165,7 +165,7 @@ def render(data: dict) -> None:
 
     if groups:
         st.divider()
-        st.markdown("**Sheet usage** — which sheet size is cheapest")
+        st.markdown("**Levyn käyttö** — mikä levykoko on edullisin")
 
         grand_total_eur  = 0.0
         any_priced       = False
@@ -187,7 +187,7 @@ def render(data: dict) -> None:
 
         if any_priced and len(groups) > 1:
             st.divider()
-            st.metric("Combined cheapest total (€)", f"{grand_total_eur:,.2f}")
+            st.metric("Yhdistetty edullisin yhteissumma (€)", f"{grand_total_eur:,.2f}")
 
     # ── Pieces summary (bottom of page) ──────────────────────────────────────
 
@@ -212,29 +212,29 @@ def render(data: dict) -> None:
             total_cost_eur += batch_weight * price_per_kg
 
         table_rows.append({
-            "#":             i + 1,
-            "Material":      prod["material"] or "",
-            "Thickness":     prod["thickness"] or "",
-            "Width (mm)":    prod["width"],
-            "Height (mm)":   prod["height"],
-            "Qty (pcs)":     prod["qty"],
-            "kg/pc":         round(one_weight,   3),
-            "Total kg":      round(batch_weight, 3),
-            "€/pc":          one_cost,
-            "Total €":       batch_cost,
+            "#":              i + 1,
+            "Materiaali":     prod["material"] or "",
+            "Paksuus":        prod["thickness"] or "",
+            "Leveys (mm)":    prod["width"],
+            "Korkeus (mm)":   prod["height"],
+            "Määrä (kpl)":    prod["qty"],
+            "kg/kpl":         round(one_weight,   3),
+            "Yhteensä kg":    round(batch_weight, 3),
+            "€/kpl":          one_cost,
+            "Yhteensä €":     batch_cost,
         })
 
     if table_rows:
         st.divider()
-        st.markdown("**Pieces summary**")
+        st.markdown("**Kappaleyhteenveto**")
         m1, m2 = st.columns(2)
-        m1.metric("Total piece weight (kg)", f"{total_weight_kg:.3f}")
+        m1.metric("Kappaleiden yhteispaino (kg)", f"{total_weight_kg:.3f}")
         if total_cost_eur:
-            m2.metric("Total material cost (€)", f"{total_cost_eur:,.2f}")
+            m2.metric("Materiaalikustannukset yhteensä (€)", f"{total_cost_eur:,.2f}")
         if charge_full_sheet:
-            st.caption("€/pc allocates the full-sheet cost across pieces by weight share.")
+            st.caption("€/kpl jakaa koko levyn kustannuksen kappaleiden kesken painon mukaan.")
         else:
-            st.caption("€/pc uses the cheapest available sheet size price × piece weight (no waste).")
+            st.caption("€/kpl käyttää edullisimman saatavilla olevan levykoon hintaa × kappalepaino (ei hukkaa).")
         st.dataframe(table_rows, use_container_width=True, hide_index=True)
 
 
@@ -271,71 +271,71 @@ def _render_breakdown(
     density_kg_mm3 = density_for_material(material)
     density_g_cm3  = density_kg_mm3 * 1e6
     margin_factor  = 1 + margin_pct / 100
-    mode_label     = "full sheet" if charge_full_sheet else "ordered pieces"
+    mode_label     = "koko levy" if charge_full_sheet else "tilatut kappaleet"
 
     steps = [
         {
-            "Step":        "1. Base price (from price list)",
-            "Calculation": f"{material}, {thickness} mm",
-            "Value":       f"{base_ppt:,.2f} €/tn",
+            "Vaihe":    "1. Perushinta (hinnastosta)",
+            "Laskenta": f"{material}, {thickness} mm",
+            "Arvo":     f"{base_ppt:,.2f} €/tn",
         },
         {
-            "Step":        f"2. Apply margin (+{margin_pct:g}%)",
-            "Calculation": f"{base_ppt:,.2f} × {margin_factor:.4f}",
-            "Value":       f"{adjusted_ppt:,.2f} €/tn",
+            "Vaihe":    f"2. Lisää kate (+{margin_pct:g}%)",
+            "Laskenta": f"{base_ppt:,.2f} × {margin_factor:.4f}",
+            "Arvo":     f"{adjusted_ppt:,.2f} €/tn",
         },
         {
-            "Step":        "3. Material density",
-            "Calculation": f"density({material})",
-            "Value":       f"{density_g_cm3:.2f} g/cm³",
+            "Vaihe":    "3. Materiaalin tiheys",
+            "Laskenta": f"tiheys({material})",
+            "Arvo":     f"{density_g_cm3:.2f} g/cm³",
         },
         {
-            "Step":        "4. Weight of one sheet",
-            "Calculation": f"{sw} × {sh} × {thickness_mm:g} mm × {density_g_cm3:.2f} g/cm³",
-            "Value":       f"{sheet_weight_kg:,.2f} kg",
+            "Vaihe":    "4. Yhden levyn paino",
+            "Laskenta": f"{sw} × {sh} × {thickness_mm:g} mm × {density_g_cm3:.2f} g/cm³",
+            "Arvo":     f"{sheet_weight_kg:,.2f} kg",
         },
         {
-            "Step":        "5. Sheets needed (from nesting)",
-            "Calculation": f"{n_pieces} piece(s) packed onto {_fmt_m(sw)} × {_fmt_m(sh)} m",
-            "Value":       f"{sheets_needed}",
+            "Vaihe":    "5. Tarvittavat levyt (sijoittelusta)",
+            "Laskenta": f"{n_pieces} kpl sijoitettu {_fmt_m(sw)} × {_fmt_m(sh)} m levylle",
+            "Arvo":     f"{sheets_needed}",
         },
         {
-            "Step":        "6. Total sheet weight",
-            "Calculation": f"{sheet_weight_kg:,.2f} × {sheets_needed}",
-            "Value":       f"{sheet_kg:,.2f} kg",
+            "Vaihe":    "6. Levyjen kokonaispaino",
+            "Laskenta": f"{sheet_weight_kg:,.2f} × {sheets_needed}",
+            "Arvo":     f"{sheet_kg:,.2f} kg",
         },
         {
-            "Step":        "7. Pieces total weight",
-            "Calculation": "Σ (w × h × t × density × qty)",
-            "Value":       f"{pieces_kg:,.2f} kg",
+            "Vaihe":    "7. Kappaleiden kokonaispaino",
+            "Laskenta": "Σ (l × k × p × tiheys × määrä)",
+            "Arvo":     f"{pieces_kg:,.2f} kg",
         },
         {
-            "Step":        f"8. Billable weight ({mode_label})",
-            "Calculation": "sheet kg" if charge_full_sheet else "pieces kg",
-            "Value":       f"{billable_kg:,.2f} kg",
+            "Vaihe":    f"8. Laskutettava paino ({mode_label})",
+            "Laskenta": "levy kg" if charge_full_sheet else "kappaleet kg",
+            "Arvo":     f"{billable_kg:,.2f} kg",
         },
         {
-            "Step":        "9. Total cost",
-            "Calculation": f"{adjusted_ppt:,.2f} €/tn × {billable_kg:,.2f} kg / 1000",
-            "Value":       f"{total_eur:,.2f} €",
+            "Vaihe":    "9. Kokonaiskustannus",
+            "Laskenta": f"{adjusted_ppt:,.2f} €/tn × {billable_kg:,.2f} kg / 1000",
+            "Arvo":     f"{total_eur:,.2f} €",
         },
     ]
     if n_pieces and isinstance(cost_per_pc, (int, float)):
         steps.append({
-            "Step":        "10. Cost per piece",
-            "Calculation": f"{total_eur:,.2f} € / {n_pieces} pc",
-            "Value":       f"{cost_per_pc:,.2f} €/pc",
+            "Vaihe":    "10. Kustannus per kappale",
+            "Laskenta": f"{total_eur:,.2f} € / {n_pieces} kpl",
+            "Arvo":     f"{cost_per_pc:,.2f} €/kpl",
         })
 
-    with st.expander("Show calculation breakdown"):
+    with st.expander("Näytä laskennan erittely"):
         st.dataframe(steps, use_container_width=True, hide_index=True)
         if charge_full_sheet and pieces_kg:
             effective_ppt = adjusted_ppt * (sheet_kg / pieces_kg)
             st.caption(
-                f"In **Full sheet** mode, the {sheet_kg:,.2f} kg of sheet is billed "
-                f"across {pieces_kg:,.2f} kg of actual pieces. The pieces-summary "
-                f"table allocates this back per piece by weight share, using an "
-                f"effective rate of "
+                f"**Koko levy** -tilassa {sheet_kg:,.2f} kg levyä laskutetaan "
+                f"{pieces_kg:,.2f} kg todellisille kappaleille. Kappaleyhteenveto-"
+                f"taulukko jakaa tämän takaisin kappaleille painon mukaan "
+                f"käyttäen efektiivistä hintaa "
                 f"{adjusted_ppt:,.2f} × ({sheet_kg:,.2f} / {pieces_kg:,.2f}) = "
                 f"**{effective_ppt:,.2f} €/tn**."
             )
@@ -374,7 +374,7 @@ def _render_sheet_usage_group(
 
     st.markdown(f"**{material}** · **{thickness} mm**")
     if not candidates:
-        st.info("No sheet-size pricing available for this combination.")
+        st.info("Tälle yhdistelmälle ei ole levykohtaista hinnoittelua.")
         return None, None
 
     pieces_kg = sum(
@@ -398,14 +398,14 @@ def _render_sheet_usage_group(
         # totals add up to the sheet-usage total in both charge modes.
         bill_rate_ppt   = adjusted_ppt * (sheet_kg / pieces_kg) if (charge_full_sheet and pieces_kg) else adjusted_ppt
         rows.append({
-            "Sheet size":     f"{_fmt_m(sw)} × {_fmt_m(sh)} m",
-            "Price (€/tn)":   f"{adjusted_ppt:,.2f}",
-            "Sheets needed":  "" if has_failures else summary["sheets_needed"],
-            "Utilisation":    "" if has_failures else f"{summary['utilization'] * 100:.1f} %",
-            "Sheet kg":       "" if has_failures else round(sheet_kg, 2),
-            "Billable kg":    "" if has_failures else round(billable_kg, 2),
-            "Total €":        "" if has_failures else round(total_eur, 2),
-            "€/pc":           cost_per_pc,
+            "Levykoko":          f"{_fmt_m(sw)} × {_fmt_m(sh)} m",
+            "Hinta (€/tn)":      f"{adjusted_ppt:,.2f}",
+            "Tarvittavat levyt": "" if has_failures else summary["sheets_needed"],
+            "Käyttöaste":        "" if has_failures else f"{summary['utilization'] * 100:.1f} %",
+            "Levyn kg":          "" if has_failures else round(sheet_kg, 2),
+            "Laskutettava kg":   "" if has_failures else round(billable_kg, 2),
+            "Yhteensä €":        "" if has_failures else round(total_eur, 2),
+            "€/kpl":             cost_per_pc,
             "_total":         total_eur,
             "_ppt":           bill_rate_ppt,
             "_failed":        summary["failed_pieces"],
@@ -432,13 +432,13 @@ def _render_sheet_usage_group(
         cheapest_eur = cheapest["_total"]
         cheapest_ppt = cheapest["_ppt"]
         for r in rows:
-            r["Best"] = "◀" if r is cheapest else ""
+            r["Paras"] = "◀" if r is cheapest else ""
         st.success(
-            f"Cheapest: **{cheapest['Sheet size']}** — "
-            f"{cheapest['Sheets needed']} sheet(s), "
-            f"**{cheapest['€/pc']} €/pc**, "
-            f"total **{cheapest['Total €']:,.2f} €** "
-            f"at {cheapest['Utilisation']} utilisation."
+            f"Edullisin: **{cheapest['Levykoko']}** — "
+            f"{cheapest['Tarvittavat levyt']} levyä, "
+            f"**{cheapest['€/kpl']} €/kpl**, "
+            f"yhteensä **{cheapest['Yhteensä €']:,.2f} €**, "
+            f"käyttöaste {cheapest['Käyttöaste']}."
         )
         _render_breakdown(
             material=material,
@@ -451,7 +451,7 @@ def _render_sheet_usage_group(
         )
     else:
         for r in rows:
-            r["Best"] = ""
+            r["Paras"] = ""
 
     display_rows = [
         {k: v for k, v in r.items() if not k.startswith("_")}
