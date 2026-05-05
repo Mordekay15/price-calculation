@@ -67,18 +67,6 @@ def render(data: dict) -> None:
         key="calc_margin_pct",
     )
 
-    charge_mode = st.radio(
-        "Veloitus asiakkaalta",
-        ["Tilattu määrä", "Koko levy"],
-        horizontal=True,
-        key="calc_charge_mode",
-        help=(
-            "Tilattu määrä: laskuta vain toimitetut kappaleet (ei hukkaa). "
-            "Koko levy: laskuta koko levy, hukkapalat mukaan lukien."
-        ),
-    )
-    charge_full_sheet = charge_mode == "Koko levy"
-
     _init_products()
 
     # ── Products ──────────────────────────────────────────────────────────────
@@ -206,7 +194,6 @@ def render(data: dict) -> None:
                 thickness=thickness,
                 products=group_prods,
                 margin_pct=margin_pct,
-                charge_full_sheet=charge_full_sheet,
                 long_side_clamp_mm=long_side_clamp_mm,
                 rankavali_mm=rankavali_mm,
             )
@@ -262,10 +249,7 @@ def render(data: dict) -> None:
         m1.metric("Kappaleiden yhteispaino (kg)", f"{total_weight_kg:.3f}")
         if total_cost_eur:
             m2.metric("Materiaalikustannukset yhteensä (€)", f"{total_cost_eur:,.2f}")
-        if charge_full_sheet:
-            st.caption("€/kpl jakaa koko levyn kustannuksen kappaleiden kesken painon mukaan.")
-        else:
-            st.caption("€/kpl käyttää edullisimman saatavilla olevan levykoon hintaa × kappalepaino (ei hukkaa).")
+        st.caption("€/kpl jakaa koko levyn kustannuksen kappaleiden kesken painon mukaan.")
         st.dataframe(table_rows, use_container_width=True, hide_index=True)
 
 
@@ -282,7 +266,6 @@ def _render_breakdown(
     thickness: str,
     thickness_mm: float,
     margin_pct: float,
-    charge_full_sheet: bool,
     n_pieces: int,
     data: dict,
 ) -> None:
@@ -302,7 +285,6 @@ def _render_breakdown(
     density_kg_mm3 = density_for_material(material)
     density_g_cm3  = density_kg_mm3 * 1e6
     margin_factor  = 1 + margin_pct / 100
-    mode_label     = "koko levy" if charge_full_sheet else "tilatut kappaleet"
 
     steps = [
         {
@@ -341,8 +323,8 @@ def _render_breakdown(
             "Arvo":     f"{pieces_kg:,.2f} kg",
         },
         {
-            "Vaihe":    f"8. Laskutettava paino ({mode_label})",
-            "Laskenta": "levy kg" if charge_full_sheet else "kappaleet kg",
+            "Vaihe":    "8. Laskutettava paino (koko levy)",
+            "Laskenta": "levy kg",
             "Arvo":     f"{billable_kg:,.2f} kg",
         },
         {
@@ -360,15 +342,14 @@ def _render_breakdown(
 
     with st.expander("Näytä laskennan erittely"):
         st.dataframe(steps, use_container_width=True, hide_index=True)
-        if charge_full_sheet and pieces_kg:
+        if pieces_kg:
             effective_ppt = adjusted_ppt * (sheet_kg / pieces_kg)
             st.caption(
-                f"**Koko levy** -tilassa {sheet_kg:,.2f} kg levyä laskutetaan "
-                f"{pieces_kg:,.2f} kg todellisille kappaleille. Kappaleyhteenveto-"
-                f"taulukko jakaa tämän takaisin kappaleille painon mukaan "
-                f"käyttäen efektiivistä hintaa "
-                f"{adjusted_ppt:,.2f} × ({sheet_kg:,.2f} / {pieces_kg:,.2f}) = "
-                f"**{effective_ppt:,.2f} €/tn**."
+                f"{sheet_kg:,.2f} kg levyä laskutetaan {pieces_kg:,.2f} kg "
+                f"todellisille kappaleille. Kappaleyhteenveto-taulukko jakaa "
+                f"tämän takaisin kappaleille painon mukaan käyttäen efektiivistä "
+                f"hintaa {adjusted_ppt:,.2f} × ({sheet_kg:,.2f} / {pieces_kg:,.2f}) "
+                f"= **{effective_ppt:,.2f} €/tn**."
             )
 
 
@@ -378,7 +359,6 @@ def _render_sheet_usage_group(
     thickness: str,
     products: list[dict],
     margin_pct: float = 0.0,
-    charge_full_sheet: bool = False,
     long_side_clamp_mm: int = 0,
     rankavali_mm: int = 0,
 ) -> tuple[float | None, float | None]:
@@ -438,14 +418,14 @@ def _render_sheet_usage_group(
         has_failures    = summary["failed_pieces"] > 0
         sheet_weight_kg = sw * sh * thickness_mm * density_for_material(material)
         sheet_kg        = sheet_weight_kg * summary["sheets_needed"]
-        billable_kg     = sheet_kg if charge_full_sheet else pieces_kg
+        billable_kg     = sheet_kg
         result          = calculate(price_per_tonne, billable_kg / 1000, margin_pct=margin_pct)
         adjusted_ppt    = result["after_margin"]
         total_eur       = result["total"]
         cost_per_pc     = round(total_eur / n_pieces, 2) if (not has_failures and n_pieces) else ""
         # Effective rate to apply against piece weight so the pieces-summary
-        # totals add up to the sheet-usage total in both charge modes.
-        bill_rate_ppt   = adjusted_ppt * (sheet_kg / pieces_kg) if (charge_full_sheet and pieces_kg) else adjusted_ppt
+        # totals add up to the sheet-usage total.
+        bill_rate_ppt   = adjusted_ppt * (sheet_kg / pieces_kg) if pieces_kg else adjusted_ppt
         rows.append({
             "Levykoko":          f"{_fmt_m(sw)} × {_fmt_m(sh)} m",
             "Hinta (€/tn)":      f"{adjusted_ppt:,.2f}",
@@ -479,10 +459,8 @@ def _render_sheet_usage_group(
             },
         })
 
-    # Tiebreak on utilization (descending) so that when sheet sizes produce the
-    # same total cost — e.g. in "Tilattu määrä" mode where billable kg equals
-    # piece kg regardless of sheet — the most efficient sheet wins instead of
-    # whichever happened to be listed first.
+    # Tiebreak on utilization (descending) so the most efficient sheet wins
+    # whenever totals tie, instead of whichever happened to be listed first.
     valid_indices = [i for i, r in enumerate(rows) if r["_failed"] == 0]
     cheapest_idx: int | None = (
         min(valid_indices, key=lambda i: (rows[i]["_total"], -rows[i]["_utilization"]))
@@ -588,7 +566,6 @@ def _render_sheet_usage_group(
         thickness=thickness,
         thickness_mm=thickness_mm,
         margin_pct=margin_pct,
-        charge_full_sheet=charge_full_sheet,
         n_pieces=n_pieces,
         data=active["_breakdown"],
     )
