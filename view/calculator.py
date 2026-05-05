@@ -183,12 +183,14 @@ def render(data: dict) -> None:
 
     products = st.session_state.calc_products
     groups: dict[tuple[str, str], list[dict]] = {}
-    for prod in products:
+    for i, prod in enumerate(products):
         if not prod["material"] or not prod["thickness"]:
             continue
         if prod["width"] <= 0 or prod["height"] <= 0:
             continue
-        groups.setdefault((prod["material"], prod["thickness"]), []).append(prod)
+        groups.setdefault((prod["material"], prod["thickness"]), []).append(
+            {**prod, "_global_idx": i}
+        )
 
     if groups:
         st.divider()
@@ -457,6 +459,11 @@ def _render_sheet_usage_group(
             "_ppt":           bill_rate_ppt,
             "_failed":        summary["failed_pieces"],
             "_utilization":   summary["utilization"],
+            "_sheets":        sheets,
+            "_eff_w":         eff_w,
+            "_eff_h":         eff_h,
+            "_sw":            sw,
+            "_sh":            sh,
             "_breakdown": {
                 "sw":              sw,
                 "sh":              sh,
@@ -529,19 +536,52 @@ def _render_sheet_usage_group(
         delta = active["_total"] - cheapest["_total"]
         st.info(
             f"Valittu: **{active['Levykoko']}** — "
-            f"{active['Tarvittavat levyt']} levyä, "
-            f"**{active['€/kpl']} €/kpl**, "
-            f"yhteensä **{active['Yhteensä €']:,.2f} €** "
+            f"{active['Tarvittavat levyt']} levyä "
             f"(+{delta:,.2f} € verrattuna edullisimpaan {cheapest['Levykoko']})."
         )
     elif cheapest is not None:
         st.success(
             f"Edullisin: **{cheapest['Levykoko']}** — "
             f"{cheapest['Tarvittavat levyt']} levyä, "
-            f"**{cheapest['€/kpl']} €/kpl**, "
-            f"yhteensä **{cheapest['Yhteensä €']:,.2f} €**, "
             f"käyttöaste {cheapest['Käyttöaste']}."
         )
+
+    # ── Headline metrics: big "€/kpl" is the visual anchor ──────────────────
+    avg_per_pc = active["_total"] / n_pieces if n_pieces else 0.0
+    m_cols = st.columns([2, 1, 1, 1])
+    m_cols[0].metric("Materiaalikulu €/kpl (ka.)", f"{avg_per_pc:,.2f} €")
+    m_cols[1].metric("Yhteensä €", f"{active['_total']:,.2f}")
+    m_cols[2].metric("Levyjä", str(active["Tarvittavat levyt"]))
+    m_cols[3].metric("Käyttöaste", active["Käyttöaste"] or "—")
+
+    # ── Per-product unit cost when the group mixes multiple products ────────
+    if len(products) >= 2:
+        breakdown_rows = []
+        bill_rate_ppt = active["_ppt"]
+        for prod in products:
+            one_kg     = piece_weight_kg(prod["width"], prod["height"], thickness_mm, material)
+            unit_cost  = one_kg * bill_rate_ppt / 1000
+            breakdown_rows.append({
+                "Tuote":            f"#{prod['_global_idx'] + 1}",
+                "Mitat (mm)":       f"{prod['width']:g} × {prod['height']:g}",
+                "Määrä (kpl)":      prod["qty"],
+                "kg/kpl":           round(one_kg, 3),
+                "€/kpl":            f"{unit_cost:,.2f}",
+                "Yhteensä €":       f"{unit_cost * prod['qty']:,.2f}",
+            })
+        st.caption("Materiaalikulu tuotteittain (sekanestaus):")
+        st.dataframe(breakdown_rows, use_container_width=True, hide_index=True)
+
+    # ── Nesting visualisation ────────────────────────────────────────────────
+    _render_nesting(
+        sheets=active["_sheets"],
+        sheet_w=active["_sw"],
+        sheet_h=active["_sh"],
+        eff_w=active["_eff_w"],
+        eff_h=active["_eff_h"],
+        products=products,
+        rankavali_mm=rankavali_mm,
+    )
 
     _render_breakdown(
         material=material,
@@ -554,3 +594,152 @@ def _render_sheet_usage_group(
     )
 
     return active["_total"], active["_ppt"]
+
+
+# ── Nesting visualisation ─────────────────────────────────────────────────────
+
+# Distinct, accessible colors per product index. Cycles for >10 products.
+_PRODUCT_PALETTE = [
+    "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6",
+    "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#6366f1",
+]
+
+
+def _render_nesting(
+    sheets: list,
+    sheet_w: int,
+    sheet_h: int,
+    eff_w: int,
+    eff_h: int,
+    products: list[dict],
+    rankavali_mm: int,
+) -> None:
+    """Render an SVG layout of every piece on every sheet for the active size."""
+    if not sheets:
+        return
+
+    st.markdown(f"**Sijoittelu** — {len(sheets)} levyä")
+
+    # Legend: which color = which product number.
+    legend_bits = []
+    for prod in products:
+        color = _PRODUCT_PALETTE[prod["_global_idx"] % len(_PRODUCT_PALETTE)]
+        legend_bits.append(
+            f'<span style="display:inline-flex;align-items:center;'
+            f'margin-right:14px;font-size:13px;">'
+            f'<span style="display:inline-block;width:14px;height:14px;'
+            f'background:{color};opacity:0.55;border:2px solid {color};'
+            f'margin-right:6px;border-radius:2px;"></span>'
+            f"Tuote #{prod['_global_idx'] + 1} "
+            f"({prod['width']:g}×{prod['height']:g})</span>"
+        )
+    st.markdown(
+        f'<div style="margin-bottom:8px;">{"".join(legend_bits)}</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Render two sheets per row to use horizontal space without dwarfing them.
+    target_px   = 460
+    scale       = target_px / max(sheet_w, sheet_h)
+    sw_px       = sheet_w * scale
+    sh_px       = sheet_h * scale
+
+    cols_per_row = 2 if len(sheets) > 1 else 1
+    for row_start in range(0, len(sheets), cols_per_row):
+        row = sheets[row_start:row_start + cols_per_row]
+        cols = st.columns(cols_per_row)
+        for col_idx, sheet in enumerate(row):
+            sheet_no = row_start + col_idx + 1
+            with cols[col_idx]:
+                st.markdown(
+                    f"**Levy {sheet_no}** · käyttöaste "
+                    f"{sheet.utilization * 100:.1f} %"
+                )
+                st.markdown(
+                    _sheet_svg(sheet, sheet_w, sheet_h, eff_w, eff_h,
+                               sw_px, sh_px, products, rankavali_mm),
+                    unsafe_allow_html=True,
+                )
+
+
+def _sheet_svg(
+    sheet,
+    sheet_w: int,
+    sheet_h: int,
+    eff_w: int,
+    eff_h: int,
+    px_w: float,
+    px_h: float,
+    products: list[dict],
+    rankavali_mm: int,
+) -> str:
+    """Build an SVG string for one sheet, with each placement labelled."""
+    parts = [
+        f'<svg width="{px_w:.0f}" height="{px_h:.0f}" '
+        f'viewBox="0 0 {sheet_w} {sheet_h}" '
+        f'preserveAspectRatio="xMidYMid meet" '
+        f'style="background:#f8fafc;border:2px solid #475569;'
+        f'border-radius:4px;display:block;max-width:100%;height:auto;">',
+    ]
+
+    # Greyed-out claw strip area (bought but unusable).
+    if eff_w < sheet_w:
+        parts.append(
+            f'<rect x="{eff_w}" y="0" width="{sheet_w - eff_w}" '
+            f'height="{sheet_h}" fill="#cbd5e1" fill-opacity="0.5"/>'
+        )
+    if eff_h < sheet_h:
+        parts.append(
+            f'<rect x="0" y="{eff_h}" width="{sheet_w}" '
+            f'height="{sheet_h - eff_h}" fill="#cbd5e1" fill-opacity="0.5"/>'
+        )
+
+    # Index products by their position-in-group so we can map placement.product_idx.
+    for placement in sheet.placements:
+        prod = products[placement.product_idx]
+        global_idx = prod["_global_idx"]
+        color = _PRODUCT_PALETTE[global_idx % len(_PRODUCT_PALETTE)]
+
+        # Strip the rankaväli inflation so the drawn rect matches the real piece.
+        gap = rankavali_mm
+        dw = max(1, placement.w - gap)
+        dh = max(1, placement.h - gap)
+
+        # Display dims in input-space (un-rotated), so the label always reads
+        # leveys × korkeus from the user's perspective.
+        orig_w = prod["width"]
+        orig_h = prod["height"]
+
+        parts.append(
+            f'<rect x="{placement.x}" y="{placement.y}" '
+            f'width="{dw}" height="{dh}" '
+            f'fill="{color}" fill-opacity="0.55" '
+            f'stroke="{color}" stroke-width="6"/>'
+        )
+
+        cx = placement.x + dw / 2
+        cy = placement.y + dh / 2
+        # Font size scales with the smaller piece dimension so labels fit.
+        font_size = max(40.0, min(dw, dh) / 5.5)
+        parts.append(
+            f'<text x="{cx}" y="{cy - font_size * 0.1}" '
+            f'text-anchor="middle" dominant-baseline="middle" '
+            f'font-family="sans-serif" font-size="{font_size:.0f}" '
+            f'font-weight="700" fill="#0f172a">#{global_idx + 1}</text>'
+        )
+        parts.append(
+            f'<text x="{cx}" y="{cy + font_size}" '
+            f'text-anchor="middle" dominant-baseline="middle" '
+            f'font-family="sans-serif" font-size="{font_size * 0.65:.0f}" '
+            f'fill="#0f172a">{orig_w:g}×{orig_h:g}</text>'
+        )
+        if placement.rotated:
+            parts.append(
+                f'<text x="{placement.x + dw - 20}" y="{placement.y + 60}" '
+                f'text-anchor="end" '
+                f'font-family="sans-serif" font-size="{font_size * 0.7:.0f}" '
+                f'fill="#dc2626" font-weight="700">↻ 90°</text>'
+            )
+
+    parts.append("</svg>")
+    return "".join(parts)
