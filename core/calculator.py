@@ -14,7 +14,7 @@ THICKNESS_KEY = "Paksuus (mm)"
 # so the kg/m²·mm value equals the g/cm³ value.
 #STEEL_DENSITY_KG_PER_MM3 = 7.85e-6   # Steel / RST / HST — 7.85 g/cm³
 DENSITIES_KG_PER_MM3 = {
-    "steel":    8,
+    "steel":    7.85e-6,
     "alumiini": 2.7e-6,
     "kupari":   9.0e-6,
     "pvc":      2.2e-6,
