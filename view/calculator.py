@@ -9,6 +9,8 @@ Flow:
   2. The "Sheet usage" section groups pieces by (material, thickness) and
      for each group compares every sheet size that has a price — sheets
      needed, utilisation, total cost — and highlights the cheapest option.
+     A "Sijoittelutapa" toggle lets the user switch from this combined
+     nesting to per-product nesting where each product gets its own sheet.
   3. The "Pieces summary" at the bottom lists every product with its
      per-piece and batch weight, plus the grand total.
 """
@@ -140,6 +142,22 @@ def render(data: dict) -> None:
         st.session_state.calc_products.pop(to_delete)
         st.rerun()
 
+    nest_mode = st.radio(
+        "Sijoittelutapa",
+        options=("combined", "separate"),
+        format_func=lambda v: {
+            "combined": "Yhdistä samat materiaalit samalle levylle",
+            "separate": "Laske jokainen tuote erikseen",
+        }[v],
+        horizontal=True,
+        key="calc_nest_mode",
+        help=(
+            "Yhdistettynä saman materiaalin ja paksuuden tuotteet sijoitellaan "
+            "samoille levyille (sekanestaus). Erikseen-vaihtoehdolla kullekin "
+            "tuotteelle lasketaan oma levytarpeensa."
+        ),
+    )
+
     rankavali_mm = int(st.number_input(
         "Rankaväli (mm)",
         min_value=0,
@@ -170,13 +188,17 @@ def render(data: dict) -> None:
     # ── Sheet usage (per material + thickness group) ─────────────────────────
 
     products = st.session_state.calc_products
-    groups: dict[tuple[str, str], list[dict]] = {}
+    groups: dict[tuple, list[dict]] = {}
     for i, prod in enumerate(products):
         if not prod["material"] or not prod["thickness"]:
             continue
         if prod["width"] <= 0 or prod["height"] <= 0:
             continue
-        groups.setdefault((prod["material"], prod["thickness"]), []).append(
+        if nest_mode == "separate":
+            group_key = (prod["material"], prod["thickness"], prod["id"])
+        else:
+            group_key = (prod["material"], prod["thickness"])
+        groups.setdefault(group_key, []).append(
             {**prod, "_global_idx": i}
         )
 
@@ -186,8 +208,9 @@ def render(data: dict) -> None:
 
         grand_total_eur  = 0.0
         any_priced       = False
-        cheapest_prices: dict[tuple[str, str], float] = {}
-        for (material, thickness), group_prods in groups.items():
+        cheapest_prices: dict[str, float] = {}
+        for group_key, group_prods in groups.items():
+            material, thickness = group_key[0], group_key[1]
             cheapest_eur, cheapest_ppt = _render_sheet_usage_group(
                 lookup=lookup,
                 material=material,
@@ -201,7 +224,8 @@ def render(data: dict) -> None:
                 grand_total_eur += cheapest_eur
                 any_priced = True
             if cheapest_ppt is not None:
-                cheapest_prices[(material, thickness)] = cheapest_ppt
+                for gp in group_prods:
+                    cheapest_prices[gp["id"]] = cheapest_ppt
 
         if any_priced and len(groups) > 1:
             st.divider()
@@ -222,7 +246,7 @@ def render(data: dict) -> None:
         batch_weight = one_weight * prod["qty"]
         total_weight_kg += batch_weight
 
-        ppt          = cheapest_prices.get((prod["material"], prod["thickness"]))
+        ppt          = cheapest_prices.get(prod["id"])
         price_per_kg = ppt / 1000 if ppt else None
         one_cost     = round(one_weight   * price_per_kg, 4) if price_per_kg else ""
         batch_cost   = round(batch_weight * price_per_kg, 2) if price_per_kg else ""
@@ -480,7 +504,8 @@ def _render_sheet_usage_group(
         for r in rows
     ]
 
-    select_key = f"sheet_select::{material}::{thickness}"
+    select_key_suffix = "-".join(p["id"] for p in products)
+    select_key = f"sheet_select::{material}::{thickness}::{select_key_suffix}"
     event = st.dataframe(
         display_rows,
         use_container_width=True,
