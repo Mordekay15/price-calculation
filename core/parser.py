@@ -259,7 +259,11 @@ def _identify_columns(
 
     Falls back to the canonical column index from the product config when
     keyword matching fails for a given product (e.g. headers rendered as
-    page text outside the gridded table).
+    page text outside the gridded table). The fallback only fires when at
+    least one product matched by keyword — if zero matched, we treat the
+    table as unrelated and return {} so callers skip it. Without this guard,
+    side-by-side tables on the same page leak data into each other (e.g. the
+    main steel table getting parsed as the LASER/Z100 specials table).
     """
     normalized = [_norm(c) for c in header_cells]
 
@@ -274,6 +278,9 @@ def _identify_columns(
                 col_map[idx] = (label, t_col)
                 matched_labels.add(label)
                 break
+
+    if not matched_labels:
+        return {}
 
     # Pass 2: positional fallback for products that didn't keyword-match.
     for col_idx, _kw, label, t_col in products:
