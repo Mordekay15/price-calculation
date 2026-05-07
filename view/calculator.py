@@ -504,7 +504,8 @@ def _render_sheet_usage_group(
         for r in rows
     ]
 
-    select_key = f"sheet_select::{material}::{thickness}"
+    select_key_suffix = "-".join(p["id"] for p in products)
+    select_key = f"sheet_select::{material}::{thickness}::{select_key_suffix}"
     event = st.dataframe(
         display_rows,
         use_container_width=True,
