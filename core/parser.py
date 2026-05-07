@@ -39,14 +39,20 @@ _RANGE_RE = re.compile(r"^\s*(\d+)\s*-\s*(\d+)\s*$")
 
 
 def expand_thickness(thickness: str) -> list[str]:
-    """Expand 'N-M' thickness ranges into individual integer values.
+    """Expand thickness labels that bundle multiple values sharing one price.
 
-    '3-6' → ['3', '4', '5', '6']. Anything that isn't a clean integer range
-    (single value, decimal, slash-separated, range with suffix) is returned
+    '3-6'        → ['3', '4', '5', '6'] (integer range)
+    '0,7/0,75'   → ['0,7', '0,75']      (slash-separated alternatives)
+    Anything else (single value, decimal, range with suffix) is returned
     unchanged.
     """
     if not isinstance(thickness, str):
         return [thickness]
+    if "/" in thickness:
+        parts = [p.strip() for p in thickness.split("/")]
+        parts = [p for p in parts if p]
+        if len(parts) > 1:
+            return parts
     m = _RANGE_RE.match(thickness)
     if not m:
         return [thickness]
@@ -57,11 +63,12 @@ def expand_thickness(thickness: str) -> list[str]:
 
 
 def expand_range_rows(rows: list[dict]) -> list[dict]:
-    """Duplicate each range-thickness row into one row per integer thickness.
+    """Duplicate each bundled-thickness row into one row per individual value.
 
-    Rows whose 'Paksuus (mm)' is a range like '3-6' share the same prices
-    across every thickness in the range, so we materialise one row per value
-    so the calculator and lookup can find a price for e.g. '4 mm' directly.
+    Rows whose 'Paksuus (mm)' is a range like '3-6' or a slash-separated
+    list like '0,7/0,75' share the same prices across every value, so we
+    materialise one row per value so the calculator and lookup can find a
+    price for e.g. '4 mm' or '0,75 mm' directly.
     """
     out: list[dict] = []
     for row in rows:
