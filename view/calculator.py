@@ -64,8 +64,7 @@ def render(data: dict) -> None:
 
     margin_pct = st.number_input(
         "Materiaalin kate (%)",
-        min_value=10.0,
-        max_value=20.0,
+        min_value=0.0,
         value=15.0,
         step=0.5,
         key="calc_margin_pct",
