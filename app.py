@@ -12,6 +12,12 @@ import pathlib
 
 import streamlit as st
 from core.parser import parse_stremet_pdf, parse_tibnor_pdf
+from core.copper import (
+    build_copper_section,
+    COPPER_PRICE_MIN,
+    COPPER_PRICE_MAX,
+    COPPER_PRICE_STEP,
+)
 from view import calculator
 
 # Each supplier: (label, json path, parser function).
@@ -102,11 +108,28 @@ with st.sidebar:
         if stored:
             merged_data.update(stored["data"])
 
-# ── Guard: nothing to show yet ────────────────────────────────────────────────
+    # ── Copper: always available, no PDF needed ──────────────────────────────
+    # Copper carries no list price; the user sets the price per kilo here. The
+    # input starts empty so no price exists until the user enters one.
+    st.divider()
+    st.markdown("**Kupari**")
+    copper_price_kg = st.number_input(
+        "Kuparin hinta (€/kg)",
+        min_value=COPPER_PRICE_MIN,
+        max_value=COPPER_PRICE_MAX,
+        value=None,
+        step=COPPER_PRICE_STEP,
+        key="copper_price_kg",
+        placeholder=f"{COPPER_PRICE_MIN:g}–{COPPER_PRICE_MAX:g}",
+        help=(
+            "Aseta kuparin hinta per kilo (15,0–15,9 €/kg). Kupari on aina "
+            "valittavissa, mutta sille ei lasketa hintaa ennen kuin syötät sen."
+        ),
+    )
 
-if not merged_data:
-    st.info("Hintatietoja ei löytynyt. Lataa PDF sivupalkista aloittaaksesi.")
-    st.stop()
+# Copper is always merged in, so the calculator is always available even before
+# any supplier PDF has been uploaded.
+merged_data.update(build_copper_section(copper_price_kg))
 
 # ── Main content ──────────────────────────────────────────────────────────────
 

@@ -29,6 +29,7 @@ from core.calculator import (
     piece_weight_kg,
 )
 from core.nesting import expand_products, pack, parse_size, summarise
+from core.copper import COPPER_MATERIAL, COPPER_THICKNESSES
 
 _PLACEHOLDER_MAT   = "— Valitse materiaali —"
 _PLACEHOLDER_THICK = "— Valitse paksuus —"
@@ -53,12 +54,13 @@ def _init_products() -> None:
 def render(data: dict) -> None:
     lookup = build_lookup(data)
 
-    if not lookup:
-        st.info("Hintatietoja ei saatavilla.")
-        return
-
     st.subheader("Hintalaskuri")
+
+    # Copper is always selectable, even before any supplier PDF is uploaded and
+    # even before a copper price has been set (it simply carries no price yet).
     materials = get_materials(lookup)
+    if COPPER_MATERIAL not in materials:
+        materials = sorted([*materials, COPPER_MATERIAL])
 
     margin_pct = st.number_input(
         "Materiaalin kate (%)",
@@ -95,7 +97,10 @@ def render(data: dict) -> None:
             )
             material = mat_raw if mat_raw != _PLACEHOLDER_MAT else None
 
-            if material is not None:
+            if material == COPPER_MATERIAL:
+                # Copper's thicknesses are fixed and available even with no price.
+                thicknesses = COPPER_THICKNESSES
+            elif material is not None:
                 thicknesses = get_thicknesses_for_material(lookup, material)
             else:
                 thicknesses = []
@@ -422,7 +427,13 @@ def _render_sheet_usage_group(
 
     st.markdown(f"**{material}** · **{thickness} mm**")
     if not candidates:
-        st.info("Tälle yhdistelmälle ei ole levykohtaista hinnoittelua.")
+        if material == COPPER_MATERIAL:
+            st.info(
+                "Aseta kuparin hinta (€/kg) sivupalkista, niin levylaskenta "
+                "tulee näkyviin."
+            )
+        else:
+            st.info("Tälle yhdistelmälle ei ole levykohtaista hinnoittelua.")
         return None, None
 
     pieces_kg = sum(
