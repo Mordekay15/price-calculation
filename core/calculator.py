@@ -16,7 +16,7 @@ THICKNESS_KEY = "Paksuus (mm)"
 DENSITIES_KG_PER_MM3 = {
     "steel":    8.0e-6,
     "alumiini": 2.7e-6,
-    "kupari":   9.0e-6,
+    "kupari":   8.96e-6,
     "pvc":      2.2e-6,
 }
 
