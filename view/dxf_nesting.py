@@ -298,17 +298,31 @@ def _render_part_config(
             return None
 
         # Layer picker — only when a drawing has more than one geometry layer,
-        # so borders / bend lines / construction lines can be dropped.
+        # so a frame / dimensions / text / bend lines can be dropped. Annotation
+        # layers are hidden by default; the size of each layer is shown to help.
         avail_layers = part.available_layers()
         if len(avail_layers) > 1:
+            sizes = part.layer_sizes()
+            suggested = part.suggested_layers()
+
+            def _label(name: str) -> str:
+                n, w, h = sizes.get(name, (0, 0, 0))
+                return f"{name}  ·  {n} obj  ·  {w:.0f}×{h:.0f} mm"
+
             selected_layers = set(st.multiselect(
                 "Tasot (layers) mukaan sijoitteluun",
                 options=avail_layers,
-                default=avail_layers,
+                default=suggested,
+                format_func=_label,
                 key=f"dxf_layers_{fid}",
-                help="Ota mukaan vain osan leikattavat tasot. Pois voi jättää "
-                     "esim. kehyksen, taivutusviivat tai mitoitustasot.",
+                help="Vain osan leikattavat tasot. Mitat, tekstit, kehys ja "
+                     "muut ei-osatasot on piilotettu oletuksena — lisää tai "
+                     "poista tasoja ja katso esikatselusta, että vain osa jää.",
             ))
+            hidden = [n for n in avail_layers if n not in suggested]
+            if hidden:
+                st.caption("Piilotettu oletuksena (todennäköisesti mitat/teksti/"
+                           "kehys): " + ", ".join(hidden))
         else:
             selected_layers = None  # all
 
@@ -320,6 +334,10 @@ def _render_part_config(
         hdr[1].markdown(
             f":gray[{geom.width:g} × {geom.height:g} mm · {part.unit_label}]"
         )
+
+        # Live preview so the user can confirm only the product is left.
+        st.markdown(_preview_svg(geom.polylines, geom.width, geom.height),
+                    unsafe_allow_html=True)
 
         # Material + thickness (same pattern as the manual calculator).
         mat_opts = [_PLACEHOLDER_MAT] + materials
@@ -378,6 +396,27 @@ def _render_part_config(
         "_global_idx": idx,
         "_polylines":  polylines,
     }
+
+
+def _preview_svg(polylines, w_mm: float, h_mm: float, px: int = 260) -> str:
+    """Small preview of the currently-selected geometry (drawing Y flipped)."""
+    if not polylines or w_mm <= 0 or h_mm <= 0:
+        return ""
+    scale = px / max(w_mm, h_mm)
+    segs = []
+    for poly in polylines:
+        if len(poly) < 2:
+            continue
+        segs.append("M " + " L ".join(f"{x:.1f} {h_mm - y:.1f}" for x, y in poly))
+    return (
+        f'<svg width="{w_mm * scale:.0f}" height="{h_mm * scale:.0f}" '
+        f'viewBox="0 0 {w_mm:.0f} {h_mm:.0f}" preserveAspectRatio="xMidYMid meet" '
+        f'style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:4px;'
+        f'max-width:100%;height:auto;margin:4px 0 2px;">'
+        f'<path d="{" ".join(segs)}" fill="#3b82f6" fill-opacity="0.12" '
+        f'fill-rule="evenodd" stroke="#2563eb" stroke-width="{max(0.5, w_mm/300):.2f}"/>'
+        f'</svg>'
+    )
 
 
 def _scaled_polylines(polylines, det_w, det_h, new_w, new_h):

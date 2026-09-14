@@ -86,6 +86,21 @@ _TEXT_UNIT_TO_CODE: dict[str, int] = {
 # Matches labels like:  Mat="AlMg3"   Thk=6   Un="mm"
 _KV_RE = re.compile(r'([A-Za-z][\w]*)\s*=\s*"?([^"\r\n]+?)"?\s*$')
 
+# Layer-name fragments that mark a layer as annotation / drawing furniture rather
+# than the cuttable part — used to pre-select only the part layers by default.
+# Matched case-insensitively as substrings of the layer name.
+_ANNOTATION_LAYER_KEYWORDS = (
+    "dim", "dimension", "text", "note", "format", "frame", "border",
+    "title", "hatch", "bom", "table", "symbol", "axis", "axes", "csys",
+    "defpoint", "sketch", "draft", "weld", "cosm", "thread", "gdt",
+    "tol", "mark", "label", "detail", "section", "balloon", "leader",
+)
+
+
+def _is_annotation_layer(name: str) -> bool:
+    low = (name or "").lower()
+    return any(kw in low for kw in _ANNOTATION_LAYER_KEYWORDS)
+
 
 @dataclass
 class DxfPart:
@@ -110,6 +125,26 @@ class DxfPart:
     def available_layers(self) -> list[str]:
         """Layer names that actually carry geometry, sorted."""
         return sorted(name for name, polys in self.layers.items() if polys)
+
+    def suggested_layers(self) -> list[str]:
+        """Layers to select by default — part geometry, minus annotation layers.
+
+        Falls back to every geometry layer when name heuristics can't tell them
+        apart (so we never hide everything).
+        """
+        avail = self.available_layers()
+        part = [n for n in avail if not _is_annotation_layer(n)]
+        return part or avail
+
+    def layer_sizes(self) -> dict[str, tuple[int, float, float]]:
+        """Per-layer (entity count, bbox width mm, bbox height mm)."""
+        out: dict[str, tuple[int, float, float]] = {}
+        for name in self.available_layers():
+            polys = self.layers[name]
+            xs = [x for poly in polys for x, _ in poly]
+            ys = [y for poly in polys for _, y in poly]
+            out[name] = (len(polys), max(xs) - min(xs), max(ys) - min(ys))
+        return out
 
     def build(self, layers: set[str] | None = None) -> "DxfGeometry":
         """Collapse the selected layers into a drawable, measured outline.
