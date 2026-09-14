@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 import streamlit as st
-from core.parser import parse_stremet_pdf, parse_tibnor_pdf
+from core.price_parser import parse_tatasteel_pdf, parse_tibnor_pdf
 
 
 @dataclass(frozen=True)
@@ -28,10 +28,10 @@ class Supplier:
 
 SUPPLIERS: list[Supplier] = [
     Supplier(
-        key="stremet",
+        key="tatasteel",
         label="Tata Steel",
-        path=pathlib.Path("price_data.json"),
-        parser=parse_stremet_pdf,
+        path=pathlib.Path("price_data_tatasteel.json"),
+        parser=parse_tatasteel_pdf,
     ),
     Supplier(
         key="tibnor",
@@ -66,3 +66,15 @@ def save(supplier: Supplier, data: dict, filename: str) -> dict:
     with open(supplier.path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     return payload
+
+def by_key(key: str) -> Supplier:
+    """Look up a supplier by its key. Raises KeyError on an unknown key."""
+    for supplier in SUPPLIERS:
+        if supplier.key == key:
+            return supplier
+    raise KeyError(f"Unknown supplier key: {key!r}")
+
+
+def delete(supplier: Supplier) -> None:
+    """Remove a supplier's stored data. Used when correcting a misrouted upload."""
+    supplier.path.unlink(missing_ok=True)
