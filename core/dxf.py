@@ -3,15 +3,21 @@ core/dxf.py
 ===========
 Read an uploaded DXF drawing and turn it into a nestable "part".
 
-Each DXF file is treated as one product. We extract every drawn outline as a
-flat list of (x, y) points (curves — arcs, circles, splines — are flattened
+Each DXF file is treated as one product. We extract every *cuttable* outline as
+a flat list of (x, y) points (curves — arcs, circles, splines — are flattened
 into short line segments), measure the part's bounding box, and convert
-everything to millimetres using the drawing's own unit header.
+everything to millimetres.
+
+Only real geometry counts. Annotation entities — dimension text like Mat="…",
+Thk=…, Un="…", leaders, dimensions — are skipped, so they never inflate the
+size or clutter the drawing. Geometry is also kept grouped by CAD *layer*, so
+the UI can drop non-part layers (borders, bend lines, construction lines) when a
+drawing has more than one.
 
 For now the nesting itself packs by bounding box (see core/nesting.py), so the
-polylines are used for *drawing the real shape* on the sheet, while the bbox
-width/height drive the packing. Keeping the true outline here means shape-aware
-(interlocking) nesting can be added later without re-parsing.
+polylines are used for *drawing the real shape*; the bbox width/height drive the
+packing. Keeping the true outline here means shape-aware (interlocking) nesting
+can be added later without re-parsing.
 
 The parser is deliberately tolerant: a malformed or empty DXF returns a part
 with a warning rather than raising, so the Streamlit page never dies on a bad
@@ -21,6 +27,7 @@ upload.
 from __future__ import annotations
 
 import io
+import re
 from dataclasses import dataclass, field
 
 import ezdxf
@@ -30,6 +37,16 @@ from ezdxf import disassemble, recover
 # line segments no further than this from the true curve. 0.2 units ≈ 0.2 mm on
 # a mm drawing — smooth enough to look right, cheap enough to render fast.
 _FLATTENING_DISTANCE = 0.2
+
+# Entity types that are annotation, not part geometry. These are dropped so a
+# "Mat=…"/"Thk=…" label or a dimension never becomes part of the shape or its
+# bounding box.
+_ANNOTATION_TYPES = {
+    "TEXT", "MTEXT", "ATTRIB", "ATTDEF",
+    "DIMENSION", "ARC_DIMENSION",
+    "LEADER", "MLEADER", "MULTILEADER",
+    "TOLERANCE", "WIPEOUT",
+}
 
 # DXF $INSUNITS header code -> millimetres-per-unit. Covers the units CAD tools
 # actually emit for sheet metal; anything else falls back to "assume mm".
@@ -56,30 +73,86 @@ _UNIT_LABELS: dict[int, str] = {
     6: "m",
 }
 
+# Unit tokens that show up in "Un=…" style annotation text, mapped to the
+# $INSUNITS code we treat them as. Lets us recover the unit when the header is
+# missing but the drawing spells it out in a label.
+_TEXT_UNIT_TO_CODE: dict[str, int] = {
+    "mm": 4, "millimeter": 4, "millimetre": 4, "millimeters": 4, "millimetres": 4,
+    "cm": 5, "centimeter": 5, "centimetre": 5,
+    "m": 6, "meter": 6, "metre": 6,
+    "in": 1, "inch": 1, "inches": 1, '"': 1,
+}
+
+# Matches labels like:  Mat="AlMg3"   Thk=6   Un="mm"
+_KV_RE = re.compile(r'([A-Za-z][\w]*)\s*=\s*"?([^"\r\n]+?)"?\s*$')
+
 
 @dataclass
 class DxfPart:
-    """One parsed DXF file, ready to nest and draw."""
+    """One parsed DXF file, ready to nest and draw.
+
+    `layers` holds the cuttable geometry grouped by CAD layer, in millimetres,
+    with annotation entities already removed. Call `build()` to collapse a chosen
+    set of layers into a normalised outline plus bounding-box size.
+    """
 
     name: str
-    polylines: list[list[tuple[float, float]]] = field(default_factory=list)
-    width: float = 0.0            # bounding-box width in mm
-    height: float = 0.0           # bounding-box height in mm
-    unit_code: int = 0            # raw $INSUNITS value
+    layers: dict[str, list[list[tuple[float, float]]]] = field(default_factory=dict)
+    unit_code: int = 0
+    unit_from_text: bool = False   # True if the unit was recovered from a label
+    texts: list[str] = field(default_factory=list)     # raw annotation strings
     warnings: list[str] = field(default_factory=list)
 
     @property
     def unit_label(self) -> str:
         return _UNIT_LABELS.get(self.unit_code, f"koodi {self.unit_code}")
 
+    def available_layers(self) -> list[str]:
+        """Layer names that actually carry geometry, sorted."""
+        return sorted(name for name, polys in self.layers.items() if polys)
+
+    def build(self, layers: set[str] | None = None) -> "DxfGeometry":
+        """Collapse the selected layers into a drawable, measured outline.
+
+        `layers=None` uses every geometry layer. Points are translated so the
+        part sits at the origin (0..width / 0..height).
+        """
+        chosen = self.available_layers() if layers is None else [
+            n for n in self.available_layers() if n in layers
+        ]
+        polys = [poly for name in chosen for poly in self.layers.get(name, [])]
+        if not polys:
+            return DxfGeometry(polylines=[], width=0.0, height=0.0)
+
+        xs = [x for poly in polys for x, _ in poly]
+        ys = [y for poly in polys for _, y in poly]
+        min_x, min_y = min(xs), min(ys)
+        max_x, max_y = max(xs), max(ys)
+        normalised = [
+            [(x - min_x, y - min_y) for x, y in poly] for poly in polys
+        ]
+        return DxfGeometry(
+            polylines=normalised,
+            width=max_x - min_x,
+            height=max_y - min_y,
+        )
+
+    @property
+    def is_empty(self) -> bool:
+        return not any(self.layers.values())
+
+
+@dataclass
+class DxfGeometry:
+    """The outline + measured size for one chosen set of layers."""
+
+    polylines: list[list[tuple[float, float]]]
+    width: float
+    height: float
+
     @property
     def outline_area_mm2(self) -> float:
-        """Signed-area (shoelace) sum of the closed outlines, absolute value.
-
-        Only outlines with 3+ points count. This is the *filled* area of the
-        drawn shapes — smaller than the bounding box for anything non-rectangular
-        — and is handy for reporting how "solid" a part is.
-        """
+        """Shoelace area of the closed outlines (holes subtract via winding)."""
         total = 0.0
         for poly in self.polylines:
             if len(poly) < 3:
@@ -90,35 +163,74 @@ class DxfPart:
             total += abs(s) / 2.0
         return total
 
-    @property
-    def is_empty(self) -> bool:
-        return self.width <= 0 or self.height <= 0 or not self.polylines
-
 
 def _unit_factor(unit_code: int) -> float:
     """mm per drawing unit; unknown/unitless codes assume mm (factor 1.0)."""
     return _UNITS_TO_MM.get(unit_code, 1.0)
 
 
-def _extract_polylines(msp) -> list[list[tuple[float, float]]]:
-    """Flatten every entity in the modelspace into 2D point lists.
+def _extract_texts(msp) -> list[str]:
+    """Collect annotation strings (TEXT/MTEXT) for display and unit recovery."""
+    texts: list[str] = []
+    for entity in msp:
+        dxftype = entity.dxftype()
+        try:
+            if dxftype == "TEXT":
+                s = entity.dxf.text
+            elif dxftype == "MTEXT":
+                s = entity.plain_text()
+            else:
+                continue
+        except Exception:
+            continue
+        s = (s or "").strip()
+        if s:
+            texts.append(s)
+    return texts
 
-    recursive_decompose explodes block INSERTs into their component entities,
-    and to_primitives turns each entity into a flattened primitive whose
-    vertices() yields points along the (curve-approximated) path.
+
+def _unit_from_texts(texts: list[str]) -> int | None:
+    """Read a 'Un=…' style unit label out of the annotation text, if present."""
+    for raw in texts:
+        m = _KV_RE.match(raw.strip())
+        if not m:
+            continue
+        key, val = m.group(1).lower(), m.group(2).strip().lower()
+        if key in ("un", "unit", "units", "yksikko", "yksikkö"):
+            code = _TEXT_UNIT_TO_CODE.get(val)
+            if code is not None:
+                return code
+    return None
+
+
+def _extract_layers(msp, factor: float) -> dict[str, list[list[tuple[float, float]]]]:
+    """Flatten geometry entities into per-layer point lists (in mm).
+
+    recursive_decompose explodes block INSERTs into their component entities;
+    annotation entities are skipped; to_primitives turns each remaining entity
+    into a flattened primitive whose vertices() yields points along the
+    (curve-approximated) path.
     """
-    polylines: list[list[tuple[float, float]]] = []
-    entities = list(disassemble.recursive_decompose(msp))
+    entities = [
+        e for e in disassemble.recursive_decompose(msp)
+        if e.dxftype() not in _ANNOTATION_TYPES
+    ]
+    layers: dict[str, list[list[tuple[float, float]]]] = {}
     for primitive in disassemble.to_primitives(
         entities, max_flattening_distance=_FLATTENING_DISTANCE
     ):
+        entity = primitive.entity
+        if entity.dxftype() in _ANNOTATION_TYPES:
+            continue
         try:
-            pts = [(float(v.x), float(v.y)) for v in primitive.vertices()]
+            pts = [(float(v.x) * factor, float(v.y) * factor) for v in primitive.vertices()]
         except Exception:
             continue
-        if len(pts) >= 2:
-            polylines.append(pts)
-    return polylines
+        if len(pts) < 2:
+            continue
+        layer = getattr(entity.dxf, "layer", "0") or "0"
+        layers.setdefault(layer, []).append(pts)
+    return layers
 
 
 def _read_doc(data: bytes):
@@ -144,55 +256,50 @@ def parse_dxf(data: bytes, name: str) -> DxfPart:
     try:
         doc, warnings = _read_doc(data)
     except (ezdxf.DXFError, IOError, ValueError, IndexError) as exc:
-        return DxfPart(
-            name=name,
-            warnings=[f"DXF:ää ei voitu lukea: {exc}"],
-        )
+        return DxfPart(name=name, warnings=[f"DXF:ää ei voitu lukea: {exc}"])
     except Exception as exc:  # noqa: BLE001 — keep the app alive on anything
-        return DxfPart(
-            name=name,
-            warnings=[f"Odottamaton virhe DXF:ää luettaessa: {exc}"],
-        )
-
-    unit_code = int(getattr(doc, "units", 0) or 0)
-    factor = _unit_factor(unit_code)
+        return DxfPart(name=name, warnings=[f"Odottamaton virhe DXF:ää luettaessa: {exc}"])
 
     msp = doc.modelspace()
-    raw_polylines = _extract_polylines(msp)
+    texts = _extract_texts(msp)
 
-    if not raw_polylines:
+    unit_code = int(getattr(doc, "units", 0) or 0)
+    unit_from_text = False
+    if unit_code == 0:
+        recovered = _unit_from_texts(texts)
+        if recovered is not None:
+            unit_code = recovered
+            unit_from_text = True
+
+    factor = _unit_factor(unit_code)
+    layers = _extract_layers(msp, factor)
+
+    if not any(layers.values()):
         warnings.append(
-            "Piirustuksesta ei löytynyt geometriaa (viivoja, kaaria tai "
-            "polylinejä). Tarkista, että osa on mallitilassa (modelspace)."
+            "Piirustuksesta ei löytynyt leikattavaa geometriaa (viivoja, "
+            "kaaria tai polylinejä). Tarkista, että osa on mallitilassa "
+            "(modelspace)."
         )
-        return DxfPart(name=name, unit_code=unit_code, warnings=warnings)
-
-    # Bounding box across every point (in native drawing units).
-    xs = [x for poly in raw_polylines for x, _ in poly]
-    ys = [y for poly in raw_polylines for _, y in poly]
-    min_x, min_y = min(xs), min(ys)
-    max_x, max_y = max(xs), max(ys)
-
-    # Normalise to the origin and convert to mm, so downstream code always works
-    # in a 0..width / 0..height millimetre space.
-    polylines = [
-        [((x - min_x) * factor, (y - min_y) * factor) for x, y in poly]
-        for poly in raw_polylines
-    ]
-    width = (max_x - min_x) * factor
-    height = (max_y - min_y) * factor
+        return DxfPart(
+            name=name, layers=layers, unit_code=unit_code,
+            unit_from_text=unit_from_text, texts=texts, warnings=warnings,
+        )
 
     if unit_code == 0:
         warnings.append(
             "Piirustuksessa ei ollut yksikkötietoa ($INSUNITS) — mitat "
             "tulkitaan millimetreinä. Tarkista koko alta."
         )
+    elif unit_from_text:
+        warnings.append(
+            f"Yksikkö luettu piirustuksen tekstistä ({_UNIT_LABELS.get(unit_code, unit_code)})."
+        )
 
     return DxfPart(
         name=name,
-        polylines=polylines,
-        width=width,
-        height=height,
+        layers=layers,
         unit_code=unit_code,
+        unit_from_text=unit_from_text,
+        texts=texts,
         warnings=warnings,
     )

@@ -4,9 +4,10 @@ view/dxf_nesting.py
 DXF nesting section.
 
 The user uploads one or more DXF files — each file is one product. We parse the
-real outline and bounding-box size from every drawing (core/dxf.py), let the
-user pick material / thickness / quantity per part (and correct the size if the
-drawing carried no units), then run the exact same sheet-usage costing and
+real cuttable outline and bounding-box size from every drawing (core/dxf.py),
+skipping annotation text/dimensions so nothing extra is nested. The user picks
+material / thickness / quantity per part (and can drop non-part layers or
+correct the size), then the parts run through the same sheet-usage costing and
 layout as the manual calculator (view/sheet_usage_view.py) — except each piece
 is drawn as its true DXF shape instead of a plain rectangle.
 
@@ -30,7 +31,7 @@ from view.sheet_usage_view import render_group
 _PLACEHOLDER_MAT   = "— Valitse materiaali —"
 _PLACEHOLDER_THICK = "— Valitse paksuus —"
 
-_STORE = "dxf_store"   # session_state key: {file_id: part-dict}
+_STORE = "dxf_store"   # session_state key: {file_id: DxfPart}
 
 
 def render(data: dict) -> None:
@@ -39,7 +40,8 @@ def render(data: dict) -> None:
     st.subheader("DXF-nestaus")
     st.caption(
         "Lataa osat DXF-tiedostoina. Ohjelma lukee kunkin osan todellisen "
-        "muodon ja mitat, ja sijoittelee ne levylle mahdollisimman tehokkaasti."
+        "muodon ja mitat (tekstit ja mitoitukset ohitetaan) ja sijoittelee ne "
+        "levylle mahdollisimman tehokkaasti."
     )
 
     materials = get_materials(lookup)
@@ -48,10 +50,7 @@ def render(data: dict) -> None:
 
     margin_pct = st.number_input(
         "Materiaalin kate (%)",
-        min_value=0.0,
-        value=15.0,
-        step=0.5,
-        key="dxf_margin_pct",
+        min_value=0.0, value=15.0, step=0.5, key="dxf_margin_pct",
     )
 
     # ── Upload ────────────────────────────────────────────────────────────────
@@ -72,8 +71,8 @@ def render(data: dict) -> None:
     st.markdown("**Osat**")
 
     products: list[dict] = []
-    for idx, part in enumerate(parts):
-        product = _render_part_config(part, idx, materials, lookup)
+    for idx, (fid, part) in enumerate(parts):
+        product = _render_part_config(fid, part, idx, materials, lookup)
         if product is not None:
             products.append(product)
 
@@ -163,71 +162,81 @@ def render(data: dict) -> None:
 
 # ── Upload store ────────────────────────────────────────────────────────────────
 
-def _sync_store(uploaded) -> list[dict]:
-    """Parse newly uploaded files once, drop removed ones, keep insertion order.
+def _sync_store(uploaded) -> list[tuple[str, object]]:
+    """Parse newly uploaded files once, drop removed ones, keep upload order.
 
-    Returns the list of part-dicts (parsed geometry) in upload order. Parsing is
-    cached per file_id in session_state so it does not re-run on every rerun.
+    Returns a list of (file_id, DxfPart). Parsing is cached per file_id in
+    session_state so it does not re-run on every rerun.
     """
     store: dict = st.session_state.setdefault(_STORE, {})
     uploaded = uploaded or []
     current_ids = {u.file_id for u in uploaded}
 
-    # Drop parts whose file was removed from the uploader.
     for stale in [fid for fid in store if fid not in current_ids]:
         del store[stale]
 
-    parts: list[dict] = []
+    parts: list[tuple[str, object]] = []
     for up in uploaded:
         if up.file_id not in store:
-            dxf = parse_dxf(up.getvalue(), up.name)
-            store[up.file_id] = {
-                "id":        up.file_id,
-                "name":      up.name,
-                "polylines": dxf.polylines,
-                "width":     round(dxf.width, 1),
-                "height":    round(dxf.height, 1),
-                "unit":      dxf.unit_label,
-                "area_mm2":  round(dxf.outline_area_mm2, 1),
-                "warnings":  dxf.warnings,
-                "empty":     dxf.is_empty,
-            }
-        parts.append(store[up.file_id])
+            store[up.file_id] = parse_dxf(up.getvalue(), up.name)
+        parts.append((up.file_id, store[up.file_id]))
     return parts
 
 
 # ── Per-part UI ──────────────────────────────────────────────────────────────
 
 def _render_part_config(
-    part: dict,
+    fid: str,
+    part,
     idx: int,
     materials: list[str],
     lookup: dict,
 ) -> dict | None:
     """Draw one part's card and return a product dict for nesting (or None)."""
-    fid = part["id"]
     with st.container(border=True):
         hdr = st.columns([6, 2])
-        hdr[0].markdown(f"**#{idx + 1} · {part['name']}**")
-        if part["empty"]:
-            hdr[1].markdown(":red[ei geometriaa]")
-        else:
-            hdr[1].markdown(
-                f":gray[{part['width']:g} × {part['height']:g} mm · {part['unit']}]"
-            )
+        hdr[0].markdown(f"**#{idx + 1} · {part.name}**")
 
-        for w in part["warnings"]:
+        for w in part.warnings:
             st.warning(w)
 
-        if part["empty"]:
+        # Show any text found in the drawing (Mat=…, Thk=…, Un=…) so the user
+        # can cross-check — but it is never nested.
+        if part.texts:
+            st.caption("Piirustuksen tekstit: " + " · ".join(part.texts))
+
+        if part.is_empty:
+            hdr[1].markdown(":red[ei geometriaa]")
             st.caption("Osaa ei voi sijoitella ennen kuin tiedostossa on geometriaa.")
             return None
 
+        # Layer picker — only when a drawing has more than one geometry layer,
+        # so borders / bend lines / construction lines can be dropped.
+        avail_layers = part.available_layers()
+        if len(avail_layers) > 1:
+            selected_layers = set(st.multiselect(
+                "Tasot (layers) mukaan sijoitteluun",
+                options=avail_layers,
+                default=avail_layers,
+                key=f"dxf_layers_{fid}",
+                help="Ota mukaan vain osan leikattavat tasot. Pois voi jättää "
+                     "esim. kehyksen, taivutusviivat tai mitoitustasot.",
+            ))
+        else:
+            selected_layers = None  # all
+
+        geom = part.build(selected_layers)
+        if geom.width <= 0 or geom.height <= 0:
+            st.warning("Valituilla tasoilla ei ole geometriaa. Valitse tasoja uudelleen.")
+            return None
+
+        hdr[1].markdown(
+            f":gray[{geom.width:g} × {geom.height:g} mm · {part.unit_label}]"
+        )
+
         # Material + thickness (same pattern as the manual calculator).
         mat_opts = [_PLACEHOLDER_MAT] + materials
-        mat_raw = st.selectbox(
-            "Materiaali", mat_opts, index=0, key=f"dxf_mat_{fid}",
-        )
+        mat_raw = st.selectbox("Materiaali", mat_opts, index=0, key=f"dxf_mat_{fid}")
         material = mat_raw if mat_raw != _PLACEHOLDER_MAT else None
 
         if material == COPPER_MATERIAL:
@@ -239,9 +248,7 @@ def _render_part_config(
 
         if thicknesses:
             th_opts = [_PLACEHOLDER_THICK] + thicknesses
-            th_raw = st.selectbox(
-                "Paksuus (mm)", th_opts, index=0, key=f"dxf_th_{fid}",
-            )
+            th_raw = st.selectbox("Paksuus (mm)", th_opts, index=0, key=f"dxf_th_{fid}")
             thickness = th_raw if th_raw != _PLACEHOLDER_THICK else None
         else:
             st.selectbox(
@@ -250,15 +257,20 @@ def _render_part_config(
             )
             thickness = None
 
+        # Detected size drives the widget defaults; the key includes the layer
+        # signature so changing layers reseeds the numbers to the new geometry.
+        det_w = round(geom.width, 1)
+        det_h = round(geom.height, 1)
+        sig = "-".join(sorted(selected_layers)) if selected_layers else "all"
         cols = st.columns(3)
         width = cols[0].number_input(
-            "Leveys (mm)", min_value=0.0, value=float(part["width"]),
-            step=1.0, key=f"dxf_w_{fid}",
+            "Leveys (mm)", min_value=0.0, value=float(det_w), step=1.0,
+            key=f"dxf_w_{fid}_{sig}",
             help="Luettu DXF:stä. Muokkaa, jos piirustuksen yksikkö oli väärä.",
         )
         height = cols[1].number_input(
-            "Korkeus (mm)", min_value=0.0, value=float(part["height"]),
-            step=1.0, key=f"dxf_h_{fid}",
+            "Korkeus (mm)", min_value=0.0, value=float(det_h), step=1.0,
+            key=f"dxf_h_{fid}_{sig}",
         )
         qty = int(cols[2].number_input(
             "Määrä (kpl)", min_value=1, value=1, step=1, key=f"dxf_q_{fid}",
@@ -266,20 +278,18 @@ def _render_part_config(
 
     # If the user corrected the size, scale the outline to match so the drawing
     # stays consistent with the numbers driving the nest.
-    polylines = _scaled_polylines(
-        part["polylines"], part["width"], part["height"], width, height
-    )
+    polylines = _scaled_polylines(geom.polylines, det_w, det_h, width, height)
 
     return {
-        "id":         fid,
-        "name":       part["name"],
-        "material":   material,
-        "thickness":  thickness,
-        "width":      width,
-        "height":     height,
-        "qty":        qty,
+        "id":          fid,
+        "name":        part.name,
+        "material":    material,
+        "thickness":   thickness,
+        "width":       width,
+        "height":      height,
+        "qty":         qty,
         "_global_idx": idx,
-        "_polylines": polylines,
+        "_polylines":  polylines,
     }
 
 
