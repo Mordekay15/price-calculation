@@ -22,6 +22,14 @@ from core.copper import (
 
 _PLACEHOLDER_SUPPLIER = "— Valitse toimittaja —"
 
+# Shown when pdfplumber can't open the upload at all (corrupt, truncated or
+# password-protected file). Without this guard the exception propagates out of
+# the sidebar and Streamlit replaces the whole page with a traceback.
+_UNREADABLE_PDF_MSG = (
+    "PDF:ää ei voitu lukea. Tiedosto voi olla vioittunut, keskeneräinen tai "
+    "salasanasuojattu. Tallenna hinnasto uudelleen PDF:ksi ja yritä uudestaan."
+)
+
 # Session-state keys.
 _SEEN   = "upload_handled_file_id"   # file_id of the upload already saved
 _RESULT = "upload_last_result"       # {file_id, supplier_key, filename}
@@ -75,7 +83,11 @@ def _render_uploader() -> None:
     file_bytes = uploaded.getvalue()
 
     with st.spinner("Tunnistetaan toimittajaa..."):
-        key = detect_supplier(file_bytes)
+        try:
+            key = detect_supplier(file_bytes)
+        except Exception:
+            st.error(_UNREADABLE_PDF_MSG)
+            return
 
     if key is None:
         st.warning(
@@ -96,7 +108,11 @@ def _parse_and_save(
 ) -> None:
     """Parse with the chosen supplier's parser and persist, unless it came back empty."""
     with st.spinner(f"Käsitellään {supplier.label} PDF..."):
-        parsed = supplier.parser(file_bytes)
+        try:
+            parsed = supplier.parser(file_bytes)
+        except Exception:
+            st.error(_UNREADABLE_PDF_MSG)
+            return
 
     if is_empty(parsed):
         st.error(
