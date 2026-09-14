@@ -1,3 +1,5 @@
 streamlit
 pdfplumber
 ezdxf
+numpy
+Pillow
