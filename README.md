@@ -47,3 +47,15 @@ streamlit run app.py
 | New export format (e.g. Excel) | `core/export.py` — add a new function |
 | New tab (e.g. price history chart) | `views/` — add a new file, import in `app.py` |
 | New input field in the calculator | `views/calculator.py` — add `st.number_input`, pass to `calculate()` |
+| Support more DXF entity types | `core/dxf.py` — geometry is flattened via `ezdxf` |
+| Shape-aware (interlocking) nesting | `core/nesting.py` — currently packs by bounding box |
+
+## DXF nesting
+
+The **DXF-nestaus** tab lets you upload DXF files (one product per file). Each
+drawing is parsed with [`ezdxf`](https://ezdxf.mozman.at/): the real outline is
+flattened into polylines and the bounding box gives the part's width × height in
+millimetres (converted from the drawing's own units). Parts then flow through
+the same sheet-usage pricing and layout as the manual calculator, but each piece
+is drawn as its true shape. Nesting still packs by bounding box for now —
+shape-aware interlocking can be added in `core/nesting.py` later.

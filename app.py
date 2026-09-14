@@ -7,7 +7,7 @@ core/price_store.py; the calculator lives in view/calculator.py.
 """
 
 import streamlit as st
-from view import calculator, sidebar
+from view import calculator, dxf_nesting, sidebar
 
 st.set_page_config(
     page_title="Stremet Price Tool",
@@ -17,4 +17,9 @@ st.set_page_config(
 st.title("Stremet Price Tool")
 
 price_data = sidebar.render()
-calculator.render(price_data)
+
+calc_tab, dxf_tab = st.tabs(["Hintalaskuri", "DXF-nestaus"])
+with calc_tab:
+    calculator.render(price_data)
+with dxf_tab:
+    dxf_nesting.render(price_data)
