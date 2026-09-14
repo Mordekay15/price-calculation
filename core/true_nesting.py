@@ -150,25 +150,6 @@ def _next_fast_len(n: int) -> int:
     return n
 
 
-def _first_free_fft(focc, mask_fft, mh: int, mw: int, H: int, W: int, fft_shape):
-    """Lowest-then-leftmost fit for a mask, given the sheet's precomputed FFT.
-
-    `focc` is rfft2(occ) and `mask_fft` is rfft2(flipped mask), both at
-    `fft_shape`; their product's inverse is the overlap count at every offset.
-    """
-    if mh > H or mw > W:
-        return None
-    full = np.fft.irfft2(focc * mask_fft, s=fft_shape)
-    valid = full[mh - 1:H, mw - 1:W]
-    free = np.rint(valid) < 0.5
-    if not free.any():
-        return None
-    rows = np.where(free.any(axis=1))[0]
-    r0 = int(rows[0])
-    c0 = int(np.where(free[r0])[0][0])
-    return r0, c0
-
-
 def nest(
     parts: list[dict],
     sheet_w: int,
@@ -205,17 +186,29 @@ def nest(
     clamp_cells = int(round(long_side_clamp_mm / res)) if long_side_clamp_mm else 0
 
     # One common FFT size for the sheet and every mask, padded up to an
-    # FFT-friendly (2/3/5-smooth) length so pocketfft stays fast. Each mask's
-    # FFT is computed once here and reused for every placement — only the
-    # occupancy grid's FFT is recomputed per placement (below).
+    # FFT-friendly (2/3/5-smooth) length so pocketfft stays fast.
     max_mh = max(m[0].shape[0] for m in masks.values())
     max_mw = max(m[0].shape[1] for m in masks.values())
     fft_shape = (_next_fast_len(H + max_mh - 1), _next_fast_len(W + max_mw - 1))
-    mask_ffts: dict[tuple[int, float], tuple] = {}
+
+    # Symmetry dedup: rotations that rasterise to an identical mask (a 90°-
+    # symmetric part at 0° vs 90°, say) share one FFT and one free-map. Each
+    # (part, angle) points at a representative; identical masks collapse to one.
+    rep_of: dict[tuple[int, float], tuple] = {}
+    reps: dict[tuple, tuple] = {}
     for key, (mask, *_rest) in masks.items():
+        content = (mask.shape, mask.tobytes())
+        rep_of[key] = reps.setdefault(content, key)
+
+    # Precompute each unique mask's FFT once, in float32 (complex64) — ~1.2x
+    # faster than float64 with error far below the 0.5 collision threshold; the
+    # chosen spot is still exact-verified below, with a float64 fallback.
+    mask_ffts: dict[tuple, tuple] = {}
+    for rep in set(rep_of.values()):
+        mask = masks[rep][0]
         mh, mw = mask.shape
-        mask_ffts[key] = (
-            np.fft.rfft2(mask[::-1, ::-1].astype(np.float64), s=fft_shape),
+        mask_ffts[rep] = (
+            np.fft.rfft2(mask[::-1, ::-1].astype(np.float32), s=fft_shape),
             mh, mw,
         )
 
@@ -232,11 +225,16 @@ def nest(
     occs: list[np.ndarray] = []
     failed = 0
 
+    ctx = {
+        "mask_ffts": mask_ffts, "rep_of": rep_of, "masks": masks,
+        "H": H, "W": W, "fft_shape": fft_shape,
+    }
+
     for _area, pidx in pieces:
         placed_ok = False
         # Try existing sheets first, then a fresh one.
         for si, occ in enumerate(occs):
-            spot = _place_on(occ, mask_ffts, pidx, angles, H, W, fft_shape)
+            spot = _place_on(occ, ctx, pidx, angles)
             if spot is not None:
                 _commit(sheets[si], occ, masks, pidx, spot, res)
                 placed_ok = True
@@ -245,7 +243,7 @@ def nest(
             continue
 
         occ = new_occ()
-        spot = _place_on(occ, mask_ffts, pidx, angles, H, W, fft_shape)
+        spot = _place_on(occ, ctx, pidx, angles)
         if spot is None:
             failed += 1  # doesn't fit even on an empty sheet in any rotation
             continue
@@ -257,23 +255,74 @@ def nest(
     return TightResult(sheets=sheets, failed=failed)
 
 
-def _place_on(occ, mask_ffts, pidx, angles, H, W, fft_shape):
-    """Best (lowest-leftmost across rotations) spot for a part on one sheet.
-
-    The sheet's occupancy FFT is computed once here and reused for every
-    rotation, so a piece with N angles costs one forward transform, not N.
-    """
-    focc = np.fft.rfft2(occ.astype(np.float64), s=fft_shape)
+def _best_from_maps(free_by_rep, rep_of, pidx, angles):
+    """Lowest-then-leftmost spot across rotations, from per-rep free-maps."""
     best = None  # (row, col, angle)
     for ang in angles:
-        mask_fft, mh, mw = mask_ffts[(pidx, ang)]
-        spot = _first_free_fft(focc, mask_fft, mh, mw, H, W, fft_shape)
-        if spot is None:
+        free, mh, mw = free_by_rep[rep_of[(pidx, ang)]]
+        if free is None or not free.any():
             continue
-        r0, c0 = spot
+        rows = np.where(free.any(axis=1))[0]
+        r0 = int(rows[0])
+        c0 = int(np.where(free[r0])[0][0])
         if best is None or (r0, c0) < (best[0], best[1]):
             best = (r0, c0, ang)
     return best
+
+
+def _place_on(occ, ctx, pidx, angles):
+    """Best (lowest-leftmost across rotations) spot for a part on one sheet.
+
+    Uses float32 FFTs (fast) and reuses one free-map per unique mask. The chosen
+    spot is exact-verified against the boolean occupancy; on the rare chance a
+    float32 rounding error mis-marked it free, the whole search falls back to
+    float64 so the result is always collision-free.
+    """
+    H, W, fft_shape = ctx["H"], ctx["W"], ctx["fft_shape"]
+    focc = np.fft.rfft2(occ.astype(np.float32), s=fft_shape)
+
+    free_by_rep: dict[tuple, tuple] = {}
+    for ang in angles:
+        rep = ctx["rep_of"][(pidx, ang)]
+        if rep in free_by_rep:
+            continue
+        mask_fft, mh, mw = ctx["mask_ffts"][rep]
+        if mh > H or mw > W:
+            free_by_rep[rep] = (None, mh, mw)
+            continue
+        full = np.fft.irfft2(focc * mask_fft, s=fft_shape)
+        free_by_rep[rep] = (full[mh - 1:H, mw - 1:W] < 0.5, mh, mw)
+
+    best = _best_from_maps(free_by_rep, ctx["rep_of"], pidx, angles)
+    if best is None:
+        return None
+
+    r0, c0, ang = best
+    mask = ctx["masks"][(pidx, ang)][0]
+    mh, mw = mask.shape
+    if not (occ[r0:r0 + mh, c0:c0 + mw] & mask).any():
+        return best
+    return _place_on_exact(occ, ctx, pidx, angles)   # float32 slip → redo exact
+
+
+def _place_on_exact(occ, ctx, pidx, angles):
+    """Float64 fallback: exact free-maps (recomputed on the fly). Rarely used."""
+    H, W, fft_shape = ctx["H"], ctx["W"], ctx["fft_shape"]
+    focc = np.fft.rfft2(occ.astype(np.float64), s=fft_shape)
+    free_by_rep: dict[tuple, tuple] = {}
+    for ang in angles:
+        rep = ctx["rep_of"][(pidx, ang)]
+        if rep in free_by_rep:
+            continue
+        mask = ctx["masks"][rep][0]
+        mh, mw = mask.shape
+        if mh > H or mw > W:
+            free_by_rep[rep] = (None, mh, mw)
+            continue
+        mf = np.fft.rfft2(mask[::-1, ::-1].astype(np.float64), s=fft_shape)
+        full = np.fft.irfft2(focc * mf, s=fft_shape)
+        free_by_rep[rep] = (full[mh - 1:H, mw - 1:W] < 0.5, mh, mw)
+    return _best_from_maps(free_by_rep, ctx["rep_of"], pidx, angles)
 
 
 def _commit(sheet: TightSheet, occ, masks, pidx, spot, res):
