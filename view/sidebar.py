@@ -47,12 +47,17 @@ def render() -> dict:
 
         _render_uploader()
 
-        st.divider()
-        for supplier in SUPPLIERS:
-            stored = price_store.load(supplier)
-            _render_status(supplier, stored)
-            if stored:
-                merged.update(stored["data"])
+        stored_by_supplier = [
+            (supplier, price_store.load(supplier)) for supplier in SUPPLIERS
+        ]
+        # Only draw the status section (and its divider) when at least one
+        # supplier has an uploaded price list — no empty "ei hinnastoa" rows.
+        if any(stored for _, stored in stored_by_supplier):
+            st.divider()
+            for supplier, stored in stored_by_supplier:
+                _render_status(supplier, stored)
+                if stored:
+                    merged.update(stored["data"])
 
         st.divider()
         copper_price_kg = _render_copper()
@@ -155,19 +160,16 @@ def _ask_supplier(widget_key: str, exclude: str | None = None) -> str | None:
 # ── Status ────────────────────────────────────────────────────────────────────
 
 def _render_status(supplier: Supplier, stored: dict | None) -> None:
-    if stored:
-        st.markdown(
-            f"**{supplier.label}** · {stored['source_file']}  \n"
-            f"<span style='color:#64748b;font-size:12px;'>"
-            f"Päivitetty {stored['updated_at']}</span>",
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            f"**{supplier.label}** · "
-            f"<span style='color:#94a3b8;'>ei hinnastoa</span>",
-            unsafe_allow_html=True,
-        )
+    # Only show a line once a price list has been uploaded for this supplier;
+    # suppliers with nothing stored render nothing.
+    if not stored:
+        return
+    st.markdown(
+        f"**{supplier.label}** · {stored['source_file']}  \n"
+        f"<span style='color:#64748b;font-size:12px;'>"
+        f"Päivitetty {stored['updated_at']}</span>",
+        unsafe_allow_html=True,
+    )
 
 
 # ── Copper ────────────────────────────────────────────────────────────────────
