@@ -40,10 +40,7 @@ def render() -> dict:
 
     with st.sidebar:
         st.header("Hinnastot")
-        st.caption(
-            "Lataa hinnasto PDF-muodossa — toimittaja tunnistetaan "
-            "automaattisesti."
-        )
+        st.caption("Lataa hinnasto PDF-muodossa")
 
         _render_uploader()
 
