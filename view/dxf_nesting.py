@@ -326,7 +326,16 @@ def _render_part_config(
         else:
             selected_layers = None  # all
 
-        geom = part.build(selected_layers)
+        main_only = st.checkbox(
+            "Vain pääkappale (poista irralliset lisäkuvat)",
+            value=True,
+            key=f"dxf_mainonly_{fid}",
+            help="Pitää suurimman yhtenäisen kappaleen ja sen reiät/aukot, mutta "
+                 "poistaa erilliset apukuvat ja yksityiskohdat, jotka ovat osan "
+                 "ulkopuolella.",
+        )
+
+        geom = part.build(selected_layers, main_only=main_only)
         if geom.width <= 0 or geom.height <= 0:
             st.warning("Valituilla tasoilla ei ole geometriaa. Valitse tasoja uudelleen.")
             return None
@@ -366,7 +375,8 @@ def _render_part_config(
         # signature so changing layers reseeds the numbers to the new geometry.
         det_w = round(geom.width, 1)
         det_h = round(geom.height, 1)
-        sig = "-".join(sorted(selected_layers)) if selected_layers else "all"
+        sig = ("-".join(sorted(selected_layers)) if selected_layers else "all") \
+            + ("-main" if main_only else "-full")
         cols = st.columns(3)
         width = cols[0].number_input(
             "Leveys (mm)", min_value=0.0, value=float(det_w), step=1.0,
