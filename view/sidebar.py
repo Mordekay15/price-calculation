@@ -133,27 +133,13 @@ def _parse_and_save(
 
 
 def _render_correction(uploaded) -> None:
-    """After a successful save, let the user reroute if detection guessed wrong."""
+    """After a successful save, confirm which supplier the PDF was routed to."""
     result = st.session_state.get(_RESULT) or {}
     if result.get("file_id") != uploaded.file_id:
         return
 
     saved = price_store.by_key(result["supplier_key"])
     st.success(f"Tunnistettu **{saved.label}** — hinnat tallennettu.")
-
-    with st.expander("Väärä toimittaja?"):
-        chosen_key = _ask_supplier("correct_route", exclude=saved.key)
-        if chosen_key is None:
-            return
-        if st.button("Tallenna uudelleen", key="confirm_reroute"):
-            # Drop the misrouted data before writing it to the right supplier.
-            price_store.delete(saved)
-            _parse_and_save(
-                price_store.by_key(chosen_key),
-                uploaded.getvalue(),
-                result["filename"],
-                uploaded.file_id,
-            )
 
 
 def _ask_supplier(widget_key: str, exclude: str | None = None) -> str | None:
