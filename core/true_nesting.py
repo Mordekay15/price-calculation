@@ -134,16 +134,31 @@ def rasterize(polylines, angle_deg: float, res: float, kerf_mm: float):
 
 # ── Collision + placement ───────────────────────────────────────────────────
 
-def _first_free(occ: np.ndarray, mask: np.ndarray):
-    """Lowest-then-leftmost (row, col) where mask fits with no overlap, or None."""
-    H, W = occ.shape
-    mh, mw = mask.shape
+def _is_smooth(n: int) -> bool:
+    """True if n factors into only 2, 3 and 5 (an FFT-friendly length)."""
+    for p in (2, 3, 5):
+        while n % p == 0:
+            n //= p
+    return n == 1
+
+
+def _next_fast_len(n: int) -> int:
+    """Smallest FFT-friendly length >= n. pocketfft is fast on 2/3/5-smooth
+    sizes and very slow on large prime lengths, so we always pad up to one."""
+    while not _is_smooth(n):
+        n += 1
+    return n
+
+
+def _first_free_fft(focc, mask_fft, mh: int, mw: int, H: int, W: int, fft_shape):
+    """Lowest-then-leftmost fit for a mask, given the sheet's precomputed FFT.
+
+    `focc` is rfft2(occ) and `mask_fft` is rfft2(flipped mask), both at
+    `fft_shape`; their product's inverse is the overlap count at every offset.
+    """
     if mh > H or mw > W:
         return None
-    size = (H + mh - 1, W + mw - 1)
-    fa = np.fft.rfft2(occ.astype(np.float64), s=size)
-    fb = np.fft.rfft2(mask[::-1, ::-1].astype(np.float64), s=size)
-    full = np.fft.irfft2(fa * fb, s=size)
+    full = np.fft.irfft2(focc * mask_fft, s=fft_shape)
     valid = full[mh - 1:H, mw - 1:W]
     free = np.rint(valid) < 0.5
     if not free.any():
@@ -189,6 +204,21 @@ def nest(
     W = int(math.ceil(sheet_w / res))
     clamp_cells = int(round(long_side_clamp_mm / res)) if long_side_clamp_mm else 0
 
+    # One common FFT size for the sheet and every mask, padded up to an
+    # FFT-friendly (2/3/5-smooth) length so pocketfft stays fast. Each mask's
+    # FFT is computed once here and reused for every placement — only the
+    # occupancy grid's FFT is recomputed per placement (below).
+    max_mh = max(m[0].shape[0] for m in masks.values())
+    max_mw = max(m[0].shape[1] for m in masks.values())
+    fft_shape = (_next_fast_len(H + max_mh - 1), _next_fast_len(W + max_mw - 1))
+    mask_ffts: dict[tuple[int, float], tuple] = {}
+    for key, (mask, *_rest) in masks.items():
+        mh, mw = mask.shape
+        mask_ffts[key] = (
+            np.fft.rfft2(mask[::-1, ::-1].astype(np.float64), s=fft_shape),
+            mh, mw,
+        )
+
     def new_occ() -> np.ndarray:
         occ = np.zeros((H, W), dtype=bool)
         if clamp_cells > 0:
@@ -206,7 +236,7 @@ def nest(
         placed_ok = False
         # Try existing sheets first, then a fresh one.
         for si, occ in enumerate(occs):
-            spot = _place_on(occ, masks, pidx, angles)
+            spot = _place_on(occ, mask_ffts, pidx, angles, H, W, fft_shape)
             if spot is not None:
                 _commit(sheets[si], occ, masks, pidx, spot, res)
                 placed_ok = True
@@ -215,7 +245,7 @@ def nest(
             continue
 
         occ = new_occ()
-        spot = _place_on(occ, masks, pidx, angles)
+        spot = _place_on(occ, mask_ffts, pidx, angles, H, W, fft_shape)
         if spot is None:
             failed += 1  # doesn't fit even on an empty sheet in any rotation
             continue
@@ -227,12 +257,17 @@ def nest(
     return TightResult(sheets=sheets, failed=failed)
 
 
-def _place_on(occ, masks, pidx, angles):
-    """Best (lowest-leftmost across rotations) spot for a part on one sheet."""
+def _place_on(occ, mask_ffts, pidx, angles, H, W, fft_shape):
+    """Best (lowest-leftmost across rotations) spot for a part on one sheet.
+
+    The sheet's occupancy FFT is computed once here and reused for every
+    rotation, so a piece with N angles costs one forward transform, not N.
+    """
+    focc = np.fft.rfft2(occ.astype(np.float64), s=fft_shape)
     best = None  # (row, col, angle)
     for ang in angles:
-        mask = masks[(pidx, ang)][0]
-        spot = _first_free(occ, mask)
+        mask_fft, mh, mw = mask_ffts[(pidx, ang)]
+        spot = _first_free_fft(focc, mask_fft, mh, mw, H, W, fft_shape)
         if spot is None:
             continue
         r0, c0 = spot
