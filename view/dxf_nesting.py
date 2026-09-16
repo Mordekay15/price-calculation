@@ -32,6 +32,7 @@ from core.dxf import parse_dxf
 from core.nesting import parse_size
 from core.sheet_usage import _fmt_m
 from view.margin_view import render_margin
+from view.nesting_settings_view import render_nesting_settings
 from view.pieces_summary_view import render_pieces_summary
 from view.product_view import render_material_thickness
 from view.sheet_usage_view import _PRODUCT_PALETTE, _render_breakdown, render_group
@@ -101,40 +102,24 @@ def render(data: dict) -> None:
             products.append(product)
 
     # ── Placement options (mirrors the manual calculator) ──────────────────────
-    nest_mode = st.radio(
-        "Sijoittelutapa",
-        options=("combined", "separate"),
-        format_func=lambda v: {
-            "combined": "Yhdistä samat materiaalit samalle levylle",
-            "separate": "Laske jokainen osa erikseen",
-        }[v],
-        horizontal=True,
-        key="dxf_nest_mode",
-        help=(
+    nest_mode, rankavali_mm, long_side_clamp_mm = render_nesting_settings(
+        key_prefix="dxf",
+        separate_label="Laske jokainen osa erikseen",
+        nest_help=(
             "Yhdistettynä saman materiaalin ja paksuuden osat sijoitellaan "
             "samoille levyille (sekanestaus). Erikseen-vaihtoehdolla kullekin "
             "osalle lasketaan oma levytarpeensa."
         ),
-    )
-
-    rankavali_mm = int(st.number_input(
-        "Rankaväli (mm)",
-        min_value=0, value=0, step=1, key="dxf_rankavali_mm",
-        help=(
+        rankavali_help=(
             "Kappaleiden välinen leikkausvara. Lisätään jokaisen kappaleen "
             "leveyteen ja korkeuteen sijoittelussa."
         ),
-    ))
-
-    long_side_clamp_mm = int(st.number_input(
-        "Pitkän sivun kynsirainan leveys (mm)",
-        min_value=0, value=0, step=1, key="dxf_long_side_clamp_mm",
-        help=(
+        clamp_help=(
             "Kynsiraina on levyn pitkän sivun reunavyöhyke, johon koneen kynnet "
             "tarttuvat — aluetta ei voi käyttää sijoitteluun. Levy ostetaan silti "
             "täysikokoisena."
         ),
-    ))
+    )
 
     pack_mode = st.radio(
         "Nestaustapa",
