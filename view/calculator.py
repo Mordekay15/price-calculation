@@ -74,7 +74,7 @@ def _render_sheet_usage(
         return cheapest_prices
 
     st.divider()
-    st.markdown("**Levyn käyttö** — mikä levykoko on edullisin")
+    st.markdown("**Levyn käyttö**")
 
     grand_total_eur = 0.0
     any_priced      = False
