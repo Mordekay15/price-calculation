@@ -27,8 +27,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.calculator import build_lookup
-from core.copper import COPPER_LABEL, build_copper_section
-from core.models import spec_for
+from core.copper import COPPER_LABEL, COPPER_THICKNESSES, build_copper_records
+from core.models import PriceRecord, spec_for
 from core.normalize import lookup_from_records, records_from_parsed
 
 
@@ -107,15 +107,9 @@ def _tibnor_data() -> dict:
     }
 
 
-def _copper_data() -> dict:
-    """The copper section (core/copper.py) with a price set."""
-    return build_copper_section(price_per_kg=15.5)
-
-
 ALL_FIXTURES = {
     "tatasteel": _tatasteel_data(),
     "tibnor": _tibnor_data(),
-    "kupari": _copper_data(),
 }
 
 
@@ -202,13 +196,31 @@ def test_no_size_column_round_trips():
     assert (r.thickness, r.material) in build_lookup(data)
 
 
-def test_copper_round_trips():
-    """Copper flows through the same bridge as the PDF suppliers."""
-    data = _copper_data()
-    rebuilt = lookup_from_records(records_from_parsed("kupari", data))
-    assert rebuilt == build_lookup(data)
-    # Its label is the "Material | Size" copper uses today.
-    assert any(label == COPPER_LABEL for (_t, label) in rebuilt)
+def test_copper_records_match_legacy_prices():
+    """Copper is built straight to records now; check it still produces the
+    exact prices the old wide-row copper section did (€/kg × 1000, one per
+    stocked thickness, under the same 'KUPARI | 1000x2000' label)."""
+    price_kg = 15.5
+    records = build_copper_records(price_kg)
+    lookup = lookup_from_records(records)
+    expected = {(t, COPPER_LABEL): price_kg * 1000 for t in COPPER_THICKNESSES}
+    assert lookup == expected
+    # No price set → no priced records (matches old None rows carrying no entry).
+    assert build_copper_records(None) == []
+    assert build_copper_records(0) == []
+
+
+def test_record_json_round_trips():
+    """A record survives to_dict → JSON → from_dict unchanged — the guarantee
+    the on-disk price files rely on."""
+    import json
+
+    original = records_from_parsed("tibnor", _tibnor_data())
+    dumped = json.dumps([r.to_dict() for r in original])
+    restored = [PriceRecord.from_dict(d) for d in json.loads(dumped)]
+    assert restored == original
+    # And the restored records rebuild the identical price map.
+    assert lookup_from_records(restored) == lookup_from_records(original)
 
 
 # ── Standalone runner (no pytest required) ─────────────────────────────────────

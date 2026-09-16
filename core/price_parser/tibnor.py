@@ -13,6 +13,8 @@ import io
 
 import pdfplumber
 
+from core.models import PriceRecord
+from core.normalize import records_from_parsed
 from core.price_parser.helpers import clean, expand_range_rows, to_float
 
 
@@ -163,13 +165,13 @@ def _parse_tibnor_table(
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def parse_tibnor_pdf(file_bytes: bytes) -> dict:
-    """Parse a Tibnor price list PDF.
+def parse_tibnor_pdf(file_bytes: bytes) -> list[PriceRecord]:
+    """Parse a Tibnor price list PDF into fully-described price records.
 
-    Returns a dict with keys:
-        tibnor_nonferrous, tibnor_steel, tibnor_special
-    Each value is a list of row dicts in the same shape as parse_tatasteel_pdf.
-    All prices are normalised to €/tn so they share the calculator pipeline.
+    The per-table parsing still produces the supplier's natural wide rows
+    (all prices normalised to €/tn); `records_from_parsed` then turns every
+    priced cell into a PriceRecord — the shape the rest of the app stores and
+    reads. No wide-row dict leaves this module.
     """
     result: dict = {
         "tibnor_nonferrous": [],
@@ -203,4 +205,4 @@ def parse_tibnor_pdf(file_bytes: bytes) -> dict:
     for key in ("tibnor_nonferrous", "tibnor_steel", "tibnor_special"):
         result[key] = expand_range_rows(result[key])
 
-    return result
+    return records_from_parsed("tibnor", result)

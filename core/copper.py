@@ -12,7 +12,8 @@ thicknesses, matching the supplier's "KUPARI" product list
 (e.g. "0,5x1000x2000" = 0,5 mm thickness on a 1000×2000 mm sheet).
 """
 
-from core.calculator import thickness_sort_key
+from core.calculator import parse_thickness_mm, thickness_sort_key
+from core.models import PriceRecord
 
 # Material / product identity — mirrors the "Material | Size" label scheme the
 # PDF parsers emit so copper flows through the exact same calculator pipeline.
@@ -32,25 +33,27 @@ COPPER_PRICE_MIN = 15.0
 COPPER_PRICE_MAX = 15.9
 COPPER_PRICE_STEP = 0.1
 
-# Section key used inside the merged price-data dict.
-COPPER_SECTION_KEY = "kupari"
 
+def build_copper_records(price_per_kg: float | None) -> list[PriceRecord]:
+    """Return the copper price records — one per stocked thickness.
 
-def build_copper_section(price_per_kg: float | None) -> dict:
-    """Return a data section (same shape as the parsers') for copper.
-
-    One row per thickness, keyed by the 'Material | Size' label. When no price
-    has been set yet the price is None, so copper still appears as a selectable
-    material but carries no per-sheet pricing — build_lookup skips None values.
-    The per-kilo price is converted to €/tn (× 1000) so it shares the calculator
-    pipeline with the PDF-sourced materials, which are all normalised to €/tn.
+    The per-kilo price is converted to €/tn (× 1000) so copper shares the exact
+    same scale as the PDF-sourced materials. When no price has been set yet the
+    result is an empty list: copper carries no priced records (just as the old
+    None-priced rows produced no lookup entries), while the calculator keeps
+    copper selectable on its own, independent of any price.
     """
-    price_per_tn = price_per_kg * 1000 if price_per_kg else None
-    rows = [
-        {
-            "Paksuus (mm)": t,
-            COPPER_LABEL: price_per_tn,
-        }
+    if not price_per_kg:
+        return []
+    price_per_tn = price_per_kg * 1000
+    return [
+        PriceRecord(
+            supplier="kupari",
+            material=COPPER_MATERIAL,
+            size=COPPER_SIZE,
+            thickness=t,
+            thickness_mm=parse_thickness_mm(t) or 0.0,
+            price_per_tn=price_per_tn,
+        )
         for t in COPPER_THICKNESSES
     ]
-    return {COPPER_SECTION_KEY: rows}

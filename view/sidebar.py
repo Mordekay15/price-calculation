@@ -11,10 +11,11 @@ before any supplier PDF has been uploaded.
 
 import streamlit as st
 from core import price_store
+from core.models import PriceRecord
 from core.price_store import SUPPLIERS, Supplier
 from core.price_parser.detect import detect_supplier, is_empty
 from core.copper import (
-    build_copper_section,
+    build_copper_records,
     COPPER_PRICE_MIN,
     COPPER_PRICE_MAX,
     COPPER_PRICE_STEP,
@@ -35,8 +36,8 @@ _SEEN   = "upload_handled_file_id"   # file_id of the upload already saved
 _RESULT = "upload_last_result"       # {file_id, supplier_key, filename}
 
 
-def render() -> dict:
-    merged: dict = {}
+def render() -> list[PriceRecord]:
+    merged: list[PriceRecord] = []
 
     with st.sidebar:
         st.header("Hinnastot")
@@ -54,12 +55,12 @@ def render() -> dict:
             for supplier, stored in stored_by_supplier:
                 _render_status(supplier, stored)
                 if stored:
-                    merged.update(stored["data"])
+                    merged += price_store.records_of(stored)
 
         st.divider()
         copper_price_kg = _render_copper()
 
-    merged.update(build_copper_section(copper_price_kg))
+    merged += build_copper_records(copper_price_kg)
     return merged
 
 

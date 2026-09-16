@@ -15,15 +15,16 @@ from dataclasses import dataclass
 from typing import Callable
 
 import streamlit as st
+from core.models import PriceRecord
 from core.price_parser import parse_tatasteel_pdf, parse_tibnor_pdf
 
 
 @dataclass(frozen=True)
 class Supplier:
-    key:    str                      # session-state / widget key prefix
-    label:  str                      # shown in the sidebar
-    path:   pathlib.Path             # where parsed data is persisted
-    parser: Callable[[bytes], dict]  # pdf bytes -> price data
+    key:    str                                  # session-state / widget key prefix
+    label:  str                                  # shown in the sidebar
+    path:   pathlib.Path                         # where parsed data is persisted
+    parser: Callable[[bytes], list[PriceRecord]]  # pdf bytes -> price records
 
 
 SUPPLIERS: list[Supplier] = [
@@ -50,16 +51,33 @@ def _load_cached(path_str: str, mtime: float) -> dict | None:
 
 
 def load(supplier: Supplier) -> dict | None:
-    """Return the stored payload for a supplier, or None if nothing saved yet."""
+    """Return the stored payload for a supplier, or None if nothing saved yet.
+
+    The payload carries the price list under "records" (a list of plain dicts,
+    one per PriceRecord) plus the source filename and save time. Use
+    `records_of()` to turn it back into PriceRecords.
+    """
     if not supplier.path.exists():
         return None
     return _load_cached(str(supplier.path), supplier.path.stat().st_mtime)
 
 
-def save(supplier: Supplier, data: dict, filename: str) -> dict:
-    """Write parsed data to disk and return the payload that was written."""
+def records_of(payload: dict | None) -> list[PriceRecord]:
+    """Rebuild the PriceRecords from a stored payload.
+
+    Returns [] for nothing stored, and also for a payload saved in the older
+    wide-row format (no "records" key) — that price list simply needs a
+    one-time re-upload to be saved in the current shape.
+    """
+    if not payload:
+        return []
+    return [PriceRecord.from_dict(d) for d in payload.get("records", [])]
+
+
+def save(supplier: Supplier, records: list[PriceRecord], filename: str) -> dict:
+    """Write a supplier's price records to disk and return the saved payload."""
     payload = {
-        "data":        data,
+        "records":     [r.to_dict() for r in records],
         "source_file": filename,
         "updated_at":  datetime.datetime.now().isoformat(timespec="seconds"),
     }

@@ -19,13 +19,14 @@ import uuid
 
 import streamlit as st
 from core.calculator import (
-    build_lookup,
     get_materials,
     get_thicknesses_for_material,
     parse_thickness_mm,
     piece_weight_kg,
 )
 from core.copper import COPPER_MATERIAL, COPPER_THICKNESSES
+from core.models import PriceRecord
+from core.normalize import lookup_from_records
 from view.sheet_usage_view import render_group
 
 _PLACEHOLDER_MAT   = "— Valitse materiaali —"
@@ -48,8 +49,8 @@ def _init_products() -> None:
         st.session_state.calc_products = [_new_product()]
 
 
-def render(data: dict) -> None:
-    lookup = build_lookup(data)
+def render(records: list[PriceRecord]) -> None:
+    lookup = lookup_from_records(records)
 
     st.subheader("Hintalaskuri")
 

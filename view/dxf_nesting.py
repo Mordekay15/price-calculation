@@ -19,7 +19,6 @@ import streamlit as st
 
 from core import true_nesting as tn
 from core.calculator import (
-    build_lookup,
     calculate,
     density_for_material,
     get_materials,
@@ -30,7 +29,9 @@ from core.calculator import (
 )
 from core.copper import COPPER_MATERIAL, COPPER_THICKNESSES
 from core.dxf import parse_dxf
+from core.models import PriceRecord
 from core.nesting import parse_size
+from core.normalize import lookup_from_records
 from core.sheet_usage import _fmt_m
 from view.sheet_usage_view import _PRODUCT_PALETTE, _render_breakdown, render_group
 
@@ -62,8 +63,8 @@ def _run_nest(parts_key, sheet_w, sheet_h, res, angles, kerf_mm, clamp_mm):
     )
 
 
-def render(data: dict) -> None:
-    lookup = build_lookup(data)
+def render(records: list[PriceRecord]) -> None:
+    lookup = lookup_from_records(records)
 
     st.subheader("DXF-nestaus")
     st.caption(

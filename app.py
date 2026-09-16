@@ -16,10 +16,10 @@ st.set_page_config(
 
 st.title("Stremet Price Tool")
 
-price_data = sidebar.render()
+price_records = sidebar.render()
 
 calc_tab, dxf_tab = st.tabs(["Hintalaskuri", "DXF-nestaus"])
 with calc_tab:
-    calculator.render(price_data)
+    calculator.render(price_records)
 with dxf_tab:
-    dxf_nesting.render(price_data)
+    dxf_nesting.render(price_records)

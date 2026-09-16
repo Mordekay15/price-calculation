@@ -167,3 +167,36 @@ class PriceRecord:
         """
         label = self.spec.label
         return f"{label} | {self.size}" if include_size and self.size else label
+
+    # ── JSON (de)serialisation ─────────────────────────────────────────────────
+    # Records are what the app now persists (one price list = list[PriceRecord]),
+    # so each record must survive a round-trip through plain JSON. These stay
+    # pure stdlib — just dict ⇄ record — so this module keeps depending on nothing.
+
+    def to_dict(self) -> dict:
+        """A plain, JSON-serialisable dict of this record's fields."""
+        return {
+            "supplier":     self.supplier,
+            "material":     self.material,
+            "size":         self.size,
+            "thickness":    self.thickness,
+            "thickness_mm": self.thickness_mm,
+            "price_per_tn": self.price_per_tn,
+            "finish":       self.finish,
+            "currency":     self.currency,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "PriceRecord":
+        """Rebuild a record from a dict produced by `to_dict` (tolerant of
+        missing optional keys, so older saved files still load)."""
+        return cls(
+            supplier=d["supplier"],
+            material=d["material"],
+            size=d["size"],
+            thickness=d["thickness"],
+            thickness_mm=d["thickness_mm"],
+            price_per_tn=d["price_per_tn"],
+            finish=d.get("finish"),
+            currency=d.get("currency", "EUR"),
+        )

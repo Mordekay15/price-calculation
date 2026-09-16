@@ -51,10 +51,15 @@ def detect_supplier(file_bytes: bytes) -> str | None:
     return hits[0] if len(hits) == 1 else None
 
 
-def is_empty(parsed: dict) -> bool:
-    """True when a parser returned no rows at all.
+def is_empty(parsed) -> bool:
+    """True when a parser produced nothing at all.
 
     Signals that detection picked the wrong parser, or that the supplier
     changed their PDF layout. Either way the result should not be saved.
+
+    Accepts either the parsers' current output — a list of price records — or
+    a legacy wide-row dict, so it stays correct through the migration.
     """
-    return not any(rows for rows in parsed.values())
+    if isinstance(parsed, dict):
+        return not any(rows for rows in parsed.values())
+    return not parsed

@@ -11,6 +11,8 @@ Layout (as of the current template):
 
 import io
 import pdfplumber
+from core.models import PriceRecord
+from core.normalize import records_from_parsed
 from core.price_parser.helpers import clean, expand_range_rows, to_float
 
 
@@ -99,15 +101,17 @@ def parse_special(table: list) -> list[dict]:
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def parse_tatasteel_pdf(file_bytes: bytes) -> dict:
+def parse_tatasteel_pdf(file_bytes: bytes) -> list[PriceRecord]:
     """
-    Parse a Tata Steel price list PDF.
+    Parse a Tata Steel price list PDF into fully-described price records.
 
-    Returns a dict with keys:
-        thin, thick, forecast, surcharges, special
-    Each value is a list of row dicts.
+    The per-table parsers still produce the supplier's natural wide rows
+    (thin, thick, special — plus the non-priced forecast/surcharges tables);
+    `records_from_parsed` then turns every priced cell into a PriceRecord and
+    drops the non-priced sections. The records are what the rest of the app
+    stores and reads — no wide-row dict leaves this module.
     """
-    result = {
+    sections = {
         "thin":       [],
         "thick":      [],
         "forecast":   [],
@@ -119,17 +123,17 @@ def parse_tatasteel_pdf(file_bytes: bytes) -> dict:
         num_pages = len(pdf.pages)
 
         if num_pages >= 2:
-            result["forecast"] = parse_forecast(pdf.pages[1])
+            sections["forecast"] = parse_forecast(pdf.pages[1])
 
         if num_pages >= 3:
             tables = pdf.pages[2].extract_tables()
             if len(tables) > 0:
-                result["thin"]       = expand_range_rows(parse_thin_sheets(tables[0]))
+                sections["thin"]       = expand_range_rows(parse_thin_sheets(tables[0]))
             if len(tables) > 1:
-                result["thick"]      = expand_range_rows(parse_thick_sheets(tables[1]))
+                sections["thick"]      = expand_range_rows(parse_thick_sheets(tables[1]))
             if len(tables) > 2:
-                result["surcharges"] = parse_surcharges(tables[2])
+                sections["surcharges"] = parse_surcharges(tables[2])
             if len(tables) > 3:
-                result["special"]    = expand_range_rows(parse_special(tables[3]))
+                sections["special"]    = expand_range_rows(parse_special(tables[3]))
 
-    return result
+    return records_from_parsed("tatasteel", sections)
