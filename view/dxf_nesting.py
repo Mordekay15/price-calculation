@@ -24,19 +24,16 @@ from core.calculator import (
     density_for_material,
     get_materials,
     get_sizes_for_material,
-    get_thicknesses_for_material,
     parse_thickness_mm,
     piece_weight_kg,
 )
-from core.copper import COPPER_MATERIAL, COPPER_THICKNESSES
+from core.copper import COPPER_MATERIAL
 from core.dxf import parse_dxf
 from core.nesting import parse_size
 from core.sheet_usage import _fmt_m
 from view.margin_view import render_margin
+from view.product_view import render_material_thickness
 from view.sheet_usage_view import _PRODUCT_PALETTE, _render_breakdown, render_group
-
-_PLACEHOLDER_MAT   = "— Valitse materiaali —"
-_PLACEHOLDER_THICK = "— Valitse paksuus —"
 
 _STORE = "dxf_store"   # session_state key: {file_id: DxfPart}
 
@@ -346,28 +343,11 @@ def _render_part_config(
         st.markdown(_preview_svg(geom.polylines, geom.width, geom.height),
                     unsafe_allow_html=True)
 
-        # Material + thickness (same pattern as the manual calculator).
-        mat_opts = [_PLACEHOLDER_MAT] + materials
-        mat_raw = st.selectbox("Materiaali", mat_opts, index=0, key=f"dxf_mat_{fid}")
-        material = mat_raw if mat_raw != _PLACEHOLDER_MAT else None
-
-        if material == COPPER_MATERIAL:
-            thicknesses = COPPER_THICKNESSES
-        elif material is not None:
-            thicknesses = get_thicknesses_for_material(lookup, material)
-        else:
-            thicknesses = []
-
-        if thicknesses:
-            th_opts = [_PLACEHOLDER_THICK] + thicknesses
-            th_raw = st.selectbox("Paksuus (mm)", th_opts, index=0, key=f"dxf_th_{fid}")
-            thickness = th_raw if th_raw != _PLACEHOLDER_THICK else None
-        else:
-            st.selectbox(
-                "Paksuus (mm)", [_PLACEHOLDER_THICK], index=0,
-                disabled=True, key=f"dxf_th_{fid}_disabled",
-            )
-            thickness = None
+        # Material + thickness — shared with the manual calculator cards.
+        material, thickness = render_material_thickness(
+            materials, lookup,
+            mat_key=f"dxf_mat_{fid}", thick_key=f"dxf_th_{fid}",
+        )
 
         # Detected size drives the widget defaults; the key includes the layer
         # signature so changing layers reseeds the numbers to the new geometry.

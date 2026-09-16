@@ -46,6 +46,56 @@ def _thicknesses_for(lookup: dict, material: str | None) -> list[str]:
     return []
 
 
+def render_material_thickness(
+    materials: list[str],
+    lookup: dict,
+    *,
+    mat_key: str,
+    thick_key: str,
+    mat_default: str | None = None,
+    thick_default: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Render the shared material + thickness selectboxes.
+
+    Used by both the manual calculator product cards and the DXF part cards so
+    the two pages pick material/thickness identically (copper always
+    selectable, the thickness box disabled until a material is chosen).
+    ``mat_default`` / ``thick_default`` seed the initial selection — pass a
+    card's stored values to keep its choice across reruns, or leave them None
+    to start on the placeholder. Returns ``(material, thickness)``, each None
+    when unset.
+    """
+    mat_opts = [_PLACEHOLDER_MAT] + materials
+    mat_default = mat_default if mat_default in materials else _PLACEHOLDER_MAT
+    mat_raw = st.selectbox(
+        "Materiaali",
+        mat_opts,
+        index=mat_opts.index(mat_default),
+        key=mat_key,
+    )
+    material = mat_raw if mat_raw != _PLACEHOLDER_MAT else None
+
+    thicknesses = _thicknesses_for(lookup, material)
+    if thicknesses:
+        th_opts = [_PLACEHOLDER_THICK] + thicknesses
+        th_default = thick_default if thick_default in thicknesses else _PLACEHOLDER_THICK
+        th_raw = st.selectbox(
+            "Paksuus (mm)",
+            th_opts,
+            index=th_opts.index(th_default),
+            key=thick_key,
+        )
+        thickness = th_raw if th_raw != _PLACEHOLDER_THICK else None
+    else:
+        st.selectbox(
+            "Paksuus (mm)", [_PLACEHOLDER_THICK], index=0,
+            disabled=True, key=f"{thick_key}_disabled",
+        )
+        thickness = None
+
+    return material, thickness
+
+
 def _render_product(prod: dict, index: int, materials: list[str], lookup: dict) -> bool:
     """Render one product's inputs and write them back into ``prod``.
 
@@ -61,30 +111,11 @@ def _render_product(prod: dict, index: int, materials: list[str], lookup: dict) 
             if hdr_cols[1].button("Poista", key=f"del_{pid}"):
                 delete_requested = True
 
-        mat_opts = [_PLACEHOLDER_MAT] + materials
-        mat_default = prod["material"] if prod["material"] in materials else _PLACEHOLDER_MAT
-        mat_raw = st.selectbox(
-            "Materiaali",
-            mat_opts,
-            index=mat_opts.index(mat_default),
-            key=f"mat_{pid}",
+        material, thickness = render_material_thickness(
+            materials, lookup,
+            mat_key=f"mat_{pid}", thick_key=f"th_{pid}",
+            mat_default=prod["material"], thick_default=prod["thickness"],
         )
-        material = mat_raw if mat_raw != _PLACEHOLDER_MAT else None
-
-        thicknesses = _thicknesses_for(lookup, material)
-        if thicknesses:
-            th_opts = [_PLACEHOLDER_THICK] + thicknesses
-            th_default = prod["thickness"] if prod["thickness"] in thicknesses else _PLACEHOLDER_THICK
-            th_raw = st.selectbox(
-                "Paksuus (mm)",
-                th_opts,
-                index=th_opts.index(th_default),
-                key=f"th_{pid}",
-            )
-            thickness = th_raw if th_raw != _PLACEHOLDER_THICK else None
-        else:
-            st.selectbox("Paksuus (mm)", [_PLACEHOLDER_THICK], index=0, disabled=True, key=f"th_{pid}_disabled")
-            thickness = None
 
         inp_cols = st.columns(3)
         w = inp_cols[0].number_input(
