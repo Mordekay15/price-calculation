@@ -8,33 +8,20 @@ To add a new calculation type (e.g. weight-based, area-based):
   - Add a new function below and call it from the relevant view.
 """
 
-THICKNESS_KEY = "Paksuus (mm)"
+from core.models import spec_for
 
-# Material densities in kg/mm³. A 1 mm sheet of 1 m² weighs density × 1e6 kg,
-# so the kg/m²·mm value equals the g/cm³ value.
-#STEEL_DENSITY_KG_PER_MM3 = 7.85e-6   # Steel / RST / HST — 7.85 g/cm³
-DENSITIES_KG_PER_MM3 = {
-    "steel":    8.0e-6,
-    "alumiini": 2.7e-6,
-    "kupari":   8.96e-6,
-    "pvc":      2.2e-6,
-}
+THICKNESS_KEY = "Paksuus (mm)"
 
 
 def density_for_material(material: str | None) -> float:
     """Pick a density (kg/mm³) by matching keywords in the material name.
 
-    Falls back to steel for anything unrecognised — covers RST/HST, all the
-    Tata/Stremet and Tibnor steel grades (DC01, DX51D, S235, S355MC, etc.).
+    Delegates to the MaterialSpec registry in core/models.py — the single
+    source for density/alias knowledge — instead of a local density table.
+    Falls back to steel for anything unrecognised (covers RST/HST and every
+    Tata/Stremet and Tibnor steel grade: DC01, DX51D, S235, S355MC, etc.).
     """
-    name = (material or "").lower()
-    if "alumiini" in name:
-        return DENSITIES_KG_PER_MM3["alumiini"]
-    if "kupari" in name:
-        return DENSITIES_KG_PER_MM3["kupari"]
-    if "pvc" in name or "pleksi" in name:
-        return DENSITIES_KG_PER_MM3["pvc"]
-    return DENSITIES_KG_PER_MM3["steel"]
+    return spec_for(material).density_kg_per_mm3
 
 
 # ── Lookup builder ────────────────────────────────────────────────────────────
