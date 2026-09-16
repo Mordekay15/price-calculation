@@ -15,8 +15,10 @@ Flow:
   3. The "Pieces summary" at the bottom lists every product with its
      per-piece and batch weight, plus the grand total.
 
-``render`` is the public entry point; it wires together view/product_view.py
-and the small ``_render_*`` helpers below, each of which owns one section of
+``render`` is the public entry point; it wires together the per-section view
+modules (view/margin_view.py, view/product_view.py,
+view/nesting_settings_view.py, view/sheet_usage_view.py) and the small
+``_render_*`` / ``_build_*`` helpers below, each of which owns one section of
 the page.
 """
 
@@ -28,59 +30,10 @@ from core.calculator import (
     piece_weight_kg,
 )
 from core.copper import COPPER_MATERIAL
+from view.margin_view import render_margin
+from view.nesting_settings_view import render_nesting_settings
 from view.product_view import render_products
 from view.sheet_usage_view import render_group
-
-
-def _render_nesting_settings() -> tuple[str, int, int]:
-    """Nesting mode plus the two spacing inputs.
-
-    Returns ``(nest_mode, rankavali_mm, long_side_clamp_mm)``.
-    """
-    nest_mode = st.radio(
-        "Sijoittelutapa",
-        options=("combined", "separate"),
-        format_func=lambda v: {
-            "combined": "Yhdistä samat materiaalit samalle levylle",
-            "separate": "Laske jokainen tuote erikseen",
-        }[v],
-        horizontal=True,
-        key="calc_nest_mode",
-        help=(
-            "Yhdistettynä saman materiaalin ja paksuuden tuotteet sijoitellaan "
-            "samoille levyille (sekanestaus). Erikseen-vaihtoehdolla kullekin "
-            "tuotteelle lasketaan oma levytarpeensa."
-        ),
-    )
-
-    rankavali_mm = int(st.number_input(
-        "Rankaväli (mm)",
-        min_value=0,
-        value=0,
-        step=1,
-        key="calc_rankavali_mm",
-        help=(
-            "Kappaleiden välinen rankaväli (leikkausvara). Lisätään jokaisen "
-            "kappaleen leveyteen ja korkeuteen sijoittelussa, jotta vierekkäiset "
-            "kappaleet pysyvät tämän etäisyyden päässä toisistaan."
-        ),
-    ))
-
-    long_side_clamp_mm = int(st.number_input(
-        "Pitkän sivun kynsirainan leveys (mm)",
-        min_value=0,
-        value=0,
-        step=1,
-        key="calc_long_side_clamp_mm",
-        help=(
-            "Kynsiraina on levyn pitkän sivun reunavyöhyke, johon koneen kynnet "
-            "tarttuvat — aluetta ei voi käyttää kappaleiden sijoitteluun. "
-            "Levy ostetaan silti täysikokoisena, joten paino ja hinta lasketaan "
-            "bruttomitoista."
-        ),
-    ))
-
-    return nest_mode, rankavali_mm, long_side_clamp_mm
 
 
 def _build_groups(products: list[dict], nest_mode: str) -> dict[tuple, list[dict]]:
@@ -209,16 +162,10 @@ def render(data: dict) -> None:
     if COPPER_MATERIAL not in materials:
         materials = sorted([*materials, COPPER_MATERIAL])
 
-    margin_pct = st.number_input(
-        "Materiaalin kate (%)",
-        min_value=0.0,
-        value=15.0,
-        step=0.5,
-        key="calc_margin_pct",
-    )
+    margin_pct = render_margin()
 
     products = render_products(materials, lookup)
-    nest_mode, rankavali_mm, long_side_clamp_mm = _render_nesting_settings()
+    nest_mode, rankavali_mm, long_side_clamp_mm = render_nesting_settings()
 
     groups = _build_groups(products, nest_mode)
     cheapest_prices = _render_sheet_usage(
