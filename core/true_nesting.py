@@ -340,3 +340,109 @@ def _commit(sheet: TightSheet, occ, masks, pidx, spot, res):
         h_mm=h_mm,
         area_mm2=area,
     ))
+
+
+# ── Shelf / grid strategy ────────────────────────────────────────────────────
+
+def shelf_nest(
+    parts: list[dict],
+    sheet_w: int,
+    sheet_h: int,
+    res: float = 2.0,
+    angles: tuple[float, ...] = (0.0, 90.0),
+    kerf_mm: float = 0.0,
+    long_side_clamp_mm: int = 0,
+) -> TightResult:
+    """Pack parts as aligned rows of their bounding boxes (a grid).
+
+    For boxy, similar-sized parts this beats the greedy shape-nester — it lays
+    them out in neat rows the way a person would, with no scattered gaps. Parts
+    are still drawn as their real shapes; only the *placement* is grid-based.
+    Only 0°/90° are used (grids don't benefit from odd angles).
+    """
+    use_angles = [a for a in angles if a in (0.0, 90.0)] or [0.0]
+
+    geoms: dict[tuple[int, float], tuple] = {}
+    for part in parts:
+        for ang in use_angles:
+            _mask, norm, w_mm, h_mm, area = rasterize(part["polylines"], ang, res, kerf_mm)
+            geoms[(part["idx"], ang)] = (norm, w_mm, h_mm, area)
+
+    a0 = use_angles[0]
+    items: list[tuple[float, int]] = []
+    for part in parts:
+        area0 = geoms[(part["idx"], a0)][3]
+        items.extend((area0, part["idx"]) for _ in range(int(part["qty"])))
+    items.sort(key=lambda t: -t[0])  # largest first → tallest rows at the top
+
+    if sheet_w >= sheet_h:
+        usable_w, usable_h = sheet_w, sheet_h - long_side_clamp_mm
+    else:
+        usable_w, usable_h = sheet_w - long_side_clamp_mm, sheet_h
+
+    sheets: list[TightSheet] = []
+    failed = 0
+    x = y = shelf_h = 0.0
+    cur: TightSheet | None = None
+
+    def start_sheet():
+        nonlocal cur, x, y, shelf_h
+        cur = TightSheet(sheet_w, sheet_h)
+        sheets.append(cur)
+        x = y = shelf_h = 0.0
+
+    for _area, pidx in items:
+        # Orientation: prefer the one that fits the width and is shortest.
+        options = []
+        for ang in use_angles:
+            norm, w_mm, h_mm, area = geoms[(pidx, ang)]
+            if w_mm + kerf_mm <= usable_w:
+                options.append((h_mm, ang, norm, w_mm, h_mm, area))
+        if not options:
+            failed += 1
+            continue
+        _h, ang, norm, w_mm, h_mm, area = min(options, key=lambda o: o[0])
+        wk, hk = w_mm + kerf_mm, h_mm + kerf_mm
+
+        if cur is None:
+            start_sheet()
+        if x + wk > usable_w:          # next row
+            x = 0.0
+            y += shelf_h
+            shelf_h = 0.0
+        if y + hk > usable_h:          # next sheet
+            start_sheet()
+        if x + wk > usable_w or y + hk > usable_h:
+            failed += 1
+            continue
+
+        cur.placed.append(Placed(pidx, ang, x, y, norm, w_mm, h_mm, area))
+        x += wk
+        shelf_h = max(shelf_h, hk)
+
+    return TightResult(sheets=sheets, failed=failed)
+
+
+def nest_best(
+    parts: list[dict],
+    sheet_w: int,
+    sheet_h: int,
+    res: float = 2.0,
+    angles: tuple[float, ...] = (0.0, 90.0),
+    kerf_mm: float = 0.0,
+    long_side_clamp_mm: int = 0,
+) -> TightResult:
+    """Run every strategy and keep the best layout (fewest failed, fewest sheets,
+    then highest utilisation). Never worse than any single strategy."""
+    candidates = [
+        nest(parts, sheet_w, sheet_h, res, angles, kerf_mm, long_side_clamp_mm),
+        shelf_nest(parts, sheet_w, sheet_h, res, angles, kerf_mm, long_side_clamp_mm),
+    ]
+
+    def score(r: TightResult):
+        used = sum(s.used_area for s in r.sheets)
+        total = sheet_w * sheet_h * len(r.sheets)
+        util = used / total if total else 0.0
+        return (r.failed, len(r.sheets), -util)
+
+    return min(candidates, key=score)

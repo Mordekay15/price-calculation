@@ -56,7 +56,7 @@ def _run_nest(parts_key, sheet_w, sheet_h, res, angles, kerf_mm, clamp_mm):
         {"idx": idx, "polylines": [list(poly) for poly in polys], "qty": qty}
         for (idx, qty, polys) in parts_key
     ]
-    return tn.nest(
+    return tn.nest_best(
         parts, sheet_w, sheet_h,
         res=res, angles=angles, kerf_mm=kerf_mm, long_side_clamp_mm=clamp_mm,
     )
