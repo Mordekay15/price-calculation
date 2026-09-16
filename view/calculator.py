@@ -5,7 +5,8 @@ Price calculator tab.
 
 Flow:
   1. User adds products. For each product they pick material, thickness,
-     width × height (mm) and quantity.
+     width × height (mm) and quantity. The product cards themselves live in
+     view/product_view.py.
   2. The "Sheet usage" section groups pieces by (material, thickness) and
      for each group compares every sheet size that has a price — sheets
      needed, utilisation, total cost — and highlights the cheapest option.
@@ -14,131 +15,21 @@ Flow:
   3. The "Pieces summary" at the bottom lists every product with its
      per-piece and batch weight, plus the grand total.
 
-``render`` is the public entry point; it wires together the small
-``_render_*`` helpers below, each of which owns one section of the page.
+``render`` is the public entry point; it wires together view/product_view.py
+and the small ``_render_*`` helpers below, each of which owns one section of
+the page.
 """
-
-import uuid
 
 import streamlit as st
 from core.calculator import (
     build_lookup,
     get_materials,
-    get_thicknesses_for_material,
     parse_thickness_mm,
     piece_weight_kg,
 )
-from core.copper import COPPER_MATERIAL, COPPER_THICKNESSES
+from core.copper import COPPER_MATERIAL
+from view.product_view import render_products
 from view.sheet_usage_view import render_group
-
-_PLACEHOLDER_MAT   = "— Valitse materiaali —"
-_PLACEHOLDER_THICK = "— Valitse paksuus —"
-
-
-def _new_product() -> dict:
-    return {
-        "id":        uuid.uuid4().hex,
-        "material":  None,
-        "thickness": None,
-        "width":     0.0,
-        "height":    0.0,
-        "qty":       1,
-    }
-
-
-def _init_products() -> None:
-    if "calc_products" not in st.session_state:
-        st.session_state.calc_products = [_new_product()]
-
-
-def _thicknesses_for(lookup: dict, material: str | None) -> list[str]:
-    """Thicknesses available for ``material`` (empty if none is picked)."""
-    if material == COPPER_MATERIAL:
-        # Copper's thicknesses are fixed and available even with no price.
-        return COPPER_THICKNESSES
-    if material is not None:
-        return get_thicknesses_for_material(lookup, material)
-    return []
-
-
-def _render_product(prod: dict, index: int, materials: list[str], lookup: dict) -> bool:
-    """Render one product's inputs and write them back into ``prod``.
-
-    Returns True if the user pressed this product's "Poista" (delete) button.
-    """
-    pid = prod["id"]
-    delete_requested = False
-
-    with st.container(border=True):
-        hdr_cols = st.columns([6, 1])
-        hdr_cols[0].markdown(f"**Tuote {index + 1}**")
-        if len(st.session_state.calc_products) > 1:
-            if hdr_cols[1].button("Poista", key=f"del_{pid}"):
-                delete_requested = True
-
-        mat_opts = [_PLACEHOLDER_MAT] + materials
-        mat_default = prod["material"] if prod["material"] in materials else _PLACEHOLDER_MAT
-        mat_raw = st.selectbox(
-            "Materiaali",
-            mat_opts,
-            index=mat_opts.index(mat_default),
-            key=f"mat_{pid}",
-        )
-        material = mat_raw if mat_raw != _PLACEHOLDER_MAT else None
-
-        thicknesses = _thicknesses_for(lookup, material)
-        if thicknesses:
-            th_opts = [_PLACEHOLDER_THICK] + thicknesses
-            th_default = prod["thickness"] if prod["thickness"] in thicknesses else _PLACEHOLDER_THICK
-            th_raw = st.selectbox(
-                "Paksuus (mm)",
-                th_opts,
-                index=th_opts.index(th_default),
-                key=f"th_{pid}",
-            )
-            thickness = th_raw if th_raw != _PLACEHOLDER_THICK else None
-        else:
-            st.selectbox("Paksuus (mm)", [_PLACEHOLDER_THICK], index=0, disabled=True, key=f"th_{pid}_disabled")
-            thickness = None
-
-        inp_cols = st.columns(3)
-        w = inp_cols[0].number_input(
-            "Leveys (mm)", min_value=0.0, value=float(prod["width"]),
-            step=10.0, key=f"w_{pid}",
-        )
-        h = inp_cols[1].number_input(
-            "Korkeus (mm)", min_value=0.0, value=float(prod["height"]),
-            step=10.0, key=f"h_{pid}",
-        )
-        q = inp_cols[2].number_input(
-            "Määrä (kpl)", min_value=1, value=int(prod["qty"]),
-            step=1, key=f"q_{pid}",
-        )
-
-    prod["material"]  = material
-    prod["thickness"] = thickness
-    prod["width"]     = w
-    prod["height"]    = h
-    prod["qty"]       = q
-    return delete_requested
-
-
-def _render_products(materials: list[str], lookup: dict) -> None:
-    """The full "Tuotteet" section: every product form plus add/delete."""
-    st.markdown("**Tuotteet**")
-
-    to_delete = None
-    for i, prod in enumerate(st.session_state.calc_products):
-        if _render_product(prod, i, materials, lookup):
-            to_delete = i
-
-    if st.button("+ Lisää tuote"):
-        st.session_state.calc_products.append(_new_product())
-        st.rerun()
-
-    if to_delete is not None:
-        st.session_state.calc_products.pop(to_delete)
-        st.rerun()
 
 
 def _render_nesting_settings() -> tuple[str, int, int]:
@@ -326,12 +217,10 @@ def render(data: dict) -> None:
         key="calc_margin_pct",
     )
 
-    _init_products()
-    _render_products(materials, lookup)
+    products = render_products(materials, lookup)
     nest_mode, rankavali_mm, long_side_clamp_mm = _render_nesting_settings()
 
-    products = st.session_state.calc_products
-    groups   = _build_groups(products, nest_mode)
+    groups = _build_groups(products, nest_mode)
     cheapest_prices = _render_sheet_usage(
         groups, lookup, margin_pct, rankavali_mm, long_side_clamp_mm,
     )
