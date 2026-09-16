@@ -432,16 +432,27 @@ def nest_best(
     kerf_mm: float = 0.0,
     long_side_clamp_mm: int = 0,
 ) -> TightResult:
-    """Run every strategy and keep the best layout (fewest failed, fewest sheets,
-    then highest utilisation). Never worse than any single strategy."""
-    candidates = [
-        nest(parts, sheet_w, sheet_h, res, angles, kerf_mm, long_side_clamp_mm),
-        shelf_nest(parts, sheet_w, sheet_h, res, angles, kerf_mm, long_side_clamp_mm),
-    ]
+    """Best layout across strategies AND sheet orientations.
+
+    A 1250×2500 sheet and a 2500×1250 sheet are the same physical steel, but the
+    parts may pack far better one way than the other (e.g. 4-across × 2-rows vs
+    2-across × 4-rows). We nest each strategy in both orientations and keep the
+    best result (fewest failed, fewest sheets, then highest utilisation) — so it
+    is never worse than any single strategy or orientation.
+    """
+    # Same physical sheet, both orientations (skip the duplicate when square).
+    orientations = [(sheet_w, sheet_h)]
+    if sheet_w != sheet_h:
+        orientations.append((sheet_h, sheet_w))
+
+    candidates: list[TightResult] = []
+    for sw, sh in orientations:
+        candidates.append(nest(parts, sw, sh, res, angles, kerf_mm, long_side_clamp_mm))
+        candidates.append(shelf_nest(parts, sw, sh, res, angles, kerf_mm, long_side_clamp_mm))
 
     def score(r: TightResult):
         used = sum(s.used_area for s in r.sheets)
-        total = sheet_w * sheet_h * len(r.sheets)
+        total = (r.sheets[0].w * r.sheets[0].h * len(r.sheets)) if r.sheets else 1
         util = used / total if total else 0.0
         return (r.failed, len(r.sheets), -util)
 

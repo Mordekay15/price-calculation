@@ -497,6 +497,10 @@ def _render_tight_group(
             )
             sheets_needed = len(result.sheets)
             has_fail = result.failed > 0 or sheets_needed == 0
+            # nest_best may pick the rotated orientation of the same sheet; use
+            # the orientation it actually placed on for drawing (area is equal
+            # either way, so weight/price are unchanged).
+            draw_w, draw_h = (result.sheets[0].w, result.sheets[0].h) if sheets_needed else (sw, sh)
             used_area = sum(s.used_area for s in result.sheets)
             util = used_area / (sw * sh * sheets_needed) if sheets_needed else 0.0
             sheet_weight_kg = sw * sh * thickness_mm * density_for_material(material)
@@ -520,8 +524,8 @@ def _render_tight_group(
                 "_failed":      result.failed,
                 "_util":        util,
                 "_sheets":      result.sheets,
-                "_sw":          sw,
-                "_sh":          sh,
+                "_sw":          draw_w,
+                "_sh":          draw_h,
                 "_breakdown": {
                     "sw": sw, "sh": sh, "base_ppt": price, "adjusted_ppt": adjusted_ppt,
                     "sheet_weight_kg": sheet_weight_kg, "sheets_needed": sheets_needed,
