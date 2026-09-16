@@ -108,7 +108,7 @@ def render(data: dict) -> None:
     if COPPER_MATERIAL not in materials:
         materials = sorted([*materials, COPPER_MATERIAL])
 
-    margin_pct = render_margin() #getting kate
+    margin_pct = render_margin("calc_margin_pct") #getting kate
 
     products = render_products(materials, lookup) #getting products
     nest_mode, rankavali_mm, long_side_clamp_mm = render_nesting_settings() # nesting setting input

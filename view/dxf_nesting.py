@@ -74,7 +74,7 @@ def render(data: dict) -> None:
     if COPPER_MATERIAL not in materials:
         materials = sorted([*materials, COPPER_MATERIAL])
 
-    margin_pct = render_margin(key="dxf_margin_pct") #getting kate
+    margin_pct = render_margin("dxf_margin_pct") #getting kate
 
     # ── Upload ────────────────────────────────────────────────────────────────
     uploaded = st.file_uploader(
