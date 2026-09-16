@@ -36,10 +36,7 @@ _CLAMP_HELP = (
 def render_nesting_settings(
     *,
     key_prefix: str = "calc",
-    separate_label: str = "Laske jokainen tuote erikseen",
-    nest_help: str = _NEST_HELP,
-    rankavali_help: str = _RANKAVALI_HELP,
-    clamp_help: str = _CLAMP_HELP,
+    separate_label: str = "Laske jokainen tuote erikseen"
 ) -> tuple[str, int, int]:
     """Render the nesting mode and spacing inputs.
 
@@ -56,7 +53,7 @@ def render_nesting_settings(
         }[v],
         horizontal=True,
         key=f"{key_prefix}_nest_mode",
-        help=nest_help,
+        help=_NEST_HELP,
     )
 
     rankavali_mm = int(st.number_input(
@@ -65,7 +62,7 @@ def render_nesting_settings(
         value=0,
         step=1,
         key=f"{key_prefix}_rankavali_mm",
-        help=rankavali_help,
+        help=_RANKAVALI_HELP,
     ))
 
     long_side_clamp_mm = int(st.number_input(
@@ -74,7 +71,7 @@ def render_nesting_settings(
         value=0,
         step=1,
         key=f"{key_prefix}_long_side_clamp_mm",
-        help=clamp_help,
+        help=_CLAMP_HELP,
     ))
 
     return nest_mode, rankavali_mm, long_side_clamp_mm

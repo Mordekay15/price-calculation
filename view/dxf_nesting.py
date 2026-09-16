@@ -104,22 +104,7 @@ def render(data: dict) -> None:
     # ── Placement options (mirrors the manual calculator) ──────────────────────
     nest_mode, rankavali_mm, long_side_clamp_mm = render_nesting_settings(
         key_prefix="dxf",
-        separate_label="Laske jokainen osa erikseen",
-        nest_help=(
-            "Yhdistettynä saman materiaalin ja paksuuden osat sijoitellaan "
-            "samoille levyille (sekanestaus). Erikseen-vaihtoehdolla kullekin "
-            "osalle lasketaan oma levytarpeensa."
-        ),
-        rankavali_help=(
-            "Kappaleiden välinen leikkausvara. Lisätään jokaisen kappaleen "
-            "leveyteen ja korkeuteen sijoittelussa."
-        ),
-        clamp_help=(
-            "Kynsiraina on levyn pitkän sivun reunavyöhyke, johon koneen kynnet "
-            "tarttuvat — aluetta ei voi käyttää sijoitteluun. Levy ostetaan silti "
-            "täysikokoisena."
-        ),
-    )
+        separate_label="Laske jokainen osa erikseen")
 
     pack_mode = st.radio(
         "Nestaustapa",
