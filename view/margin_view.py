@@ -12,7 +12,7 @@ both tab bodies on every run, so a shared key would collide.
 import streamlit as st
 
 
-def render_margin(key: str = "calc_margin_pct") -> float:
+def render_margin(key: str) -> float:
     """Render the margin input and return the chosen percentage."""
     return st.number_input(
         "Materiaalin kate (%)",

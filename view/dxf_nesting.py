@@ -191,7 +191,7 @@ def render(data: dict) -> None:
         groups.setdefault(group_key, []).append(prod)
 
     st.divider()
-    st.markdown("**Levyn käyttö** — mikä levykoko on edullisin")
+    st.markdown("**Levyn käyttö**")
 
     if pack_mode == "tight":
         total_pieces = sum(int(p["qty"]) for p in ready)
