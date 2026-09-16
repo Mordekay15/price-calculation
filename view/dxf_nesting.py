@@ -32,6 +32,7 @@ from core.copper import COPPER_MATERIAL, COPPER_THICKNESSES
 from core.dxf import parse_dxf
 from core.nesting import parse_size
 from core.sheet_usage import _fmt_m
+from view.margin_view import render_margin
 from view.sheet_usage_view import _PRODUCT_PALETTE, _render_breakdown, render_group
 
 _PLACEHOLDER_MAT   = "— Valitse materiaali —"
@@ -76,10 +77,7 @@ def render(data: dict) -> None:
     if COPPER_MATERIAL not in materials:
         materials = sorted([*materials, COPPER_MATERIAL])
 
-    margin_pct = st.number_input(
-        "Materiaalin kate (%)",
-        min_value=0.0, value=15.0, step=0.5, key="dxf_margin_pct",
-    )
+    margin_pct = render_margin() #getting kate
 
     # ── Upload ────────────────────────────────────────────────────────────────
     uploaded = st.file_uploader(
