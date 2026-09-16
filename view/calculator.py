@@ -156,16 +156,14 @@ def render(data: dict) -> None:
 
     st.subheader("Hintalaskuri")
 
-    # Copper is always selectable, even before any supplier PDF is uploaded and
-    # even before a copper price has been set (it simply carries no price yet).
     materials = get_materials(lookup)
     if COPPER_MATERIAL not in materials:
         materials = sorted([*materials, COPPER_MATERIAL])
 
-    margin_pct = render_margin()
+    margin_pct = render_margin() #getting kate
 
-    products = render_products(materials, lookup)
-    nest_mode, rankavali_mm, long_side_clamp_mm = render_nesting_settings()
+    products = render_products(materials, lookup) #getting products
+    nest_mode, rankavali_mm, long_side_clamp_mm = render_nesting_settings() # nesting setting input
 
     groups = _build_groups(products, nest_mode)
     cheapest_prices = _render_sheet_usage(
