@@ -92,15 +92,17 @@ def render(uploaded, products: list[dict] | None = None) -> None:
     )
     orientations = _ROTATION_PRESETS[preset_label]
 
-    # ── Nesting settings: mode + rankaväli (clamp replaced by per-side margins) ─
-    nest_mode, rankavali_mm, _ = render_nesting_settings(
-        key_prefix="sparrow",
-        separate_label="Laske jokainen osa erikseen",
-        show_clamp=False,
-    )
-
-    # Per-side sheet margins (top/bottom/left/right) — unusable edge zones.
-    margins = _render_sheet_margins("sparrow")
+    # Nesting mode + spacing on the left, the per-side sheet margins on the
+    # right (clamp replaced by per-side margins).
+    settings_col, margins_col = st.columns(2)
+    with settings_col:
+        nest_mode, rankavali_mm, _ = render_nesting_settings(
+            key_prefix="sparrow",
+            separate_label="Laske jokainen osa erikseen",
+            show_clamp=False,
+        )
+    with margins_col:
+        margins = _render_sheet_margins("sparrow")
 
     # Height margins (top+bottom) are a hard constraint: they shrink the usable
     # strip height Sparrow packs into. Length margins (left+right) shrink the
