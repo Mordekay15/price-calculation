@@ -61,6 +61,13 @@ _EXECUTABLE_NAMES = ("sparrow", "sparrow.exe")
 # Environment variable that can point directly at the binary.
 _ENV_VAR = "SPARROW_BIN"
 
+# Bundled binary shipped with the repo. Resolved relative to the project root
+# (the parent of this `core/` package) so it works no matter what directory the
+# app is launched from. Drop the Sparrow executable here as `bin/sparrow`
+# (or `bin/sparrow.exe` on Windows) and it is found automatically.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_BUNDLED_DIR = _PROJECT_ROOT / "bin"
+
 # Extra wall-clock seconds allowed on top of Sparrow's own time limit before the
 # runner force-kills the process (covers startup, I/O, and the compression phase
 # that runs after the exploration budget).
@@ -99,8 +106,8 @@ class SparrowResult:
 def find_executable(executable: str | os.PathLike | None = None) -> str | None:
     """Resolve the Sparrow binary path, or None if it can't be found.
 
-    Order: explicit argument → ``$SPARROW_BIN`` → PATH lookup of ``sparrow`` /
-    ``sparrow.exe``.
+    Order: explicit argument → ``$SPARROW_BIN`` → bundled ``bin/sparrow`` in the
+    project → PATH lookup of ``sparrow`` / ``sparrow.exe``.
     """
     candidates: list[str] = []
     if executable:
@@ -108,6 +115,9 @@ def find_executable(executable: str | os.PathLike | None = None) -> str | None:
     env = os.environ.get(_ENV_VAR)
     if env:
         candidates.append(env)
+    # bundled binary shipped in the repo's bin/ folder
+    for name in _EXECUTABLE_NAMES:
+        candidates.append(str(_BUNDLED_DIR / name))
 
     for cand in candidates:
         p = Path(cand)

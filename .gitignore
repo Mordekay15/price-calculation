@@ -2,3 +2,8 @@ price_data.json
 __pycache__/
 *.pyc
 .streamlit/
+
+# Sparrow executables live in bin/ but are large & platform-specific —
+# keep the folder + its README, ignore the binaries (force-add to override).
+/bin/*
+!/bin/README.md
