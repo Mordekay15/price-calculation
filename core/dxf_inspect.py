@@ -384,7 +384,15 @@ def _chain_open_segments(
 
 
 def _mark_holes(contours: list[Contour]) -> None:
-    """Set depth / is_hole on closed contours using the even–odd rule."""
+    """Set depth / is_hole on closed contours.
+
+    ``depth`` counts how many larger closed contours contain this one. A part is a
+    top-level outline (``depth == 0``); anything nested inside a part is a hole,
+    whatever its own depth. We deliberately do *not* use the even–odd rule: a real
+    sheet-metal part keeps all its interior features (small holes, a big central
+    hole, slots) as holes, rather than re-promoting deeply nested loops — often
+    just construction/tangent geometry — back into separate parts.
+    """
     closed = [c for c in contours if c.closed and len(c.points) >= 3]
     reps = {id(c): _representative_point(c.points) for c in closed}
     for c in closed:
@@ -397,7 +405,7 @@ def _mark_holes(contours: list[Contour]) -> None:
             if _point_in_polygon(reps[id(c)], other.points):
                 depth += 1
         c.depth = depth
-        c.is_hole = depth % 2 == 1
+        c.is_hole = depth >= 1
 
 
 # ── Public entry point ───────────────────────────────────────────────────────

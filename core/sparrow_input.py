@@ -211,11 +211,14 @@ def parts_from_report(
 
 
 def _holes_of(part: Contour, report: InspectionReport) -> list[Contour]:
-    """Holes that sit directly inside `part` (one nesting level in)."""
+    """Every hole whose interior point lies inside this part's outline.
+
+    Parts are top-level (non-nested) outlines, so a hole falls inside at most one
+    part. Depth is not used here: a deeply nested interior feature (e.g. a hole
+    inside a big central cut-out) is still kept as this part's hole.
+    """
     result = []
     for h in report.holes:
-        if h.depth != part.depth + 1:
-            continue
         if _point_in_polygon(_representative_point(h.points), part.points):
             result.append(h)
     return result

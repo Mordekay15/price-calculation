@@ -368,9 +368,7 @@ def _holes_for(part, report):
     from core.dxf_inspect import _point_in_polygon, _representative_point
     out = []
     for h in report.holes:
-        if h.depth == part.depth + 1 and _point_in_polygon(
-            _representative_point(h.points), part.points
-        ):
+        if _point_in_polygon(_representative_point(h.points), part.points):
             out.append(h)
     return out
 
