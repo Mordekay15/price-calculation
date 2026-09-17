@@ -258,10 +258,6 @@ def _render_sheet_margins(key_prefix: str = "sparrow") -> dict[str, float]:
     size, so weight and price come from the gross dimensions.
     """
     st.markdown("**Levyn reunavälit (mm)**")
-    st.caption(
-        "Reuna-alueet, joille ei sijoiteta osia (esim. kynsiraina/tarttujat). "
-        "Levy ostetaan silti täysikokoisena."
-    )
 
     def _edge(col, label: str, side: str) -> float:
         return float(col.number_input(
