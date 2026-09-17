@@ -21,6 +21,7 @@ from core.sparrow_input import (
     parts_from_dxf,
     validate_instance,
 )
+from core.sparrow_runner import RunStatus, find_executable, run_sparrow
 
 # Rotation presets offered in the UI → allowed_orientations (degrees).
 # None means "continuous rotation" (allowed_orientations omitted from the item).
@@ -127,3 +128,68 @@ def render(uploaded) -> None:
     )
     with st.expander("Näytä JSON"):
         st.code(json_text, language="json")
+
+    # ── Run Sparrow (Phase 8) ──────────────────────────────────────────────────
+    st.markdown("**Aja Sparrow**")
+    if problems:
+        st.info("Korjaa syötteen virheet ennen ajoa.")
+        return
+
+    exe = find_executable()
+    if exe is None:
+        st.info(
+            "Sparrow-suoritustiedostoa ei löytynyt tästä ympäristöstä. "
+            "Aseta polku `SPARROW_BIN`-ympäristömuuttujaan ajaaksesi nestauksen."
+        )
+        return
+
+    rc1, rc2 = st.columns(2)
+    time_limit = rc1.number_input(
+        "Aikaraja (s)", min_value=1, value=10, step=1, key="sparrow_time_limit"
+    )
+    seed = rc2.number_input(
+        "Siemen (seed)", min_value=0, value=0, step=1, key="sparrow_seed"
+    )
+
+    if not st.button("Aja Sparrow", key="sparrow_run"):
+        return
+
+    with st.spinner("Sparrow ajaa nestausta…"):
+        result = run_sparrow(
+            instance,
+            executable=exe,
+            time_limit_sec=int(time_limit),
+            seed=int(seed),
+        )
+    _render_run_result(result)
+
+
+def _render_run_result(result) -> None:
+    """Show a SparrowResult: status, placement counts, stats and the SVG."""
+    if result.status is RunStatus.OK:
+        st.success(result.message)
+    else:
+        st.error(f"[{result.status.value}] {result.message}")
+
+    r1, r2, r3 = st.columns(3)
+    r1.metric("Pyydetty (kpl)", result.total_requested)
+    r2.metric("Sijoitettu (kpl)", result.total_placed)
+    if result.density is not None:
+        r3.metric("Täyttöaste", f"{result.density * 100:.1f} %")
+    if result.strip_width is not None:
+        st.caption(
+            f"Levyn pituus (strip width): {result.strip_width:.2f} mm · "
+            f"korkeus: {result.strip_height:g} mm"
+        )
+
+    if result.svg:
+        import streamlit.components.v1 as components
+        components.html(
+            f'<div style="width:100%;overflow:auto;background:#fff">{result.svg}</div>',
+            height=440,
+            scrolling=True,
+        )
+
+    if result.stderr and result.status is not RunStatus.OK:
+        with st.expander("Sparrowin virhetuloste"):
+            st.code(result.stderr[:4000])
