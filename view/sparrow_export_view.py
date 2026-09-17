@@ -11,6 +11,15 @@ Takes the uploaded DXF files and:
     placement to the *original* entities (``core/sparrow_reconstruct``), with a
     download and the sheet-bounds / placed-count checks (Phase 9).
 
+Nesting settings (``view/nesting_settings_view``) feed straight into Sparrow:
+  * "Sijoittelutapa" groups the parts into separate Sparrow instances — one per
+    (material, thickness) when combined, one per part when separate;
+  * "Rankaväli" is passed as Sparrow's ``--min-item-separation`` (min gap
+    between placed parts);
+  * "Pitkän sivun kynsirainan leveys" is subtracted from the usable strip
+    height so no part is placed in the clamp zone, which is then drawn on the
+    layout preview.
+
 The original DXF is always kept as the source of truth; Sparrow's polygon is only
 used to compute placement.
 """
@@ -26,6 +35,7 @@ from core.sparrow_input import build_job, validate_instance
 from core.sparrow_preview import render_layout_svg
 from core.sparrow_reconstruct import reconstruct_dxf
 from core.sparrow_runner import RunStatus, find_executable, run_sparrow
+from view.nesting_settings_view import render_nesting_settings
 
 # Rotation presets offered in the UI → allowed_orientations (degrees).
 # None means "continuous rotation" (allowed_orientations omitted from the item).
@@ -40,20 +50,20 @@ _ROTATION_PRESETS: dict[str, tuple[float, ...] | None] = {
 def render(uploaded, products: list[dict] | None = None) -> None:
     """Render the Sparrow-instance builder for the uploaded DXF files.
 
-    Quantities are taken from the per-part cards (``products``, keyed by file
-    id) so the user sets each amount once; a file with no card entry falls back
-    to 1. Passing ``products=None`` keeps every quantity at 1.
+    Quantities, material and thickness come from the per-part cards
+    (``products``, keyed by file id); a file with no card entry falls back to
+    quantity 1 and no material.
     """
     if not uploaded:
         st.info("Lataa DXF-tiedostot yllä luodaksesi Sparrow-syötteen.")
         return
 
-    qty_by_fid = {p["id"]: int(p["qty"]) for p in (products or [])}
+    meta_by_fid = {p["id"]: p for p in (products or [])}
 
-    # Fixed sheet size, e.g. 2500 × 1250 mm. Sparrow is a *strip* packer: it
-    # keeps `strip_height` fixed and minimises the length, so the sheet height is
-    # the hard constraint and the sheet width is the length budget the result is
-    # checked against below (fits one sheet / how many sheets).
+    # ── Fixed sheet size + rotation ────────────────────────────────────────────
+    # Sparrow is a *strip* packer: it keeps `strip_height` fixed and minimises
+    # the length, so the sheet height is the hard constraint and the sheet width
+    # is the length budget the result is checked against below.
     c1, c2, c3 = st.columns(3)
     sheet_width = c1.number_input(
         "Levyn leveys (mm)",
@@ -65,14 +75,14 @@ def render(uploaded, products: list[dict] | None = None) -> None:
              "käytetyn pituuden; tämä on käytettävissä oleva enimmäispituus, "
              "johon tulosta verrataan.",
     )
-    strip_height = c2.number_input(
+    sheet_height = c2.number_input(
         "Levyn korkeus (mm)",
         min_value=1.0,
         value=1250.0,
         step=50.0,
         key="sparrow_strip_height",
-        help="Levyn kiinteä mitta (strip_height). Jokaisen osan on mahduttava "
-             "tähän korkeuteen jossakin sallitussa kierrossa.",
+        help="Levyn kiinteä mitta. Jokaisen osan on mahduttava tähän "
+             "korkeuteen (miinus kynsiraina) jossakin sallitussa kierrossa.",
     )
     preset_label = c3.selectbox(
         "Sallitut kierrot",
@@ -82,71 +92,55 @@ def render(uploaded, products: list[dict] | None = None) -> None:
     )
     orientations = _ROTATION_PRESETS[preset_label]
 
-    # ── Build the instance + per-item source records (Phase 7 + 9) ─────────────
-    # Quantity per file comes from its card above (by file id); default 1.
-    instance_name = "stremet_" + "_".join(
-        f.name.rsplit(".", 1)[0] for f in uploaded
-    )[:60]
-    inputs = [
-        (file.getvalue(), file.name, qty_by_fid.get(file.file_id, 1))
-        for file in uploaded
-    ]
-    job_kwargs = {} if orientations is None else {"allowed_orientations": orientations}
-    instance, sources = build_job(
-        inputs, strip_height=float(strip_height), name=instance_name, **job_kwargs
+    # ── Nesting settings: mode + rankaväli + kynsiraina ────────────────────────
+    nest_mode, rankavali_mm, clamp_mm = render_nesting_settings(
+        key_prefix="sparrow",
+        separate_label="Laske jokainen osa erikseen",
     )
 
-    if not sources:
-        st.warning(
-            "Ladatuista tiedostoista ei löytynyt yhtään suljettua osaa — "
-            "Sparrow-syötettä ei voi luoda."
+    # The clamp zone (kynsiraina) runs along the long side and cannot hold parts,
+    # so the usable strip height is the sheet height minus the clamp width.
+    usable_height = float(sheet_height) - float(clamp_mm)
+    if usable_height <= 0:
+        st.error(
+            "Kynsirainan leveys on vähintään levyn korkeus — osille ei jää tilaa."
         )
         return
+    if clamp_mm > 0:
+        st.caption(
+            f"Käytettävä korkeus osille: {usable_height:g} mm "
+            f"(kynsirainalle varattu {clamp_mm:g} mm)."
+        )
 
-    problems = validate_instance(instance)
+    # ── Group the parts into Sparrow instances ─────────────────────────────────
+    groups = _group_uploaded(uploaded, meta_by_fid, nest_mode)
+    multi = len(groups) > 1
 
-    # ── Summary ────────────────────────────────────────────────────────────────
-    total_demand = sum(int(s.quantity) for s in sources)
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Osia (yksilöllisiä)", len(sources))
-    m2.metric("Kappaleita yhteensä", total_demand)
-    m3.metric("Levyn koko (mm)", f"{sheet_width:g} × {strip_height:g}")
+    built: list[tuple] = []  # (gid, label, name, instance, sources)
+    for gid, label, files in groups:
+        inputs = [
+            (f.getvalue(), f.name, int(meta_by_fid.get(f.file_id, {}).get("qty", 1)))
+            for f in files
+        ]
+        name = _instance_name(files, gid)
+        job_kwargs = {} if orientations is None else {"allowed_orientations": orientations}
+        instance, sources = build_job(
+            inputs, strip_height=usable_height, name=name, **job_kwargs
+        )
+        if multi:
+            st.markdown(f"#### {label}")
+        problems = _render_group_input(
+            instance, sources, name, sheet_width, sheet_height, gid
+        )
+        if sources and not problems:
+            built.append((gid, label, name, instance, sources))
 
-    if problems:
-        st.error("Sparrow-syöte EI ole kelvollinen:")
-        for p in problems:
-            st.write(f"• {p}")
-    else:
-        st.success("Sparrow-syöte on kelvollinen (jagua-rs -skeema).")
-
-    st.table([
-        {
-            "id": item["id"],
-            "part_id": item["part_id"],
-            "dxf": item["dxf"],
-            "kpl": item["demand"],
-            "muoto": item["shape"]["type"],
-        }
-        for item in instance["items"]
-    ])
-
-    json_text = json.dumps(instance, indent=2)
-    st.download_button(
-        "Lataa Sparrow-syöte (JSON)",
-        data=json_text,
-        file_name=f"{instance_name}.json",
-        mime="application/json",
-        key="sparrow_download",
-        disabled=bool(problems),
-    )
-    with st.expander("Näytä JSON"):
-        st.code(json_text, language="json")
-
-    # ── Run Sparrow (Phase 8) ──────────────────────────────────────────────────
-    st.markdown("**Aja Sparrow**")
-    if problems:
-        st.info("Korjaa syötteen virheet ennen ajoa.")
+    if not built:
         return
+
+    # ── Run controls (shared by every group) ───────────────────────────────────
+    st.divider()
+    st.markdown("**Aja Sparrow**")
 
     exe = find_executable()
     if exe is None:
@@ -170,40 +164,161 @@ def render(uploaded, products: list[dict] | None = None) -> None:
         help="Päällä: tuotanto-DXF säilyttää kaaret, reiät ja tasot. "
              "Pois: vain Sparrow-polygonit (vain testiin).",
     )
+    # Rankaväli → Sparrow's minimum gap between placed parts.
+    separation = float(rankavali_mm) if rankavali_mm > 0 else None
 
     if st.button("Aja Sparrow", key="sparrow_run"):
-        with st.spinner("Sparrow ajaa nestausta…"):
-            result = run_sparrow(
-                instance,
-                executable=exe,
-                time_limit_sec=int(time_limit),
-                seed=int(seed),
-            )
-        st.session_state["sparrow_result"] = result
-        # Phase 9: reconstruct the production DXF + a real-geometry preview
-        recon = None
-        preview_svg = None
-        if result.ok and result.solution is not None:
-            mode = "original" if preserve else "polygon"
-            with st.spinner("Rakennetaan tuotanto-DXF…"):
-                recon = reconstruct_dxf(result.solution, sources, mode=mode)
-            preview_svg = render_layout_svg(result.solution, sources)
-        st.session_state["sparrow_recon"] = recon
-        st.session_state["sparrow_preview"] = preview_svg
-        st.session_state["sparrow_name"] = instance_name
+        for gid, label, name, instance, sources in built:
+            with st.spinner(f"Sparrow ajaa nestausta ({label})…"):
+                result = run_sparrow(
+                    instance,
+                    executable=exe,
+                    time_limit_sec=int(time_limit),
+                    seed=int(seed),
+                    min_item_separation=separation,
+                )
+            recon = None
+            preview_svg = None
+            if result.ok and result.solution is not None:
+                mode = "original" if preserve else "polygon"
+                with st.spinner(f"Rakennetaan tuotanto-DXF ({label})…"):
+                    recon = reconstruct_dxf(result.solution, sources, mode=mode)
+                preview_svg = render_layout_svg(
+                    result.solution, sources, reserved_mm=float(clamp_mm)
+                )
+            st.session_state[f"sparrow_result_{gid}"] = result
+            st.session_state[f"sparrow_recon_{gid}"] = recon
+            st.session_state[f"sparrow_preview_{gid}"] = preview_svg
+            st.session_state[f"sparrow_name_{gid}"] = name
 
-    result = st.session_state.get("sparrow_result")
-    if result is not None:
+    # ── Results per group ──────────────────────────────────────────────────────
+    for gid, label, name, instance, sources in built:
+        result = st.session_state.get(f"sparrow_result_{gid}")
+        if result is None:
+            continue
+        if multi:
+            st.markdown(f"#### {label} — tulos")
         _render_run_result(
-            result, st.session_state.get("sparrow_preview"), sheet_width=float(sheet_width)
+            result,
+            st.session_state.get(f"sparrow_preview_{gid}"),
+            sheet_width=float(sheet_width),
         )
         _render_reconstruction(
-            st.session_state.get("sparrow_recon"),
-            st.session_state.get("sparrow_name", instance_name),
+            st.session_state.get(f"sparrow_recon_{gid}"),
+            st.session_state.get(f"sparrow_name_{gid}", name),
+            gid,
         )
 
 
-def _render_reconstruction(recon, name: str) -> None:
+# ── Grouping ─────────────────────────────────────────────────────────────────
+
+def _group_uploaded(uploaded, meta_by_fid: dict, nest_mode: str):
+    """Group uploaded files into Sparrow instances.
+
+    ``combined`` → one group per (material, thickness) so only parts that can
+    share a physical sheet are nested together; ``separate`` → one group per
+    file. Returns ``[(gid, label, files), ...]`` in a stable order; ``gid`` is a
+    session-key-safe id.
+    """
+    if nest_mode == "separate":
+        return [(f"file_{f.file_id}", _stem(f.name), [f]) for f in uploaded]
+
+    groups: dict = {}
+    order: list = []
+    for f in uploaded:
+        meta = meta_by_fid.get(f.file_id, {})
+        key = (meta.get("material"), meta.get("thickness"))
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(f)
+
+    out = []
+    for key in order:
+        material, thickness = key
+        label = f"{material or 'Ei materiaalia'} · {thickness or '—'} mm"
+        gid = "grp_" + _safe_key(f"{material}__{thickness}")
+        out.append((gid, label, groups[key]))
+    return out
+
+
+def _safe_key(s: str) -> str:
+    """Reduce a string to characters safe for a session-state key."""
+    return "".join(ch if ch.isalnum() else "_" for ch in str(s))
+
+
+def _stem(name: str) -> str:
+    """File name without path or the .dxf extension."""
+    base = name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    return base[:-4] if base.lower().endswith(".dxf") else base
+
+
+def _instance_name(files, gid: str) -> str:
+    """A Sparrow instance name built from the group's file stems."""
+    stems = "_".join(_stem(f.name) for f in files)
+    return ("stremet_" + stems)[:60] or gid
+
+
+# ── Per-group input section (summary, validation, JSON download) ───────────────
+
+def _render_group_input(
+    instance: dict,
+    sources: list,
+    name: str,
+    sheet_width: float,
+    sheet_height: float,
+    gid: str,
+) -> list[str]:
+    """Show one group's summary, validation and JSON download. Returns problems."""
+    if not sources:
+        st.warning(
+            "Ladatuista tiedostoista ei löytynyt yhtään suljettua osaa — "
+            "Sparrow-syötettä ei voi luoda."
+        )
+        return ["no parts"]
+
+    problems = validate_instance(instance)
+
+    total_demand = sum(int(s.quantity) for s in sources)
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Osia (yksilöllisiä)", len(sources))
+    m2.metric("Kappaleita yhteensä", total_demand)
+    m3.metric("Levyn koko (mm)", f"{sheet_width:g} × {sheet_height:g}")
+
+    if problems:
+        st.error("Sparrow-syöte EI ole kelvollinen:")
+        for p in problems:
+            st.write(f"• {p}")
+    else:
+        st.success("Sparrow-syöte on kelvollinen (jagua-rs -skeema).")
+
+    st.table([
+        {
+            "id": item["id"],
+            "part_id": item["part_id"],
+            "dxf": item["dxf"],
+            "kpl": item["demand"],
+            "muoto": item["shape"]["type"],
+        }
+        for item in instance["items"]
+    ])
+
+    json_text = json.dumps(instance, indent=2)
+    st.download_button(
+        "Lataa Sparrow-syöte (JSON)",
+        data=json_text,
+        file_name=f"{name}.json",
+        mime="application/json",
+        key=f"sparrow_download_{gid}",
+        disabled=bool(problems),
+    )
+    with st.expander("Näytä JSON"):
+        st.code(json_text, language="json")
+
+    return problems
+
+
+def _render_reconstruction(recon, name: str, gid: str) -> None:
     """Show the Phase-9 reconstructed DXF: checks + download."""
     if recon is None:
         return
@@ -238,7 +353,7 @@ def _render_reconstruction(recon, name: str) -> None:
         data=recon.dxf_bytes,
         file_name=f"final_{name}.dxf",
         mime="image/vnd.dxf",
-        key="sparrow_dxf_download",
+        key=f"sparrow_dxf_download_{gid}",
     )
 
 
