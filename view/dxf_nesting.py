@@ -15,6 +15,7 @@ from core.calculator import build_lookup, get_materials
 from core.copper import COPPER_MATERIAL
 from view.dxf_inspect_view import render as render_inspection
 from view.margin_view import render_margin
+from view.sparrow_export_view import render as render_sparrow_export
 
 
 def render(data: dict) -> None:
@@ -46,3 +47,8 @@ def render(data: dict) -> None:
     st.divider()
     st.markdown("**DXF-tarkastus**")
     render_inspection(uploaded)
+
+    # ── Sparrow input (Phase 7: DXF → Sparrow instance JSON) ───────────────────
+    st.divider()
+    st.markdown("**Sparrow-syöte**")
+    render_sparrow_export(uploaded)
