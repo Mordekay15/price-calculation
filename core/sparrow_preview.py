@@ -26,9 +26,29 @@ from core.sparrow_reconstruct import (
 # Colours (work on light and dark backgrounds; the sheet is drawn on white).
 _SHEET_FILL = "#ffffff"
 _SHEET_STROKE = "#94a3b8"
-_PART_FILL = "#bfdbfe"
-_PART_STROKE = "#1d4ed8"
 _LABEL = "#0f172a"
+
+# Categorical palette — one colour per item (product type), so all copies of a
+# part share a colour and different parts stand out. Chosen for good contrast on
+# the white sheet and to stay distinct for colour-vision deficiencies; cycled
+# with modulo when there are more items than colours.
+_PALETTE = (
+    "#1d4ed8",  # blue
+    "#ea580c",  # orange
+    "#059669",  # emerald
+    "#db2777",  # pink
+    "#7c3aed",  # violet
+    "#0891b2",  # cyan
+    "#ca8a04",  # gold
+    "#dc2626",  # red
+    "#4d7c0f",  # olive
+    "#be185d",  # magenta
+)
+
+
+def _colour_for(item_id: int) -> str:
+    """Stable colour for one item id (product type)."""
+    return _PALETTE[item_id % len(_PALETTE)]
 
 
 def render_layout_svg(
@@ -36,7 +56,7 @@ def render_layout_svg(
     sources: list,
     *,
     margin_mm: float = 20.0,
-    show_labels: bool = True,
+    show_labels: bool = False,
 ) -> str:
     """Render the nested layout (parts + all holes) as an SVG string."""
     placements = read_placements(solution)
@@ -60,6 +80,7 @@ def render_layout_svg(
             "outer": outer,
             "holes": holes,
             "label": src.part_id,
+            "colour": _colour_for(pl.item_id),
             "centroid": _centroid(outer),
         })
 
@@ -88,9 +109,10 @@ def render_layout_svg(
         d = _ring_path(sh["outer"], fx, fy)
         for hole in sh["holes"]:
             d += " " + _ring_path(hole, fx, fy)
+        colour = sh["colour"]
         parts_svg.append(
-            f'<path d="{d}" fill="{_PART_FILL}" fill-rule="evenodd" '
-            f'fill-opacity="0.55" stroke="{_PART_STROKE}" '
+            f'<path d="{d}" fill="{colour}" fill-rule="evenodd" '
+            f'fill-opacity="0.5" stroke="{colour}" '
             f'stroke-width="{stroke:.3f}" stroke-linejoin="round"/>'
         )
         if show_labels:
