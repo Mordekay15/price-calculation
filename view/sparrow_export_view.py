@@ -22,6 +22,7 @@ import json
 import streamlit as st
 
 from core.sparrow_input import build_job, validate_instance
+from core.sparrow_preview import render_layout_svg
 from core.sparrow_reconstruct import reconstruct_dxf
 from core.sparrow_runner import RunStatus, find_executable, run_sparrow
 
@@ -166,18 +167,21 @@ def render(uploaded) -> None:
                 seed=int(seed),
             )
         st.session_state["sparrow_result"] = result
-        # Phase 9: reconstruct the production DXF from the solution + originals
+        # Phase 9: reconstruct the production DXF + a real-geometry preview
         recon = None
+        preview_svg = None
         if result.ok and result.solution is not None:
             mode = "original" if preserve else "polygon"
             with st.spinner("Rakennetaan tuotanto-DXF…"):
                 recon = reconstruct_dxf(result.solution, sources, mode=mode)
+            preview_svg = render_layout_svg(result.solution, sources)
         st.session_state["sparrow_recon"] = recon
+        st.session_state["sparrow_preview"] = preview_svg
         st.session_state["sparrow_name"] = instance_name
 
     result = st.session_state.get("sparrow_result")
     if result is not None:
-        _render_run_result(result)
+        _render_run_result(result, st.session_state.get("sparrow_preview"))
         _render_reconstruction(
             st.session_state.get("sparrow_recon"),
             st.session_state.get("sparrow_name", instance_name),
@@ -223,8 +227,10 @@ def _render_reconstruction(recon, name: str) -> None:
     )
 
 
-def _render_run_result(result) -> None:
-    """Show a SparrowResult: status, placement counts, stats and the SVG."""
+def _render_run_result(result, preview_svg: str | None = None) -> None:
+    """Show a SparrowResult: status, counts, stats, and the layout preview."""
+    import streamlit.components.v1 as components
+
     if result.status is RunStatus.OK:
         st.success(result.message)
     else:
@@ -241,8 +247,23 @@ def _render_run_result(result) -> None:
             f"korkeus: {result.strip_height:g} mm"
         )
 
-    if result.svg:
-        import streamlit.components.v1 as components
+    # Main preview: real geometry with every hole visible.
+    if preview_svg:
+        st.caption("Asettelu todellisella geometrialla (reiät näkyvissä):")
+        components.html(
+            f'<div style="width:100%;overflow:auto;background:#fff">{preview_svg}</div>',
+            height=460,
+            scrolling=True,
+        )
+        # Sparrow's own preview (outline + collision surrogate) kept for reference.
+        if result.svg:
+            with st.expander("Sparrowin oma esikatselu (polygoni + törmäysympyrä)"):
+                components.html(
+                    f'<div style="width:100%;overflow:auto;background:#fff">{result.svg}</div>',
+                    height=440,
+                    scrolling=True,
+                )
+    elif result.svg:
         components.html(
             f'<div style="width:100%;overflow:auto;background:#fff">{result.svg}</div>',
             height=440,
