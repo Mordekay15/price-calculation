@@ -1,13 +1,18 @@
 """
 view/sparrow_export_view.py
 ===========================
-Sparrow — DXF → Sparrow instance export UI (Phase 7).
+Sparrow — export, run, and reconstruct UI (Phases 7–9).
 
-Takes the uploaded DXF files, converts each part into a Sparrow item
-(``core/sparrow_input.py``), assembles one strip-packing instance, validates it
-against the jagua-rs schema, and offers the JSON for download. The original DXF
-files are kept separately — the JSON only references them by name, so Sparrow's
-polygon (an approximation used for placement) never replaces the real geometry.
+Takes the uploaded DXF files and:
+  * builds a Sparrow strip-packing instance + per-item source records
+    (``core/sparrow_input.build_job``), validates it, offers the JSON (Phase 7),
+  * runs Sparrow on it (``core/sparrow_runner``) and shows the layout (Phase 8),
+  * reconstructs the production DXF from the solution by re-applying each
+    placement to the *original* entities (``core/sparrow_reconstruct``), with a
+    download and the sheet-bounds / placed-count checks (Phase 9).
+
+The original DXF is always kept as the source of truth; Sparrow's polygon is only
+used to compute placement.
 """
 
 from __future__ import annotations
@@ -16,11 +21,8 @@ import json
 
 import streamlit as st
 
-from core.sparrow_input import (
-    build_instance,
-    parts_from_dxf,
-    validate_instance,
-)
+from core.sparrow_input import build_job, validate_instance
+from core.sparrow_reconstruct import reconstruct_dxf
 from core.sparrow_runner import RunStatus, find_executable, run_sparrow
 
 # Rotation presets offered in the UI → allowed_orientations (degrees).
@@ -67,34 +69,32 @@ def render(uploaded) -> None:
             key=f"sparrow_qty_{file.name}",
         )
 
-    # ── Build the instance ─────────────────────────────────────────────────────
-    all_parts = []
-    for file in uploaded:
-        kwargs = {} if orientations is None else {"allowed_orientations": orientations}
-        parts, _report = parts_from_dxf(
-            file.getvalue(), file.name, int(quantities[file.name]), **kwargs
-        )
-        all_parts.extend(parts)
+    # ── Build the instance + per-item source records (Phase 7 + 9) ─────────────
+    instance_name = "stremet_" + "_".join(
+        f.name.rsplit(".", 1)[0] for f in uploaded
+    )[:60]
+    inputs = [
+        (file.getvalue(), file.name, int(quantities[file.name]))
+        for file in uploaded
+    ]
+    job_kwargs = {} if orientations is None else {"allowed_orientations": orientations}
+    instance, sources = build_job(
+        inputs, strip_height=float(strip_height), name=instance_name, **job_kwargs
+    )
 
-    if not all_parts:
+    if not sources:
         st.warning(
             "Ladatuista tiedostoista ei löytynyt yhtään suljettua osaa — "
             "Sparrow-syötettä ei voi luoda."
         )
         return
 
-    instance_name = "stremet_" + "_".join(
-        f.name.rsplit(".", 1)[0] for f in uploaded
-    )[:60]
-    instance = build_instance(
-        all_parts, name=instance_name, strip_height=float(strip_height)
-    )
     problems = validate_instance(instance)
 
     # ── Summary ────────────────────────────────────────────────────────────────
-    total_demand = sum(int(p.quantity) for p in all_parts)
+    total_demand = sum(int(s.quantity) for s in sources)
     m1, m2, m3 = st.columns(3)
-    m1.metric("Osia (yksilöllisiä)", len(all_parts))
+    m1.metric("Osia (yksilöllisiä)", len(sources))
     m2.metric("Kappaleita yhteensä", total_demand)
     m3.metric("Levyn korkeus (mm)", f"{strip_height:g}")
 
@@ -107,14 +107,13 @@ def render(uploaded) -> None:
 
     st.table([
         {
-            "part_id": p.part_id,
-            "dxf": p.dxf,
-            "kpl": p.quantity,
-            "muoto": "polygon (+reiät)" if p.holes else "simple_polygon",
-            "reiät": len(p.holes),
-            "mitat (mm)": f"{p.width_mm:.1f} × {p.height_mm:.1f}",
+            "id": item["id"],
+            "part_id": item["part_id"],
+            "dxf": item["dxf"],
+            "kpl": item["demand"],
+            "muoto": item["shape"]["type"],
         }
-        for p in all_parts
+        for item in instance["items"]
     ])
 
     json_text = json.dumps(instance, indent=2)
@@ -143,25 +142,85 @@ def render(uploaded) -> None:
         )
         return
 
-    rc1, rc2 = st.columns(2)
+    rc1, rc2, rc3 = st.columns(3)
     time_limit = rc1.number_input(
         "Aikaraja (s)", min_value=1, value=10, step=1, key="sparrow_time_limit"
     )
     seed = rc2.number_input(
         "Siemen (seed)", min_value=0, value=0, step=1, key="sparrow_seed"
     )
+    preserve = rc3.checkbox(
+        "Säilytä alkuperäiset entiteetit",
+        value=True,
+        key="sparrow_preserve",
+        help="Päällä: tuotanto-DXF säilyttää kaaret, reiät ja tasot. "
+             "Pois: vain Sparrow-polygonit (vain testiin).",
+    )
 
-    if not st.button("Aja Sparrow", key="sparrow_run"):
-        return
+    if st.button("Aja Sparrow", key="sparrow_run"):
+        with st.spinner("Sparrow ajaa nestausta…"):
+            result = run_sparrow(
+                instance,
+                executable=exe,
+                time_limit_sec=int(time_limit),
+                seed=int(seed),
+            )
+        st.session_state["sparrow_result"] = result
+        # Phase 9: reconstruct the production DXF from the solution + originals
+        recon = None
+        if result.ok and result.solution is not None:
+            mode = "original" if preserve else "polygon"
+            with st.spinner("Rakennetaan tuotanto-DXF…"):
+                recon = reconstruct_dxf(result.solution, sources, mode=mode)
+        st.session_state["sparrow_recon"] = recon
+        st.session_state["sparrow_name"] = instance_name
 
-    with st.spinner("Sparrow ajaa nestausta…"):
-        result = run_sparrow(
-            instance,
-            executable=exe,
-            time_limit_sec=int(time_limit),
-            seed=int(seed),
+    result = st.session_state.get("sparrow_result")
+    if result is not None:
+        _render_run_result(result)
+        _render_reconstruction(
+            st.session_state.get("sparrow_recon"),
+            st.session_state.get("sparrow_name", instance_name),
         )
-    _render_run_result(result)
+
+
+def _render_reconstruction(recon, name: str) -> None:
+    """Show the Phase-9 reconstructed DXF: checks + download."""
+    if recon is None:
+        return
+    st.markdown("**Tuotanto-DXF (rekonstruktio)**")
+
+    if recon.ok:
+        st.success(
+            f"DXF rakennettu: {recon.placed_count} osaa, tasot "
+            f"{', '.join(recon.layers) or '—'}."
+        )
+    else:
+        st.error("DXF rakennettiin, mutta tarkistukset löysivät ongelmia:")
+
+    if recon.placed_count != recon.requested_count:
+        st.warning(
+            f"Sijoitettu {recon.placed_count} ≠ pyydetty {recon.requested_count}."
+        )
+    for msg in recon.out_of_bounds:
+        st.error(f"Levyn ulkopuolella — {msg}")
+    for msg in recon.warnings:
+        st.warning(msg)
+
+    if recon.entity_counts:
+        st.caption(
+            "Entiteetit: "
+            + ", ".join(f"{t}×{n}" for t, n in sorted(recon.entity_counts.items()))
+            + f"  ·  tila: {recon.mode}"
+        )
+
+    st.download_button(
+        "Lataa tuotanto-DXF",
+        data=recon.dxf_bytes,
+        file_name=f"final_{name}.dxf",
+        mime="image/vnd.dxf",
+        key="sparrow_dxf_download",
+    )
 
 
 def _render_run_result(result) -> None:

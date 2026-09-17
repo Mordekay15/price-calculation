@@ -243,6 +243,62 @@ def parts_from_dxf(
     return parts, report
 
 
+# ── Job: instance + the originals needed to reconstruct the final DXF ─────────
+
+@dataclass
+class ItemSource:
+    """Links a Sparrow item id back to the original DXF part it came from.
+
+    Phase 9 reconstruction needs the *original* entities, so every item carries
+    the source file's bytes plus which part inside that file it is (an index into
+    ``report.parts``). The Sparrow polygon is never the source of truth here.
+    """
+
+    item_id: int
+    part_id: str
+    dxf_name: str
+    original_bytes: bytes
+    report: InspectionReport
+    part_index: int
+    quantity: int
+
+
+def build_job(
+    inputs: list[tuple[bytes, str, int]],
+    *,
+    strip_height: float,
+    name: str = "stremet_instance",
+    allowed_orientations: tuple[float, ...] = DEFAULT_ORIENTATIONS,
+) -> tuple[dict, list["ItemSource"]]:
+    """Build a Sparrow instance *and* the per-item source records together.
+
+    `inputs` is a list of ``(dxf_bytes, name, quantity)``. The returned instance
+    and source list share the same 0-based item ordering, so a placed item's
+    ``item_id`` in the solution indexes straight into the sources — which is what
+    the reconstruction relies on.
+    """
+    all_parts: list[SparrowPart] = []
+    sources: list[ItemSource] = []
+    for data, dxf_name, qty in inputs:
+        report = inspect_dxf(data, dxf_name)
+        parts = parts_from_report(
+            report, qty, allowed_orientations=allowed_orientations
+        )
+        for k, part in enumerate(parts):
+            sources.append(ItemSource(
+                item_id=len(all_parts),
+                part_id=part.part_id,
+                dxf_name=dxf_name,
+                original_bytes=data,
+                report=report,
+                part_index=k,
+                quantity=int(qty),
+            ))
+            all_parts.append(part)
+    instance = build_instance(all_parts, name=name, strip_height=strip_height)
+    return instance, sources
+
+
 # ── Assembling the instance ──────────────────────────────────────────────────
 
 def build_instance(
