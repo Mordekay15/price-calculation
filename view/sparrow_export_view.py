@@ -36,11 +36,18 @@ _ROTATION_PRESETS: dict[str, tuple[float, ...] | None] = {
 }
 
 
-def render(uploaded) -> None:
-    """Render the Sparrow-instance builder for the uploaded DXF files."""
+def render(uploaded, products: list[dict] | None = None) -> None:
+    """Render the Sparrow-instance builder for the uploaded DXF files.
+
+    Quantities are taken from the per-part cards (``products``, keyed by file
+    id) so the user sets each amount once; a file with no card entry falls back
+    to 1. Passing ``products=None`` keeps every quantity at 1.
+    """
     if not uploaded:
         st.info("Lataa DXF-tiedostot yllä luodaksesi Sparrow-syötteen.")
         return
+
+    qty_by_fid = {p["id"]: int(p["qty"]) for p in (products or [])}
 
     c1, c2 = st.columns(2)
     strip_height = c1.number_input(
@@ -59,23 +66,13 @@ def render(uploaded) -> None:
     )
     orientations = _ROTATION_PRESETS[preset_label]
 
-    st.markdown("**Määrät (kpl / osa)**")
-    quantities: dict[str, int] = {}
-    for file in uploaded:
-        quantities[file.name] = st.number_input(
-            file.name,
-            min_value=1,
-            value=1,
-            step=1,
-            key=f"sparrow_qty_{file.name}",
-        )
-
     # ── Build the instance + per-item source records (Phase 7 + 9) ─────────────
+    # Quantity per file comes from its card above (by file id); default 1.
     instance_name = "stremet_" + "_".join(
         f.name.rsplit(".", 1)[0] for f in uploaded
     )[:60]
     inputs = [
-        (file.getvalue(), file.name, int(quantities[file.name]))
+        (file.getvalue(), file.name, qty_by_fid.get(file.file_id, 1))
         for file in uploaded
     ]
     job_kwargs = {} if orientations is None else {"allowed_orientations": orientations}
