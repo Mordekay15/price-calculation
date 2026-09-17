@@ -13,6 +13,7 @@ import streamlit as st
 
 from core.calculator import build_lookup, get_materials
 from core.copper import COPPER_MATERIAL
+from view.dxf_inspect_view import render as render_inspection
 from view.margin_view import render_margin
 
 
@@ -40,3 +41,8 @@ def render(data: dict) -> None:
         key="dxf_uploader",
         help="Voit ladata useita tiedostoja kerralla. Jokainen tiedosto on yksi tuote.",
     )
+
+    # ── Inspection (Phase 6: read-only report, no nesting yet) ─────────────────
+    st.divider()
+    st.markdown("**DXF-tarkastus**")
+    render_inspection(uploaded)
