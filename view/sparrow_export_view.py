@@ -18,6 +18,7 @@ used to compute placement.
 from __future__ import annotations
 
 import json
+import math
 
 import streamlit as st
 
@@ -49,16 +50,31 @@ def render(uploaded, products: list[dict] | None = None) -> None:
 
     qty_by_fid = {p["id"]: int(p["qty"]) for p in (products or [])}
 
-    c1, c2 = st.columns(2)
-    strip_height = c1.number_input(
-        "Levyn korkeus (strip_height, mm)",
+    # Fixed sheet size, e.g. 2500 × 1250 mm. Sparrow is a *strip* packer: it
+    # keeps `strip_height` fixed and minimises the length, so the sheet height is
+    # the hard constraint and the sheet width is the length budget the result is
+    # checked against below (fits one sheet / how many sheets).
+    c1, c2, c3 = st.columns(3)
+    sheet_width = c1.number_input(
+        "Levyn leveys (mm)",
         min_value=1.0,
-        value=1000.0,
+        value=2500.0,
+        step=50.0,
+        key="sparrow_sheet_width",
+        help="Levyn pituus, jonka suuntaan osat sijoitellaan. Sparrow minimoi "
+             "käytetyn pituuden; tämä on käytettävissä oleva enimmäispituus, "
+             "johon tulosta verrataan.",
+    )
+    strip_height = c2.number_input(
+        "Levyn korkeus (mm)",
+        min_value=1.0,
+        value=1250.0,
         step=50.0,
         key="sparrow_strip_height",
-        help="Levyn kiinteä mitta (esim. levyn leveys). Sparrow minimoi pituuden.",
+        help="Levyn kiinteä mitta (strip_height). Jokaisen osan on mahduttava "
+             "tähän korkeuteen jossakin sallitussa kierrossa.",
     )
-    preset_label = c2.selectbox(
+    preset_label = c3.selectbox(
         "Sallitut kierrot",
         options=list(_ROTATION_PRESETS.keys()),
         key="sparrow_rotations",
@@ -94,7 +110,7 @@ def render(uploaded, products: list[dict] | None = None) -> None:
     m1, m2, m3 = st.columns(3)
     m1.metric("Osia (yksilöllisiä)", len(sources))
     m2.metric("Kappaleita yhteensä", total_demand)
-    m3.metric("Levyn korkeus (mm)", f"{strip_height:g}")
+    m3.metric("Levyn koko (mm)", f"{sheet_width:g} × {strip_height:g}")
 
     if problems:
         st.error("Sparrow-syöte EI ole kelvollinen:")
@@ -178,7 +194,9 @@ def render(uploaded, products: list[dict] | None = None) -> None:
 
     result = st.session_state.get("sparrow_result")
     if result is not None:
-        _render_run_result(result, st.session_state.get("sparrow_preview"))
+        _render_run_result(
+            result, st.session_state.get("sparrow_preview"), sheet_width=float(sheet_width)
+        )
         _render_reconstruction(
             st.session_state.get("sparrow_recon"),
             st.session_state.get("sparrow_name", instance_name),
@@ -224,8 +242,44 @@ def _render_reconstruction(recon, name: str) -> None:
     )
 
 
-def _render_run_result(result, preview_svg: str | None = None) -> None:
-    """Show a SparrowResult: status, counts, stats, and the layout preview."""
+def _render_sheet_fit(
+    used_length: float,
+    strip_height: float | None,
+    density: float | None,
+    sheet_width: float | None,
+) -> None:
+    """Compare the used strip length against the fixed sheet's length budget."""
+    if not sheet_width or sheet_width <= 0 or strip_height is None:
+        return
+    if used_length <= sheet_width + 1e-6:
+        msg = (
+            f"Mahtuu yhdelle levylle ({sheet_width:g} × {strip_height:g} mm) — "
+            f"käytetty {used_length:.1f} / {sheet_width:g} mm."
+        )
+        if density is not None:
+            # Exact one-sheet fill: placed area / full sheet area.
+            sheet_fill = density * used_length / sheet_width
+            msg += f" Täyttöaste levystä: {sheet_fill * 100:.1f} %."
+        st.success(msg)
+    else:
+        sheets = math.ceil(used_length / sheet_width - 1e-9)
+        st.warning(
+            f"Ei mahdu yhdelle {sheet_width:g} mm levylle — jatkuva pituus "
+            f"{used_length:.1f} mm ≈ {sheets} levyä ({sheet_width:g} × "
+            f"{strip_height:g} mm). Arvio: osa voi jäädä levyjen rajalle."
+        )
+
+
+def _render_run_result(
+    result, preview_svg: str | None = None, sheet_width: float | None = None
+) -> None:
+    """Show a SparrowResult: status, counts, stats, and the layout preview.
+
+    ``sheet_width`` is the fixed sheet's length budget: since Sparrow only
+    minimises the strip length, the used length is compared against it here to
+    report whether the layout fits one sheet (and, if not, an estimated sheet
+    count — an estimate because a part may straddle a sheet boundary).
+    """
     import streamlit.components.v1 as components
 
     if result.status is RunStatus.OK:
@@ -237,12 +291,13 @@ def _render_run_result(result, preview_svg: str | None = None) -> None:
     r1.metric("Pyydetty (kpl)", result.total_requested)
     r2.metric("Sijoitettu (kpl)", result.total_placed)
     if result.density is not None:
-        r3.metric("Täyttöaste", f"{result.density * 100:.1f} %")
+        r3.metric("Täyttöaste (strip)", f"{result.density * 100:.1f} %")
     if result.strip_width is not None:
+        used = result.strip_width
         st.caption(
-            f"Levyn pituus (strip width): {result.strip_width:.2f} mm · "
-            f"korkeus: {result.strip_height:g} mm"
+            f"Käytetty pituus: {used:.1f} mm · korkeus: {result.strip_height:g} mm"
         )
+        _render_sheet_fit(used, result.strip_height, result.density, sheet_width)
 
     # Main preview: real geometry with every hole visible.
     if preview_svg:
