@@ -36,13 +36,16 @@ _CLAMP_HELP = (
 def render_nesting_settings(
     *,
     key_prefix: str = "calc",
-    separate_label: str = "Laske jokainen tuote erikseen"
+    separate_label: str = "Laske jokainen tuote erikseen",
+    show_clamp: bool = True,
 ) -> tuple[str, int, int]:
     """Render the nesting mode and spacing inputs.
 
     Returns ``(nest_mode, rankavali_mm, long_side_clamp_mm)``. Callers pass a
     ``key_prefix`` ("calc" / "dxf") to avoid widget-key collisions and may
-    override the "separate" option label and the help texts.
+    override the "separate" option label and the help texts. ``show_clamp=False``
+    hides the single long-side clamp input (the Sparrow page offers its own
+    per-side sheet margins instead) and returns ``long_side_clamp_mm = 0``.
     """
     nest_mode = st.radio(
         "Sijoittelutapa",
@@ -65,13 +68,15 @@ def render_nesting_settings(
         help=_RANKAVALI_HELP,
     ))
 
-    long_side_clamp_mm = int(st.number_input(
-        "Pitkän sivun kynsirainan leveys (mm)",
-        min_value=0,
-        value=0,
-        step=1,
-        key=f"{key_prefix}_long_side_clamp_mm",
-        help=_CLAMP_HELP,
-    ))
+    long_side_clamp_mm = 0
+    if show_clamp:
+        long_side_clamp_mm = int(st.number_input(
+            "Pitkän sivun kynsirainan leveys (mm)",
+            min_value=0,
+            value=0,
+            step=1,
+            key=f"{key_prefix}_long_side_clamp_mm",
+            help=_CLAMP_HELP,
+        ))
 
     return nest_mode, rankavali_mm, long_side_clamp_mm

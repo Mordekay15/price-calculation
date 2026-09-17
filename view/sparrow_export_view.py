@@ -92,24 +92,29 @@ def render(uploaded, products: list[dict] | None = None) -> None:
     )
     orientations = _ROTATION_PRESETS[preset_label]
 
-    # ── Nesting settings: mode + rankaväli + kynsiraina ────────────────────────
-    nest_mode, rankavali_mm, clamp_mm = render_nesting_settings(
+    # ── Nesting settings: mode + rankaväli (clamp replaced by per-side margins) ─
+    nest_mode, rankavali_mm, _ = render_nesting_settings(
         key_prefix="sparrow",
         separate_label="Laske jokainen osa erikseen",
+        show_clamp=False,
     )
 
-    # The clamp zone (kynsiraina) runs along the long side and cannot hold parts,
-    # so the usable strip height is the sheet height minus the clamp width.
-    usable_height = float(sheet_height) - float(clamp_mm)
-    if usable_height <= 0:
-        st.error(
-            "Kynsirainan leveys on vähintään levyn korkeus — osille ei jää tilaa."
-        )
+    # Per-side sheet margins (top/bottom/left/right) — unusable edge zones.
+    margins = _render_sheet_margins("sparrow")
+
+    # Height margins (top+bottom) are a hard constraint: they shrink the usable
+    # strip height Sparrow packs into. Length margins (left+right) shrink the
+    # usable length the result is checked against below.
+    usable_height = float(sheet_height) - margins["top"] - margins["bottom"]
+    usable_length = float(sheet_width) - margins["left"] - margins["right"]
+    if usable_height <= 0 or usable_length <= 0:
+        st.error("Reunavälit ovat vähintään levyn koko — osille ei jää tilaa.")
         return
-    if clamp_mm > 0:
+    if any(margins.values()):
         st.caption(
-            f"Käytettävä korkeus osille: {usable_height:g} mm "
-            f"(kynsirainalle varattu {clamp_mm:g} mm)."
+            f"Käytettävä alue osille: {usable_length:g} × {usable_height:g} mm "
+            f"(reunoille varattu — ylä {margins['top']:g}, ala {margins['bottom']:g}, "
+            f"vasen {margins['left']:g}, oikea {margins['right']:g} mm)."
         )
 
     # ── Group the parts into Sparrow instances ─────────────────────────────────
@@ -184,7 +189,8 @@ def render(uploaded, products: list[dict] | None = None) -> None:
                 with st.spinner(f"Rakennetaan tuotanto-DXF ({label})…"):
                     recon = reconstruct_dxf(result.solution, sources, mode=mode)
                 preview_svg = render_layout_svg(
-                    result.solution, sources, reserved_mm=float(clamp_mm)
+                    result.solution, sources,
+                    sheet_margins=margins, sheet_width=float(sheet_width),
                 )
             st.session_state[f"sparrow_result_{gid}"] = result
             st.session_state[f"sparrow_recon_{gid}"] = recon
@@ -201,7 +207,7 @@ def render(uploaded, products: list[dict] | None = None) -> None:
         _render_run_result(
             result,
             st.session_state.get(f"sparrow_preview_{gid}"),
-            sheet_width=float(sheet_width),
+            usable_length=float(usable_length),
         )
         _render_reconstruction(
             st.session_state.get(f"sparrow_recon_{gid}"),
@@ -240,6 +246,44 @@ def _group_uploaded(uploaded, meta_by_fid: dict, nest_mode: str):
         gid = "grp_" + _safe_key(f"{material}__{thickness}")
         out.append((gid, label, groups[key]))
     return out
+
+
+def _render_sheet_margins(key_prefix: str = "sparrow") -> dict[str, float]:
+    """Per-side unusable sheet margins (mm), laid out like the sheet's edges.
+
+    Returns ``{"top", "bottom", "left", "right"}``, all default 0. These edges
+    cannot hold parts (clamp / gripper zones); the sheet is still bought full
+    size, so weight and price come from the gross dimensions.
+    """
+    st.markdown("**Levyn reunavälit (mm)**")
+    st.caption(
+        "Reuna-alueet, joille ei sijoiteta osia (esim. kynsiraina/tarttujat). "
+        "Levy ostetaan silti täysikokoisena."
+    )
+
+    def _edge(col, label: str, side: str) -> float:
+        return float(col.number_input(
+            label, min_value=0, value=0, step=1,
+            key=f"{key_prefix}_margin_{side}",
+        ))
+
+    top_row = st.columns([1, 2, 1])
+    top = _edge(top_row[1], "Yläreuna", "top")
+
+    mid_row = st.columns([1, 2, 1])
+    left = _edge(mid_row[0], "Vasen", "left")
+    mid_row[1].markdown(
+        '<div style="border:2px solid #94a3b8;border-radius:6px;height:70px;'
+        'display:flex;align-items:center;justify-content:center;color:#64748b;'
+        'font-family:sans-serif;font-size:13px;margin-top:4px">Levy</div>',
+        unsafe_allow_html=True,
+    )
+    right = _edge(mid_row[2], "Oikea", "right")
+
+    bot_row = st.columns([1, 2, 1])
+    bottom = _edge(bot_row[1], "Alareuna", "bottom")
+
+    return {"top": top, "bottom": bottom, "left": left, "right": right}
 
 
 def _safe_key(s: str) -> str:
@@ -361,39 +405,45 @@ def _render_sheet_fit(
     used_length: float,
     strip_height: float | None,
     density: float | None,
-    sheet_width: float | None,
+    usable_length: float | None,
 ) -> None:
-    """Compare the used strip length against the fixed sheet's length budget."""
-    if not sheet_width or sheet_width <= 0 or strip_height is None:
+    """Compare the used strip length against the usable sheet length (budget).
+
+    ``usable_length`` is the sheet length minus the left/right margins, and
+    ``strip_height`` the usable height Sparrow packed into (sheet height minus
+    top/bottom margins), so the fit is checked against the real usable area.
+    """
+    if not usable_length or usable_length <= 0 or strip_height is None:
         return
-    if used_length <= sheet_width + 1e-6:
+    if used_length <= usable_length + 1e-6:
         msg = (
-            f"Mahtuu yhdelle levylle ({sheet_width:g} × {strip_height:g} mm) — "
-            f"käytetty {used_length:.1f} / {sheet_width:g} mm."
+            f"Mahtuu yhdelle levylle — käytetty {used_length:.1f} / "
+            f"{usable_length:g} mm (käytettävä alue {usable_length:g} × "
+            f"{strip_height:g} mm)."
         )
         if density is not None:
-            # Exact one-sheet fill: placed area / full sheet area.
-            sheet_fill = density * used_length / sheet_width
-            msg += f" Täyttöaste levystä: {sheet_fill * 100:.1f} %."
+            # Exact one-sheet fill: placed area / usable area.
+            sheet_fill = density * used_length / usable_length
+            msg += f" Täyttöaste käytettävästä alueesta: {sheet_fill * 100:.1f} %."
         st.success(msg)
     else:
-        sheets = math.ceil(used_length / sheet_width - 1e-9)
+        sheets = math.ceil(used_length / usable_length - 1e-9)
         st.warning(
-            f"Ei mahdu yhdelle {sheet_width:g} mm levylle — jatkuva pituus "
-            f"{used_length:.1f} mm ≈ {sheets} levyä ({sheet_width:g} × "
-            f"{strip_height:g} mm). Arvio: osa voi jäädä levyjen rajalle."
+            f"Ei mahdu yhdelle levylle — jatkuva pituus {used_length:.1f} mm "
+            f"≈ {sheets} levyä (käytettävä pituus {usable_length:g} mm/levy). "
+            f"Arvio: osa voi jäädä levyjen rajalle."
         )
 
 
 def _render_run_result(
-    result, preview_svg: str | None = None, sheet_width: float | None = None
+    result, preview_svg: str | None = None, usable_length: float | None = None
 ) -> None:
     """Show a SparrowResult: status, counts, stats, and the layout preview.
 
-    ``sheet_width`` is the fixed sheet's length budget: since Sparrow only
-    minimises the strip length, the used length is compared against it here to
-    report whether the layout fits one sheet (and, if not, an estimated sheet
-    count — an estimate because a part may straddle a sheet boundary).
+    ``usable_length`` is the sheet length minus the left/right margins — the
+    budget the used strip length is checked against, since Sparrow only
+    minimises the length (fits one sheet, or an estimated sheet count — an
+    estimate because a part may straddle a sheet boundary).
     """
     import streamlit.components.v1 as components
 
@@ -412,7 +462,7 @@ def _render_run_result(
         st.caption(
             f"Käytetty pituus: {used:.1f} mm · korkeus: {result.strip_height:g} mm"
         )
-        _render_sheet_fit(used, result.strip_height, result.density, sheet_width)
+        _render_sheet_fit(used, result.strip_height, result.density, usable_length)
 
     # Main preview: real geometry with every hole visible.
     if preview_svg:

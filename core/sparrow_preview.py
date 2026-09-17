@@ -53,39 +53,63 @@ def _colour_for(item_id: int) -> str:
     return _PALETTE[item_id % len(_PALETTE)]
 
 
+def _offset(points, dx: float, dy: float):
+    """Shift points by (dx, dy); returns the same list when both are zero."""
+    if not dx and not dy:
+        return points
+    return [(x + dx, y + dy) for x, y in points]
+
+
 def render_layout_svg(
     solution: dict,
     sources: list,
     *,
     margin_mm: float = 20.0,
     show_labels: bool = False,
-    reserved_mm: float = 0.0,
+    sheet_margins: dict | None = None,
+    sheet_width: float | None = None,
 ) -> str:
     """Render the nested layout (parts + all holes) as an SVG string.
 
-    ``reserved_mm`` is the long-side clamp zone (kynsiraina): parts nest inside
-    ``strip_h`` (the usable height Sparrow was given), and this band is drawn on
-    top of it to show the reserved edge, so the full sheet reads as
-    ``strip_h + reserved_mm`` tall.
+    ``sheet_margins`` are the per-side unusable edges (mm) as
+    ``{"top", "bottom", "left", "right"}`` — clamp / gripper zones drawn as
+    bands around the sheet. Parts nest inside ``strip_h`` (the usable height
+    Sparrow was given) and are shifted by the left/bottom margins so they sit
+    inside the usable rectangle. ``sheet_width`` is the full sheet length used to
+    size the drawn sheet; when omitted the sheet just hugs the parts plus the
+    left/right margins.
     """
     placements = read_placements(solution)
     strip_w, strip_h = _strip_size(solution)
     if strip_w is None or strip_h is None or not placements:
         return _empty_svg()
 
-    reserved = max(0.0, float(reserved_mm))
-    full_h = strip_h + reserved  # gross sheet height (usable + clamp zone)
+    m = sheet_margins or {}
+    top = max(0.0, float(m.get("top", 0) or 0))
+    bottom = max(0.0, float(m.get("bottom", 0) or 0))
+    left = max(0.0, float(m.get("left", 0) or 0))
+    right = max(0.0, float(m.get("right", 0) or 0))
 
-    # Build every placed part's outline + holes in model (mm) coordinates.
+    full_h = strip_h + top + bottom                    # gross sheet height
+    sheet_w = float(sheet_width) if sheet_width else (strip_w + left + right)
+    canvas_w = max(sheet_w, strip_w + left + right)    # reveal overflow, if any
+
+    # Build every placed part's outline + holes, shifted into the usable region.
     shapes: list[dict] = []
     for pl in placements:
         if pl.item_id >= len(sources):
             continue
         src = sources[pl.item_id]
         part = src.report.parts[src.part_index]
-        outer = _rotate_translate(part.points, pl.rotation_deg, pl.translation)
+        outer = _offset(
+            _rotate_translate(part.points, pl.rotation_deg, pl.translation),
+            left, bottom,
+        )
         holes = [
-            _rotate_translate(h.points, pl.rotation_deg, pl.translation)
+            _offset(
+                _rotate_translate(h.points, pl.rotation_deg, pl.translation),
+                left, bottom,
+            )
             for h in _holes_for(part, src.report)
         ]
         shapes.append({
@@ -96,7 +120,7 @@ def render_layout_svg(
             "centroid": _centroid(outer),
         })
 
-    vb_w = strip_w + 2 * margin_mm
+    vb_w = canvas_w + 2 * margin_mm
     vb_h = full_h + 2 * margin_mm
 
     def fx(x: float) -> float:
@@ -106,31 +130,33 @@ def render_layout_svg(
         # flip Y so the preview reads the same way up as CAD
         return (full_h - y) + margin_mm
 
-    stroke = max(strip_w, full_h) / 400.0  # scale line weight to the sheet
+    stroke = max(canvas_w, full_h) / 400.0  # scale line weight to the sheet
     parts_svg: list[str] = []
 
-    # the gross sheet (usable strip + clamp zone)
+    # the gross sheet (full size — margins included)
     parts_svg.append(
         f'<rect x="{fx(0):.3f}" y="{fy(full_h):.3f}" '
-        f'width="{strip_w:.3f}" height="{full_h:.3f}" '
+        f'width="{sheet_w:.3f}" height="{full_h:.3f}" '
         f'fill="{_SHEET_FILL}" stroke="{_SHEET_STROKE}" '
         f'stroke-width="{stroke*1.5:.3f}" stroke-dasharray="{stroke*4:.2f} {stroke*4:.2f}"/>'
     )
 
-    # the reserved long-side clamp zone (kynsiraina) along the top edge
-    if reserved > 0:
+    # the reserved edge margins (clamp / gripper zones), as (x, y, w, h) boxes
+    bands = []
+    if bottom > 0:
+        bands.append((0.0, 0.0, sheet_w, bottom))
+    if top > 0:
+        bands.append((0.0, full_h - top, sheet_w, top))
+    if left > 0:
+        bands.append((0.0, 0.0, left, full_h))
+    if right > 0:
+        bands.append((sheet_w - right, 0.0, right, full_h))
+    for bx, by, bw, bh in bands:
         parts_svg.append(
-            f'<rect x="{fx(0):.3f}" y="{fy(full_h):.3f}" '
-            f'width="{strip_w:.3f}" height="{reserved:.3f}" '
+            f'<rect x="{fx(bx):.3f}" y="{fy(by + bh):.3f}" '
+            f'width="{bw:.3f}" height="{bh:.3f}" '
             f'fill="{_CLAMP_FILL}" fill-opacity="0.18" stroke="{_CLAMP_STROKE}" '
             f'stroke-width="{stroke:.3f}" stroke-dasharray="{stroke*3:.2f} {stroke*3:.2f}"/>'
-        )
-        parts_svg.append(
-            f'<text x="{fx(strip_w / 2):.2f}" y="{fy(strip_h + reserved / 2):.2f}" '
-            f'fill="{_CLAMP_STROKE}" font-family="sans-serif" '
-            f'font-size="{min(reserved * 0.6, max(strip_w, full_h) / 45):.2f}" '
-            f'text-anchor="middle" dominant-baseline="central">'
-            f'Kynsiraina {reserved:g} mm</text>'
         )
 
     for sh in shapes:
