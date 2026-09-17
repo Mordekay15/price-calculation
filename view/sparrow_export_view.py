@@ -102,7 +102,7 @@ def render(uploaded, products: list[dict] | None = None) -> None:
             show_clamp=False,
         )
     with margins_col:
-        margins = _render_sheet_margins("sparrow")
+        margins = _render_sheet_margins("sparrow", sheet_width, sheet_height)
 
     # Height margins (top+bottom) are a hard constraint: they shrink the usable
     # strip height Sparrow packs into. Length margins (left+right) shrink the
@@ -250,12 +250,18 @@ def _group_uploaded(uploaded, meta_by_fid: dict, nest_mode: str):
     return out
 
 
-def _render_sheet_margins(key_prefix: str = "sparrow") -> dict[str, float]:
+def _render_sheet_margins(
+    key_prefix: str = "sparrow",
+    sheet_width: float = 2500.0,
+    sheet_height: float = 1250.0,
+) -> dict[str, float]:
     """Per-side unusable sheet margins (mm), laid out like the sheet's edges.
 
-    Returns ``{"top", "bottom", "left", "right"}``, all default 0. These edges
-    cannot hold parts (clamp / gripper zones); the sheet is still bought full
-    size, so weight and price come from the gross dimensions.
+    The centre shows a live diagram of the sheet: the margins as a red ring
+    shrinking the blue usable area, in the sheet's real proportions. Returns
+    ``{"top", "bottom", "left", "right"}``, all default 0. These edges cannot
+    hold parts (clamp / gripper zones); the sheet is still bought full size, so
+    weight and price come from the gross dimensions.
     """
     st.markdown("**Levyn reunavälit (mm)**")
 
@@ -265,15 +271,21 @@ def _render_sheet_margins(key_prefix: str = "sparrow") -> dict[str, float]:
             key=f"{key_prefix}_margin_{side}",
         ))
 
+    def _val(side: str) -> float:
+        return float(st.session_state.get(f"{key_prefix}_margin_{side}", 0) or 0)
+
     top_row = st.columns([1, 2, 1])
     top = _edge(top_row[1], "Yläreuna", "top")
 
     mid_row = st.columns([1, 2, 1])
     left = _edge(mid_row[0], "Vasen", "left")
+    # Live sheet diagram — reads the current values (committed to session_state
+    # before the rerun) so it updates as the margins change.
     mid_row[1].markdown(
-        '<div style="border:2px solid #94a3b8;border-radius:6px;height:70px;'
-        'display:flex;align-items:center;justify-content:center;color:#64748b;'
-        'font-family:sans-serif;font-size:13px;margin-top:4px">Levy</div>',
+        _margin_preview_svg(
+            sheet_width, sheet_height,
+            _val("top"), _val("bottom"), _val("left"), _val("right"),
+        ),
         unsafe_allow_html=True,
     )
     right = _edge(mid_row[2], "Oikea", "right")
@@ -282,6 +294,45 @@ def _render_sheet_margins(key_prefix: str = "sparrow") -> dict[str, float]:
     bottom = _edge(bot_row[1], "Alareuna", "bottom")
 
     return {"top": top, "bottom": bottom, "left": left, "right": right}
+
+
+def _margin_preview_svg(
+    sheet_w: float, sheet_h: float,
+    top: float, bottom: float, left: float, right: float,
+) -> str:
+    """A small live diagram of the sheet: red margin ring around a blue usable
+    area, in the sheet's real proportions. Illustrative only.
+    """
+    sheet_w = max(1.0, float(sheet_w))
+    sheet_h = max(1.0, float(sheet_h))
+    W = 240.0
+    H = max(90.0, min(150.0, W * sheet_h / sheet_w))
+    pad = 8.0
+    ow, oh = W - 2 * pad, H - 2 * pad
+    sx, sy = ow / sheet_w, oh / sheet_h
+
+    li = min(max(0.0, left), sheet_w) * sx
+    ri = min(max(0.0, right), sheet_w) * sx
+    ti = min(max(0.0, top), sheet_h) * sy
+    bi = min(max(0.0, bottom), sheet_h) * sy
+    iw = max(4.0, ow - li - ri)
+    ih = max(4.0, oh - ti - bi)
+    ix = pad + li
+    iy = pad + ti
+
+    return (
+        f'<svg viewBox="0 0 {W:.0f} {H:.0f}" width="100%" '
+        f'style="max-width:240px;height:auto;display:block;margin:4px auto 0">'
+        f'<rect x="{pad:.1f}" y="{pad:.1f}" width="{ow:.1f}" height="{oh:.1f}" '
+        f'rx="4" fill="#fecaca" fill-opacity="0.55" stroke="#94a3b8" '
+        f'stroke-width="1.5"/>'
+        f'<rect x="{ix:.1f}" y="{iy:.1f}" width="{iw:.1f}" height="{ih:.1f}" '
+        f'rx="2" fill="#bfdbfe" stroke="#3b82f6" stroke-width="1.2"/>'
+        f'<text x="{W / 2:.0f}" y="{pad + oh / 2:.0f}" text-anchor="middle" '
+        f'dominant-baseline="central" font-family="sans-serif" font-size="12" '
+        f'fill="#1e3a8a">Levy</text>'
+        f'</svg>'
+    )
 
 
 def _safe_key(s: str) -> str:
