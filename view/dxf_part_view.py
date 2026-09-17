@@ -36,6 +36,7 @@ from view.product_view import render_material_thickness
 _STORE      = "dxf_store"        # {file_id: DxfPart}
 _LAYER_INFO = "dxf_layer_info"   # {file_id: {"avail", "suggested", "sizes"}}
 _GEOM_CACHE = "dxf_geom_cache"   # {(file_id, layers_key, main_only): (geom, svg)}
+_CONFIG     = "dxf_part_config"  # {file_id: {"material", "thickness"}}
 
 
 def sync_store(uploaded) -> list[tuple[str, object]]:
@@ -66,11 +67,29 @@ def _evict(fids: set[str]) -> None:
     store: dict = st.session_state.get(_STORE, {})
     layer_info: dict = st.session_state.get(_LAYER_INFO, {})
     geom_cache: dict = st.session_state.get(_GEOM_CACHE, {})
+    configs: dict = st.session_state.get(_CONFIG, {})
     for fid in fids:
         store.pop(fid, None)
         layer_info.pop(fid, None)
+        configs.pop(fid, None)
+        # Also drop the material/thickness selectboxes' own keyed widget state
+        # so nothing about a removed file lingers in session_state.
+        for wk in (f"dxf_mat_{fid}", f"dxf_th_{fid}", f"dxf_th_{fid}_disabled"):
+            st.session_state.pop(wk, None)
     for key in [k for k in geom_cache if k[0] in fids]:
         del geom_cache[key]
+
+
+def _part_config(fid: str) -> dict:
+    """The persisted material/thickness for one file — the single source of truth.
+
+    Mirrors the manual calculator's ``calc_products`` pattern: the chosen
+    material and thickness are stored explicitly (keyed by file id) rather than
+    only living inside the selectbox widget keys, so a later pricing phase can
+    read every part's choice from one place. Pruned in _evict on file removal.
+    """
+    configs: dict = st.session_state.setdefault(_CONFIG, {})
+    return configs.setdefault(fid, {"material": None, "thickness": None})
 
 
 def render_part_config(
@@ -83,7 +102,7 @@ def render_part_config(
     """Draw one part's card and return a product dict for nesting (or None)."""
     with st.container(border=True):
         hdr = st.columns([6, 2])
-        hdr[0].markdown(f"**#{idx + 1} · {part.name}**")
+        hdr[0].markdown(f"**#{idx + 1}**")
 
         for w in part.warnings:
             st.warning(w)
@@ -125,11 +144,17 @@ def render_part_config(
         # Live preview so the user can confirm only the product is left.
         st.markdown(preview_svg, unsafe_allow_html=True)
 
-        # Material + thickness — shared with the manual calculator cards.
+        # Material + thickness — persisted per file (one source of truth) and
+        # shared with the manual calculator cards. Seed the selectboxes from the
+        # stored choice, then write the current choice back into it.
+        cfg = _part_config(fid)
         material, thickness = render_material_thickness(
             materials, lookup,
             mat_key=f"dxf_mat_{fid}", thick_key=f"dxf_th_{fid}",
+            mat_default=cfg["material"], thick_default=cfg["thickness"],
         )
+        cfg["material"] = material
+        cfg["thickness"] = thickness
 
         det_w, det_h = round(geom.width, 1), round(geom.height, 1)
         width, height, qty = _render_size_inputs(fid, det_w, det_h, layers_key, main_only)
