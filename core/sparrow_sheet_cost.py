@@ -43,6 +43,7 @@ def compute_options_sparrow(
     rankavali_mm: int = 0,
     seed: int = 0,
     time_limit_sec: int = 8,
+    pieces_kg_override: float | None = None,
 ) -> dict:
     """Compare every priced sheet size for one group, nesting with Sparrow.
 
@@ -52,6 +53,12 @@ def compute_options_sparrow(
     ``core.sheet_usage.compute_options``: ``rows`` (each with ``_sheets`` set to
     the ``PackedSheet`` list), ``n_pieces``, ``pieces_kg``, ``has_pieces``,
     ``has_candidates``.
+
+    ``pieces_kg_override`` sets the total piece weight used to spread the sheet
+    cost back onto the pieces. Pass the card-based weight (what the per-part
+    summary uses) so the summary total reconciles exactly with the sheet total —
+    otherwise the Sparrow parser's slightly different bounding box makes the two
+    disagree by a fraction of a percent.
     """
     n_pieces = sum(int(getattr(p, "quantity", 1)) for p in parts)
     if not parts or n_pieces <= 0:
@@ -70,11 +77,14 @@ def compute_options_sparrow(
         return {"rows": [], "n_pieces": n_pieces, "pieces_kg": 0.0,
                 "has_pieces": True, "has_candidates": False}
 
-    pieces_kg = sum(
-        piece_weight_kg(p.width_mm, p.height_mm, thickness_mm, material)
-        * int(getattr(p, "quantity", 1))
-        for p in parts
-    )
+    if pieces_kg_override is not None:
+        pieces_kg = float(pieces_kg_override)
+    else:
+        pieces_kg = sum(
+            piece_weight_kg(p.width_mm, p.height_mm, thickness_mm, material)
+            * int(getattr(p, "quantity", 1))
+            for p in parts
+        )
     separation = float(rankavali_mm) if rankavali_mm else None
 
     rows = []

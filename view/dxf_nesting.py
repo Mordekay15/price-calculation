@@ -18,7 +18,12 @@ signature until something changes.
 
 import streamlit as st
 
-from core.calculator import build_lookup, get_materials, parse_thickness_mm
+from core.calculator import (
+    build_lookup,
+    get_materials,
+    parse_thickness_mm,
+    piece_weight_kg,
+)
 from core.copper import COPPER_MATERIAL
 from core.sparrow_input import parts_from_dxf
 from core.sparrow_runner import find_executable, run_sparrow
@@ -128,12 +133,21 @@ def render(data: dict) -> None:
             if thickness_mm is None:
                 continue
             gparts = _parts_for_group(gprods, uploaded_by_id, rotations)
+            # Spread the sheet cost over the *card* weights so the per-part
+            # summary total matches the headline total (the two DXF parsers
+            # measure the bounding box a hair differently).
+            card_pieces_kg = sum(
+                piece_weight_kg(p["width"], p["height"], thickness_mm, material)
+                * int(p["qty"])
+                for p in gprods
+            )
             with st.spinner(f"Sparrow laskee: {material} · {thickness} mm…"):
                 result = compute_options_sparrow(
                     lookup, material, thickness, thickness_mm, gparts,
                     run_fn=run_fn, margin_pct=margin_pct,
                     long_side_clamp_mm=long_side_clamp_mm,
                     rankavali_mm=rankavali_mm, seed=seed, time_limit_sec=time_limit,
+                    pieces_kg_override=card_pieces_kg,
                 )
             cache[_sig(gkey, gprods, long_side_clamp_mm, rankavali_mm, rotations,
                        time_limit, seed, margin_pct)] = {
