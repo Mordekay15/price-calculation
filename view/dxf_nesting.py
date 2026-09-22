@@ -156,7 +156,7 @@ def render(data: dict) -> None:
         total, ppt = render_group_sparrow(
             entry["material"], entry["thickness"], entry["thickness_mm"],
             entry["result"], entry["parts"], long_side_clamp_mm=long_side_clamp_mm,
-            margin_pct=margin_pct,
+            margin_pct=margin_pct, key_suffix=sig,
         )
         if total is not None:
             grand_total_eur += total

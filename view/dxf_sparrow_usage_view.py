@@ -37,8 +37,14 @@ def render_group_sparrow(
     parts: list,
     long_side_clamp_mm: int = 0,
     margin_pct: float = 0.0,
+    key_suffix: str = "",
 ) -> tuple[float | None, float | None]:
-    """Render one Sparrow-nested sheet-usage group. Returns (total_eur, ppt)."""
+    """Render one Sparrow-nested sheet-usage group. Returns (total_eur, ppt).
+
+    The sheet-size table is selectable: clicking a row draws that sheet size's
+    layout (and prices it) instead of the cheapest — every size's layout is
+    already computed, so switching is instant.
+    """
     st.markdown(f"**{material}** · **{thickness} mm**")
 
     if not result.get("has_pieces"):
@@ -60,17 +66,48 @@ def render_group_sparrow(
             r["Paras"] = ""
 
     display_rows = [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows]
-    st.dataframe(display_rows, use_container_width=True, hide_index=True)
+    event = st.dataframe(
+        display_rows,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key=f"dxf_su_select::{key_suffix}",
+    )
 
     if cheapest_idx is None:
         st.warning("Osat eivät mahtuneet millekään hinnoitellulle levykoolle.")
         return None, None
 
-    active = rows[cheapest_idx]
-    st.success(
-        f"Edullisin: **{active['Levykoko']}** — {active['Tarvittavat levyt']} "
-        f"levyä, käyttöaste {active['Käyttöaste']}."
-    )
+    # Default to the cheapest; let the user click a (valid) row to override.
+    selected_idx = cheapest_idx
+    user_overrode = False
+    sel = list(getattr(event.selection, "rows", []) or [])
+    if sel:
+        idx = sel[0]
+        if 0 <= idx < len(rows) and rows[idx]["_failed"] == 0:
+            selected_idx = idx
+            user_overrode = idx != cheapest_idx
+        else:
+            st.warning(
+                f"**{rows[idx]['Levykoko']}** ei kelpaa — osat eivät mahdu. "
+                "Näytetään edullisin."
+            )
+
+    active = rows[selected_idx]
+    cheapest = rows[cheapest_idx]
+    if user_overrode:
+        delta = active["_total"] - cheapest["_total"]
+        st.info(
+            f"Valittu: **{active['Levykoko']}** — {active['Tarvittavat levyt']} "
+            f"levyä ({'+' if delta >= 0 else ''}{delta:,.2f} € vs. edullisin "
+            f"{cheapest['Levykoko']})."
+        )
+    else:
+        st.success(
+            f"Edullisin: **{active['Levykoko']}** — {active['Tarvittavat levyt']} "
+            f"levyä, käyttöaste {active['Käyttöaste']}."
+        )
 
     # ── Headline metrics ────────────────────────────────────────────────────
     avg_per_pc = active["_total"] / n_pieces if n_pieces else 0.0
