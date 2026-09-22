@@ -211,6 +211,16 @@ def _sheet_svg(sheet, sw, sh, eff_w, eff_h, px_w, px_h) -> str:
             f'<path d="{d}" fill="{color}" fill-opacity="0.55" fill-rule="evenodd" '
             f'stroke="{color}" stroke-width="{stroke:.2f}" stroke-linejoin="round"/>'
         )
+        # Bend / tangent / centre-mark lines — drawn dashed, never filled.
+        for cline in getattr(pl, "construction", []):
+            if len(cline) < 2:
+                continue
+            cd = "M " + " L ".join(f"{x:.1f} {sh - y:.1f}" for x, y in cline)
+            parts_svg.append(
+                f'<path d="{cd}" fill="none" stroke="#0f172a" '
+                f'stroke-width="{stroke * 0.6:.2f}" stroke-opacity="0.7" '
+                f'stroke-dasharray="{stroke * 2.5:.1f} {stroke * 1.8:.1f}"/>'
+            )
         xs = [p[0] for p in pl.outer]
         ys = [p[1] for p in pl.outer]
         cx = sum(xs) / len(xs)

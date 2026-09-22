@@ -50,6 +50,7 @@ class Placed:
     translation: tuple[float, float]
     outer: list[Point]              # outer ring after rotate+translate
     holes: list[list[Point]] = field(default_factory=list)
+    construction: list[list[Point]] = field(default_factory=list)  # bend/tangent lines
 
 
 @dataclass
@@ -151,7 +152,8 @@ def greedy_fixed_sheets(
             if remaining[orig_i] <= 0:
                 continue  # already satisfied this part's demand on this sheet
             holes_t = [_rot(h, rot, trans) for h in getattr(part, "holes", [])]
-            kept.append(Placed(orig_i, part.part_id, rot, trans, outer_t, holes_t))
+            constr_t = [_rot(c, rot, trans) for c in getattr(part, "construction", [])]
+            kept.append(Placed(orig_i, part.part_id, rot, trans, outer_t, holes_t, constr_t))
             remaining[orig_i] -= 1
             used_area += _poly_area(outer_t) - sum(_poly_area(h) for h in holes_t)
 

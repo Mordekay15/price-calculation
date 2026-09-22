@@ -165,6 +165,9 @@ class InspectionReport:
     contours: list[Contour] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     invalid: list[str] = field(default_factory=list)
+    # Bend / tangent / centre-mark polylines (mm). Kept out of parts/holes so they
+    # never affect the area, but carried through so the layout can draw them.
+    construction_lines: list[list[Point]] = field(default_factory=list)
 
     # ── Derived views ────────────────────────────────────────────────────────
     @property
@@ -477,6 +480,7 @@ def inspect_dxf(data: bytes, name: str = "drawing.dxf") -> InspectionReport:
     # 1) Count every entity by type and by layer; collect supported geometry.
     closed_direct: list[Contour] = []
     open_segments: list[tuple[list[Point], str, str]] = []
+    construction: list[list[Point]] = []
 
     for entity in msp:
         etype = entity.dxftype()
@@ -486,9 +490,12 @@ def inspect_dxf(data: bytes, name: str = "drawing.dxf") -> InspectionReport:
 
         if etype not in SUPPORTED_TYPES:
             continue
-        # Bend / tangent / centre-mark / annotation geometry is counted above but
-        # must not become a part or hole contour.
+        # Bend / tangent / centre-mark / annotation geometry is counted above and
+        # kept for drawing, but must not become a part or hole contour.
         if _is_construction_layer(layer):
+            extracted = _entity_polyline(entity, factor)
+            if extracted is not None and len(extracted[0]) >= 2:
+                construction.append(extracted[0])
             continue
 
         extracted = _entity_polyline(entity, factor)
@@ -507,6 +514,7 @@ def inspect_dxf(data: bytes, name: str = "drawing.dxf") -> InspectionReport:
     chained = _chain_open_segments(open_segments, _JOIN_TOL_MM) if open_segments else []
 
     report.contours = closed_direct + chained
+    report.construction_lines = construction
 
     # 3) Measure area, self-intersection, and hole nesting.
     for c in report.contours:

@@ -95,6 +95,9 @@ class SparrowPart:
     dxf: str = ""
     width_mm: float = 0.0
     height_mm: float = 0.0
+    # Bend / tangent / centre-mark polylines (mm), in the same coordinate frame as
+    # `outer` — drawn on the layout, never nested or counted in the area.
+    construction: list[list[Point]] = field(default_factory=list)
 
     def shape_dict(self) -> dict:
         """The jagua-rs `shape` object for this part."""
@@ -194,6 +197,7 @@ def parts_from_report(
     """
     stem = part_id_prefix or _stem(report.name)
     outer_parts = report.parts
+    single = len(outer_parts) == 1
     parts: list[SparrowPart] = []
     for k, part in enumerate(outer_parts):
         holes = _holes_of(part, report)
@@ -206,8 +210,27 @@ def parts_from_report(
             dxf=report.name,
             width_mm=part.width_mm,
             height_mm=part.height_mm,
+            construction=_construction_of(part, report, single),
         ))
     return parts
+
+
+def _construction_of(part: Contour, report: InspectionReport, single: bool) -> list[list[Point]]:
+    """Bend/tangent/centre-mark lines that belong to this part.
+
+    With a single part every construction line is attached to it; otherwise a
+    line goes to the part whose outline contains the line's centroid.
+    """
+    lines = [list(l) for l in report.construction_lines if len(l) >= 2]
+    if single:
+        return lines
+    out: list[list[Point]] = []
+    for line in lines:
+        cx = sum(x for x, _ in line) / len(line)
+        cy = sum(y for _, y in line) / len(line)
+        if _point_in_polygon((cx, cy), part.points):
+            out.append(line)
+    return out
 
 
 def _holes_of(part: Contour, report: InspectionReport) -> list[Contour]:
