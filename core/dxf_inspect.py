@@ -61,6 +61,26 @@ _JOIN_TOL_MM = 0.05
 # counted but not turned into a contour.
 SUPPORTED_TYPES = ("LWPOLYLINE", "POLYLINE", "LINE", "ARC", "CIRCLE")
 
+# Layer-name fragments that mark a layer as *not a cut* — bend lines, tangent
+# lines, centre marks, dimensions, text, frames. Their geometry is still counted
+# in the report, but it is kept out of the part/hole contours so a bend or
+# tangent loop is never subtracted from the part area. Matched case-insensitively
+# as substrings (so "IV_BEND_DOWN", "IV_TANGENT", "IV_ARC_CENTERS" are all
+# excluded, while "IV_OUTER_PROFILE" / "IV_INTERIOR_PROFILES" / "CONTOURS" stay).
+_CONSTRUCTION_LAYER_KEYWORDS = (
+    "bend", "tangent", "arc_center", "arccenter", "centers", "centermark",
+    "center_mark", "centerline", "centreline", "construction", "reference",
+    "dim", "dimension", "text", "note", "annot", "format", "frame", "border",
+    "title", "hatch", "symbol", "axis", "axes", "sketch", "weld", "mark",
+    "label", "leader", "hidden",
+)
+
+
+def _is_construction_layer(name: str) -> bool:
+    """True for bend / tangent / centre-mark / annotation layers (never cuts)."""
+    low = (name or "").lower()
+    return any(kw in low for kw in _CONSTRUCTION_LAYER_KEYWORDS)
+
 # Self-intersection is an O(n²) check; skip (and warn) above this many edges so a
 # densely flattened contour can never stall the inspection.
 _SELF_INTERSECT_EDGE_CAP = 3000
@@ -465,6 +485,10 @@ def inspect_dxf(data: bytes, name: str = "drawing.dxf") -> InspectionReport:
         report.layer_counts[layer] = report.layer_counts.get(layer, 0) + 1
 
         if etype not in SUPPORTED_TYPES:
+            continue
+        # Bend / tangent / centre-mark / annotation geometry is counted above but
+        # must not become a part or hole contour.
+        if _is_construction_layer(layer):
             continue
 
         extracted = _entity_polyline(entity, factor)
