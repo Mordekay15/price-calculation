@@ -30,9 +30,7 @@ from view.nesting_settings_view import render_nesting_settings
 from view.pieces_summary_view import render_pieces_summary
 
 _ROTATIONS: dict[str, tuple[float, ...]] = {
-    "0° / 90° / 180° / 270°": (0.0, 90.0, 180.0, 270.0),
-    "0° / 180°": (0.0, 180.0),
-    "Ei kiertoa (0°)": (0.0,),
+    "0° / 90°": (0.0, 90.0),
 }
 
 
