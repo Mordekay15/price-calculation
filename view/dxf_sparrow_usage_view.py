@@ -133,22 +133,42 @@ def render_group_sparrow(
 
 
 def _render_layout(active: dict, parts: list, key_suffix: str = "") -> None:
-    """Legend + one SVG per packed sheet for the cheapest sheet size."""
-    sheets = active["_sheets"]
-    if not sheets:
+    """Legend + one SVG per packed sheet for the active sheet size.
+
+    The "turn" toggle shows the *other* orientation's real re-nest (Sparrow
+    packed the turned sheet separately) when one exists; for a square sheet with
+    no alternate it just rotates the picture. Either way the price / sheet-size
+    row is unchanged.
+    """
+    if not active["_sheets"]:
         return
-    sw, sh = active["_sw"], active["_sh"]
-    eff_w, eff_h = active["_eff_w"], active["_eff_h"]
 
-    st.markdown(f"**Sijoittelu** — {len(sheets)} levyä")
-
+    alt = active.get("_alt")
     rotate = st.checkbox(
-        "Käännä näkymä 90°",
+        "Käännä levy 90°",
         value=False,
         key=f"dxf_su_rot::{key_suffix}",
-        help="Kääntää levyn esikatselun 90° — kapea korkea levy näkyy leveänä. "
-             "Vain näkymä kääntyy, laskenta ja hinta pysyvät samoina.",
+        help="Näyttää Sparrown asettelun käännetylle levylle (sama levykoko ja "
+             "hinta, eri sijoittelu). Neliölevyllä vain kuva kääntyy.",
     )
+
+    # Pick which packing to draw: the alternate re-nest when turned, else primary.
+    svg_rotate = False
+    if rotate and alt:
+        sheets = alt["_sheets"]
+        sw, sh = alt["_sw"], alt["_sh"]
+        eff_w, eff_h = alt["_eff_w"], alt["_eff_h"]
+        st.caption(
+            f"Käännetty levy — Sparrow laski asettelun uudelleen: käyttöaste "
+            f"{alt['utilization'] * 100:.1f} %, {alt['sheets_needed']} levyä."
+        )
+    else:
+        sheets = active["_sheets"]
+        sw, sh = active["_sw"], active["_sh"]
+        eff_w, eff_h = active["_eff_w"], active["_eff_h"]
+        svg_rotate = rotate and not alt  # square sheet: rotate the picture only
+
+    st.markdown(f"**Sijoittelu** — {len(sheets)} levyä")
 
     # Which part indices actually appear, for a compact legend.
     used_indices = sorted({pl.part_index for s in sheets for pl in s.placements})
@@ -183,7 +203,7 @@ def _render_layout(active: dict, parts: list, key_suffix: str = "") -> None:
                     f"{sheet.utilization * 100:.1f} %"
                 )
                 st.markdown(
-                    _sheet_svg(sheet, sw, sh, eff_w, eff_h, scale, rotate),
+                    _sheet_svg(sheet, sw, sh, eff_w, eff_h, scale, svg_rotate),
                     unsafe_allow_html=True,
                 )
 

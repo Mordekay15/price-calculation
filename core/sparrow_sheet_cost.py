@@ -82,11 +82,12 @@ def compute_options_sparrow(
         # Try the sheet both ways round (portrait / landscape) and keep the
         # tighter fit — the same as rotating the whole nest 90°, so an elongated
         # part is not forced to run along the wrong sheet axis.
-        pack, eff_w, eff_h, draw_w, draw_h = _pack_best_orientation(
+        best, alt = _pack_best_orientation(
             parts, sw, sh, long_side_clamp_mm,
             run_fn=run_fn, seed=seed, time_limit_sec=time_limit_sec,
             separation=separation,
         )
+        pack, eff_w, eff_h, draw_w, draw_h = best
         if not pack.ok:
             rows.append(_failed_row(sw, sh, pack.reason))
             continue
@@ -125,6 +126,8 @@ def compute_options_sparrow(
             "_eff_h":         eff_h,
             "_sw":            draw_w,
             "_sh":            draw_h,
+            # The other orientation's real re-nest, for the "turn the sheet" view.
+            "_alt":           _alt_layout(alt),
             "_breakdown": {
                 "sw":              sw,
                 "sh":              sh,
@@ -147,13 +150,16 @@ def compute_options_sparrow(
 def _pack_best_orientation(
     parts, sw, sh, clamp, *, run_fn, seed, time_limit_sec, separation
 ):
-    """Pack the sheet in both orientations; return the better attempt.
+    """Pack the sheet in both orientations; return ``(best, alt)``.
 
-    Returns ``(pack, eff_w, eff_h, draw_w, draw_h)`` where ``draw_w × draw_h`` is
-    the chosen sheet layout (physical size, orientation-independent) and
-    ``eff_w × eff_h`` its usable area after the clamp. The winner needs the fewest
-    sheets, tie-broken by utilisation; if neither fits, the first attempt (with
-    its failure reason) is returned.
+    Each attempt is ``(pack, eff_w, eff_h, draw_w, draw_h)`` where
+    ``draw_w × draw_h`` is that orientation's sheet layout and ``eff_w × eff_h``
+    its usable area after the clamp. ``best`` is the tighter fit (fewest sheets,
+    tie-broken by utilisation) and drives the price; ``alt`` is the *other*
+    orientation's real re-nest (or None when the sheet is square or the other
+    orientation didn't fit) — used for the "turn the sheet" view. When neither
+    orientation fits, ``(first_attempt, None)`` is returned so the caller can
+    surface the failure.
     """
     def _try(cw, ch):
         ew, eh = _effective_sheet(cw, ch, clamp)
@@ -169,7 +175,7 @@ def _pack_best_orientation(
 
     ok = [o for o in options if o[0].ok]
     if not ok:
-        return options[0]
+        return options[0], None
 
     def _key(o):
         pack, ew, eh = o[0], o[1], o[2]
@@ -177,7 +183,27 @@ def _pack_best_orientation(
         cap = pack.sheets_needed * ew * eh
         return (pack.sheets_needed, -(used / cap if cap else 0.0))
 
-    return min(ok, key=_key)
+    best = min(ok, key=_key)
+    alt = next((o for o in ok if o is not best), None)
+    return best, alt
+
+
+def _alt_layout(alt) -> dict | None:
+    """Pack the alternate-orientation attempt into a small display dict."""
+    if alt is None:
+        return None
+    pack, ew, eh, dw, dh = alt
+    used = sum(s.used_area for s in pack.sheets)
+    cap = pack.sheets_needed * ew * eh
+    return {
+        "_sheets": pack.sheets,
+        "_eff_w": ew,
+        "_eff_h": eh,
+        "_sw": dw,
+        "_sh": dh,
+        "sheets_needed": pack.sheets_needed,
+        "utilization": (used / cap) if cap else 0.0,
+    }
 
 
 def _failed_row(sw: int, sh: int, reason: str) -> dict:
