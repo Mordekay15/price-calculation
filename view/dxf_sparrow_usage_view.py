@@ -118,7 +118,7 @@ def render_group_sparrow(
     m[3].metric("Käyttöaste", active["Käyttöaste"] or "—")
 
     # ── Per-sheet Sparrow layout ────────────────────────────────────────────
-    _render_layout(active, parts)
+    _render_layout(active, parts, key_suffix=key_suffix)
 
     _render_breakdown(
         material=material,
@@ -132,7 +132,7 @@ def render_group_sparrow(
     return active["_total"], active["_ppt"]
 
 
-def _render_layout(active: dict, parts: list) -> None:
+def _render_layout(active: dict, parts: list, key_suffix: str = "") -> None:
     """Legend + one SVG per packed sheet for the cheapest sheet size."""
     sheets = active["_sheets"]
     if not sheets:
@@ -141,6 +141,14 @@ def _render_layout(active: dict, parts: list) -> None:
     eff_w, eff_h = active["_eff_w"], active["_eff_h"]
 
     st.markdown(f"**Sijoittelu** — {len(sheets)} levyä")
+
+    rotate = st.checkbox(
+        "Käännä näkymä 90°",
+        value=False,
+        key=f"dxf_su_rot::{key_suffix}",
+        help="Kääntää levyn esikatselun 90° — kapea korkea levy näkyy leveänä. "
+             "Vain näkymä kääntyy, laskenta ja hinta pysyvät samoina.",
+    )
 
     # Which part indices actually appear, for a compact legend.
     used_indices = sorted({pl.part_index for s in sheets for pl in s.placements})
@@ -163,7 +171,6 @@ def _render_layout(active: dict, parts: list) -> None:
 
     target_px = 460
     scale = target_px / max(sw, sh)
-    sw_px, sh_px = sw * scale, sh * scale
 
     cols_per_row = min(4, len(sheets))
     for row_start in range(0, len(sheets), cols_per_row):
@@ -176,19 +183,29 @@ def _render_layout(active: dict, parts: list) -> None:
                     f"{sheet.utilization * 100:.1f} %"
                 )
                 st.markdown(
-                    _sheet_svg(sheet, sw, sh, eff_w, eff_h, sw_px, sh_px),
+                    _sheet_svg(sheet, sw, sh, eff_w, eff_h, scale, rotate),
                     unsafe_allow_html=True,
                 )
 
 
-def _sheet_svg(sheet, sw, sh, eff_w, eff_h, px_w, px_h) -> str:
-    """SVG for one packed sheet: real placements (holes via even-odd), Y flipped."""
+def _sheet_svg(sheet, sw, sh, eff_w, eff_h, scale, rotate: bool = False) -> str:
+    """SVG for one packed sheet: real placements (holes via even-odd), Y flipped.
+
+    ``rotate`` turns the *view* 90° (a tall sheet shows landscape) by wrapping the
+    content in a rotation group; the part labels are counter-rotated so they stay
+    upright. Only the picture changes — the geometry, area and price do not.
+    """
+    # The content is drawn in the sw×sh space; rotating swaps the display box.
+    vb_w, vb_h = (sh, sw) if rotate else (sw, sh)
     parts_svg = [
-        f'<svg width="{px_w:.0f}" height="{px_h:.0f}" viewBox="0 0 {sw} {sh}" '
-        f'preserveAspectRatio="xMidYMid meet" '
+        f'<svg width="{vb_w * scale:.0f}" height="{vb_h * scale:.0f}" '
+        f'viewBox="0 0 {vb_w} {vb_h}" preserveAspectRatio="xMidYMid meet" '
         f'style="background:#f8fafc;border:2px solid #475569;border-radius:4px;'
         f'display:block;max-width:100%;height:auto;">',
     ]
+    if rotate:
+        parts_svg.append(f'<g transform="translate({sh},0) rotate(90)">')
+
     # Greyed-out clamp strip (bought but unusable).
     if eff_w < sw:
         parts_svg.append(
@@ -224,14 +241,18 @@ def _sheet_svg(sheet, sw, sh, eff_w, eff_h, px_w, px_h) -> str:
         xs = [p[0] for p in pl.outer]
         ys = [p[1] for p in pl.outer]
         cx = sum(xs) / len(xs)
-        cy = sum(ys) / len(ys)
+        ty = sh - sum(ys) / len(ys)
         fs = max(sw, sh) / 45.0
+        # Keep the label upright when the view is rotated.
+        upright = f' transform="rotate(-90 {cx:.1f} {ty:.1f})"' if rotate else ""
         parts_svg.append(
-            f'<text x="{cx:.1f}" y="{sh - cy:.1f}" text-anchor="middle" '
+            f'<text x="{cx:.1f}" y="{ty:.1f}"{upright} text-anchor="middle" '
             f'dominant-baseline="central" font-family="sans-serif" '
             f'font-size="{fs:.0f}" font-weight="700" fill="#0f172a">'
             f'#{pl.part_index + 1}</text>'
         )
+    if rotate:
+        parts_svg.append("</g>")
     parts_svg.append("</svg>")
     return "".join(parts_svg)
 
