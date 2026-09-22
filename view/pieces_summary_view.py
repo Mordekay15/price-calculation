@@ -15,7 +15,7 @@ calculator. Draws nothing when no product has valid dimensions.
 """
 
 import streamlit as st
-from core.calculator import parse_thickness_mm, piece_weight_kg
+from core.calculator import density_for_material, parse_thickness_mm, piece_weight_kg
 
 
 def render_pieces_summary(
@@ -23,13 +23,21 @@ def render_pieces_summary(
     cheapest_prices: dict[str, float],
     *,
     from_dxf: bool = False,
+    areas_mm2: dict[str, float] | None = None,
 ) -> None:
     """The per-piece summary table plus its weight/cost totals.
 
     With ``from_dxf`` the leading column is the DXF part name and the section
     uses the "Osa" wording; otherwise it is a running piece number and the
     "Kappale" wording.
+
+    ``areas_mm2`` maps a product id to its *net cut area* (mm², holes removed).
+    A DXF part's real weight is that area × thickness × density — using the
+    bounding box would count the empty gaps and holes and overstate the weight
+    (a plate could then weigh more than the sheet it is cut from). Manual
+    rectangles carry no entry here and fall back to width × height.
     """
+    areas_mm2 = areas_mm2 or {}
     title        = "Osayhteenveto" if from_dxf else "Kappaleyhteenveto"
     weight_label = "Osien yhteispaino (kg)" if from_dxf else "Kappaleiden yhteispaino (kg)"
 
@@ -42,7 +50,11 @@ def render_pieces_summary(
         thickness_mm = parse_thickness_mm(prod["thickness"]) if prod["thickness"] else None
         if thickness_mm is None:
             continue
-        one_weight   = piece_weight_kg(prod["width"], prod["height"], thickness_mm, prod["material"])
+        net_area = areas_mm2.get(prod["id"])
+        if net_area is not None:
+            one_weight = net_area * thickness_mm * density_for_material(prod["material"])
+        else:
+            one_weight = piece_weight_kg(prod["width"], prod["height"], thickness_mm, prod["material"])
         batch_weight = one_weight * prod["qty"]
         total_weight_kg += batch_weight
 

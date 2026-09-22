@@ -20,9 +20,9 @@ import streamlit as st
 
 from core.calculator import (
     build_lookup,
+    density_for_material,
     get_materials,
     parse_thickness_mm,
-    piece_weight_kg,
 )
 from core.copper import COPPER_MATERIAL
 from core.sparrow_input import parts_from_dxf
@@ -132,13 +132,15 @@ def render(data: dict) -> None:
             thickness_mm = parse_thickness_mm(thickness)
             if thickness_mm is None:
                 continue
-            gparts = _parts_for_group(gprods, uploaded_by_id, rotations)
-            # Spread the sheet cost over the *card* weights so the per-part
-            # summary total matches the headline total (the two DXF parsers
-            # measure the bounding box a hair differently).
-            card_pieces_kg = sum(
-                piece_weight_kg(p["width"], p["height"], thickness_mm, material)
-                * int(p["qty"])
+            gparts, net_area_by_fid = _parts_for_group(gprods, uploaded_by_id, rotations)
+            # Weigh each part by its real *net cut area* (holes removed), not the
+            # bounding box — otherwise interlocked parts + holes overstate the
+            # weight (a plate could weigh more than its sheet). The sheet cost is
+            # then spread over that same weight so the per-part summary total
+            # matches the headline total.
+            density = density_for_material(material)
+            pieces_kg = sum(
+                net_area_by_fid.get(p["id"], 0.0) * thickness_mm * density * int(p["qty"])
                 for p in gprods
             )
             with st.spinner(f"Sparrow laskee: {material} · {thickness} mm…"):
@@ -147,11 +149,11 @@ def render(data: dict) -> None:
                     run_fn=run_fn, margin_pct=margin_pct,
                     long_side_clamp_mm=long_side_clamp_mm,
                     rankavali_mm=rankavali_mm, seed=seed, time_limit_sec=time_limit,
-                    pieces_kg_override=card_pieces_kg,
+                    pieces_kg_override=pieces_kg,
                 )
             cache[_sig(gkey, gprods, long_side_clamp_mm, rankavali_mm, rotations,
                        time_limit, seed, margin_pct)] = {
-                "result": result, "parts": gparts,
+                "result": result, "parts": gparts, "areas": net_area_by_fid,
                 "material": material, "thickness": thickness, "thickness_mm": thickness_mm,
             }
 
@@ -159,6 +161,7 @@ def render(data: dict) -> None:
     grand_total_eur = 0.0
     any_priced = False
     cheapest_prices: dict[str, float] = {}
+    areas_by_id: dict[str, float] = {}
     stale = False
     for gkey, gprods in groups.items():
         sig = _sig(gkey, gprods, long_side_clamp_mm, rankavali_mm, rotations,
@@ -167,6 +170,7 @@ def render(data: dict) -> None:
         if entry is None:
             stale = True
             continue
+        areas_by_id.update(entry.get("areas", {}))
         total, ppt = render_group_sparrow(
             entry["material"], entry["thickness"], entry["thickness_mm"],
             entry["result"], entry["parts"], long_side_clamp_mm=long_side_clamp_mm,
@@ -189,12 +193,19 @@ def render(data: dict) -> None:
         st.divider()
         st.metric("Yhdistetty edullisin yhteissumma (€)", f"{grand_total_eur:,.2f}")
 
-    render_pieces_summary(ready, cheapest_prices, from_dxf=True)
+    render_pieces_summary(ready, cheapest_prices, from_dxf=True, areas_mm2=areas_by_id)
 
 
-def _parts_for_group(products: list[dict], uploaded_by_id: dict, rotations: tuple) -> list:
-    """Build Sparrow parts (real geometry) for a group from its uploaded files."""
+def _parts_for_group(
+    products: list[dict], uploaded_by_id: dict, rotations: tuple
+) -> tuple[list, dict[str, float]]:
+    """Build Sparrow parts for a group, plus each product's net area (mm²/piece).
+
+    Returns ``(parts, net_area_by_id)`` where the area is one piece's true cut
+    area (outer outline minus holes), summed over the product's contours.
+    """
     out: list = []
+    net_area_by_fid: dict[str, float] = {}
     for prod in products:
         up = uploaded_by_id.get(prod["id"])
         if up is None:
@@ -204,7 +215,26 @@ def _parts_for_group(products: list[dict], uploaded_by_id: dict, rotations: tupl
             allowed_orientations=rotations,
         )
         out.extend(gparts)
-    return out
+        net_area_by_fid[prod["id"]] = sum(_net_area(p) for p in gparts)
+    return out, net_area_by_fid
+
+
+def _net_area(part) -> float:
+    """One part's true cut area (mm²): outer outline minus its holes."""
+    return _poly_area(part.outer) - sum(_poly_area(h) for h in part.holes)
+
+
+def _poly_area(points) -> float:
+    """Absolute shoelace area of a ring."""
+    n = len(points)
+    if n < 3:
+        return 0.0
+    s = 0.0
+    for i in range(n):
+        x1, y1 = points[i]
+        x2, y2 = points[(i + 1) % n]
+        s += x1 * y2 - x2 * y1
+    return abs(s) / 2.0
 
 
 def _sig(gkey, products, clamp, rankavali, rotations, time_limit, seed, margin_pct) -> str:
