@@ -165,10 +165,14 @@ def _pack_best_orientation(
     ``draw_w × draw_h`` is that orientation's sheet layout and ``eff_w × eff_h``
     its usable area after the clamp. ``best`` is the tighter fit (fewest sheets,
     tie-broken by utilisation) and drives the price; ``alt`` is the *other*
-    orientation's real re-nest (or None when the sheet is square or the other
-    orientation didn't fit) — used for the "turn the sheet" view. When neither
-    orientation fits, ``(first_attempt, None)`` is returned so the caller can
-    surface the failure.
+    orientation's real re-nest (or None when the sheet is square, the other
+    orientation didn't fit, or it was skipped) — used for the "turn the sheet"
+    view. When neither orientation fits, ``(first_attempt, None)`` is returned
+    so the caller can surface the failure.
+
+    The turned sheet is skipped when every part may turn a quarter: then its
+    layout is just the first one rotated 90°, so re-nesting would only double
+    the Sparrow time.
     """
     def _try(cw, ch):
         ew, eh = _effective_sheet(cw, ch, clamp)
@@ -179,7 +183,7 @@ def _pack_best_orientation(
         return pack, ew, eh, cw, ch
 
     options = [_try(sw, sh)]
-    if sw != sh:
+    if sw != sh and not _quarter_turn_free(parts):
         options.append(_try(sh, sw))
 
     ok = [o for o in options if o[0].ok]
@@ -194,6 +198,22 @@ def _pack_best_orientation(
     best = min(ok, key=_key)
     alt = next((o for o in ok if o is not best), None)
     return best, alt
+
+
+def _quarter_turn_free(parts) -> bool:
+    """True if every part's allowed rotations are closed under +90°.
+
+    Then any layout turned 90° is still a valid layout (on the turned sheet).
+    ``None`` / empty orientations mean free rotation.
+    """
+    for p in parts:
+        orients = getattr(p, "allowed_orientations", None)
+        if not orients:
+            continue
+        angles = {round(float(a)) % 360 for a in orients}
+        if any((a + 90) % 360 not in angles for a in angles):
+            return False
+    return True
 
 
 def _alt_layout(alt) -> dict | None:

@@ -10,18 +10,20 @@ analysis: it fills one fixed sheet at a time.
 For a given sheet (usable ``sheet_w`` × ``sheet_h`` mm) and a set of parts with
 demands, each round:
 
-  1. build a Sparrow instance for the *remaining* demand with the strip height
-     fixed to the sheet's short side (``sheet_h``),
-  2. run Sparrow (via an injected ``run_fn`` — this module never launches the
-     binary itself),
-  3. keep every placed part that lands fully inside the first ``sheet_w`` of
-     length — that is this sheet's contents (no part straddles the cut),
-  4. repeat that exact layout for as many further sheets as the remaining
-     demand still covers (100 parts at 25 per sheet → one Sparrow run, one
-     layout ×4) — re-running Sparrow for an identical demand would only
-     reproduce the same sheet,
-  5. subtract those from the remaining demand and start the next sheet; only a
-     smaller leftover (a different part mix) triggers a new Sparrow run.
+  1. search for the most parts one sheet holds. A probe asks Sparrow (via an
+     injected ``run_fn`` — this module never launches the binary itself) to
+     nest ``n`` parts in a strip as high as the sheet (``sheet_h``) and keeps
+     the parts that land fully inside the first ``sheet_w`` of length (no part
+     straddles the cut). The first probe uses an area estimate; the search then
+     steps up from the best count found until a probe no longer fits all its
+     parts. Probing only about one sheet's worth matters: given the whole order
+     (say 400 parts) Sparrow spreads its effort over a long strip and the first
+     sheet comes out looser (18 parts where 25 fit),
+  2. repeat that sheet layout for as many further sheets as the remaining
+     demand still covers (100 parts at 25 per sheet → one layout ×4) —
+     re-running Sparrow for an identical demand would only reproduce the sheet,
+  3. subtract those from the remaining demand and start the next sheet; only a
+     smaller leftover (a different part mix) triggers a new search.
 
 Rounds repeat until every part is placed or a part cannot fit the sheet at all.
 The result is a list of distinct ``PackedSheet`` layouts, each with a
@@ -144,37 +146,18 @@ def greedy_fixed_sheets(
         if sum(s.count for s in sheets) >= max_sheets:
             return PackResult(ok=False, sheets=sheets, reason="liian monta levyä")
 
-        active = [i for i, q in enumerate(remaining) if q > 0]
-        instance = _build_instance(parts, remaining, active, sheet_h)
-        res = run_fn(
-            instance, seed=seed, time_limit_sec=time_limit_sec, separation=separation
-        )
-        if not getattr(res, "ok", False) or getattr(res, "solution", None) is None:
-            return PackResult(
-                ok=False, sheets=sheets,
-                reason=getattr(res, "message", "") or "Sparrow-ajo epäonnistui",
+        def probe(n: int):
+            return _probe(
+                parts, _mix(remaining, n), sheet_w, sheet_h, run_fn=run_fn,
+                seed=seed, time_limit_sec=time_limit_sec, separation=separation,
             )
 
-        kept: list[Placed] = []
-        used_area = 0.0
-        for local_id, rot, trans in _read_placements(res.solution):
-            if local_id < 0 or local_id >= len(active):
-                continue
-            orig_i = active[local_id]
-            part = parts[orig_i]
-            outer_t = _rot(part.outer, rot, trans)
-            minx, miny, maxx, maxy = _bbox(outer_t)
-            if minx < -_TOL or miny < -_TOL or maxx > sheet_w + _TOL or maxy > sheet_h + _TOL:
-                continue  # spills past this sheet — leave it for the next round
-            if remaining[orig_i] <= 0:
-                continue  # already satisfied this part's demand on this sheet
-            holes_t = [_rot(h, rot, trans) for h in getattr(part, "holes", [])]
-            constr_t = [_rot(c, rot, trans) for c in getattr(part, "construction", [])]
-            kept.append(Placed(orig_i, part.part_id, rot, trans, outer_t, holes_t, constr_t))
-            remaining[orig_i] -= 1
-            used_area += _poly_area(outer_t) - sum(_poly_area(h) for h in holes_t)
-
-        if not kept:
+        total = sum(remaining)
+        first = min(total, _area_estimate(parts, remaining, sheet_w * sheet_h))
+        err, best = probe(first)
+        if err is not None:
+            return PackResult(ok=False, sheets=sheets, reason=err)
+        if not best:
             # Nothing fit within the sheet although each part fits in isolation —
             # usually the separation gap makes even one part overflow.
             return PackResult(
@@ -182,34 +165,114 @@ def greedy_fixed_sheets(
                 reason="osat eivät mahtuneet levylle annetulla rankavälillä",
             )
 
+        # lo: most parts seen on one sheet; hi: smallest probe that didn't fit
+        # entirely (None while every probe fitted). Gallop up, then bisect.
+        lo = len(best)
+        hi = first if lo < first else None
+        step = 1
+        while lo < total and (hi is None or hi - lo > 1):
+            n = min(total, lo + step if hi is None else min(lo + step, (lo + hi) // 2))
+            if hi is not None and n >= hi:
+                n = (lo + hi) // 2
+            err, kept = probe(n)
+            if err is not None:
+                break  # keep the best sheet found so far
+            if len(kept) > lo:
+                lo, best = len(kept), kept
+            if len(kept) < n:
+                hi = n
+            step *= 2
+
+        per_sheet: dict[int, int] = {}
+        for pl in best:
+            per_sheet[pl.part_index] = per_sheet.get(pl.part_index, 0) + 1
         # Reuse this layout while the remaining demand still covers its part
         # mix — Sparrow would only reproduce the same sheet.
-        per_sheet: dict[int, int] = {}
-        for pl in kept:
-            per_sheet[pl.part_index] = per_sheet.get(pl.part_index, 0) + 1
-        repeats = min(remaining[i] // n for i, n in per_sheet.items())
+        count = min(remaining[i] // n for i, n in per_sheet.items())
         for i, n in per_sheet.items():
-            remaining[i] -= repeats * n
-        sheets.append(PackedSheet(kept, sheet_w, sheet_h, used_area, 1 + repeats))
+            remaining[i] -= count * n
+        used_area = sum(
+            _poly_area(pl.outer) - sum(_poly_area(h) for h in pl.holes) for pl in best
+        )
+        sheets.append(PackedSheet(best, sheet_w, sheet_h, used_area, count))
 
     return PackResult(ok=True, sheets=sheets)
 
 
+def _mix(remaining: list[int], n: int) -> dict[int, int]:
+    """Pick ``n`` parts from the remaining demand, in proportion to it.
+
+    Returns ``{part_index: count}``. A proportional mix keeps a sheet's layout
+    repeatable across the rest of the order.
+    """
+    total = sum(remaining)
+    if n >= total:
+        return {i: q for i, q in enumerate(remaining) if q > 0}
+    raw = {i: q * n / total for i, q in enumerate(remaining) if q > 0}
+    mix = {i: int(r) for i, r in raw.items()}
+    short = n - sum(mix.values())
+    for i in sorted(raw, key=lambda i: raw[i] - mix[i], reverse=True)[:short]:
+        mix[i] += 1
+    return {i: c for i, c in mix.items() if c > 0}
+
+
+def _area_estimate(parts: list, remaining: list[int], sheet_area: float) -> int:
+    """Parts per sheet if the remaining mix tiled the sheet with no waste."""
+    total = sum(remaining)
+    mix_area = sum(_poly_area(parts[i].outer) * q for i, q in enumerate(remaining))
+    mean = mix_area / total if total else 0.0
+    return max(1, int(sheet_area / mean)) if mean > 0 else total
+
+
+def _probe(parts: list, demand: dict[int, int], sheet_w: float, sheet_h: float,
+           *, run_fn, seed, time_limit_sec, separation):
+    """Nest ``demand`` with Sparrow; return ``(error, placed_on_sheet)``.
+
+    ``error`` is None on success; the list holds the parts that land fully
+    inside the first ``sheet_w`` of the strip.
+    """
+    active = list(demand)
+    instance = _build_instance(parts, demand, sheet_h)
+    res = run_fn(
+        instance, seed=seed, time_limit_sec=time_limit_sec, separation=separation
+    )
+    if not getattr(res, "ok", False) or getattr(res, "solution", None) is None:
+        return getattr(res, "message", "") or "Sparrow-ajo epäonnistui", []
+
+    left = dict(demand)
+    kept: list[Placed] = []
+    for local_id, rot, trans in _read_placements(res.solution):
+        if local_id < 0 or local_id >= len(active):
+            continue
+        orig_i = active[local_id]
+        part = parts[orig_i]
+        outer_t = _rot(part.outer, rot, trans)
+        minx, miny, maxx, maxy = _bbox(outer_t)
+        if minx < -_TOL or miny < -_TOL or maxx > sheet_w + _TOL or maxy > sheet_h + _TOL:
+            continue  # spills past this sheet
+        if left[orig_i] <= 0:
+            continue
+        holes_t = [_rot(h, rot, trans) for h in getattr(part, "holes", [])]
+        constr_t = [_rot(c, rot, trans) for c in getattr(part, "construction", [])]
+        kept.append(Placed(orig_i, part.part_id, rot, trans, outer_t, holes_t, constr_t))
+        left[orig_i] -= 1
+    return None, kept
+
+
 # ── instance building ────────────────────────────────────────────────────────
 
-def _build_instance(parts: list, remaining: list[int], active: list[int],
-                    strip_height: float) -> dict:
-    """A jagua-rs strip instance for the currently-remaining demand.
+def _build_instance(parts: list, demand: dict[int, int], strip_height: float) -> dict:
+    """A jagua-rs strip instance for ``demand`` (``{part_index: count}``).
 
-    Items are 0-based in ``active`` order, so a solution's ``item_id`` indexes
-    straight back into ``active``.
+    Items are 0-based in ``demand`` order, so a solution's ``item_id`` indexes
+    straight back into ``list(demand)``.
     """
     items = []
-    for local_id, orig_i in enumerate(active):
+    for local_id, (orig_i, n) in enumerate(demand.items()):
         part = parts[orig_i]
         item = {
             "id": local_id,
-            "demand": int(remaining[orig_i]),
+            "demand": int(n),
             "part_id": getattr(part, "part_id", str(orig_i)),
             "allowed_orientations": [
                 float(a) for a in (getattr(part, "allowed_orientations", None) or ())

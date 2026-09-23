@@ -144,9 +144,10 @@ def _render_layout(active: dict, parts: list, key_suffix: str = "") -> None:
     (e.g. "Levy 1–4 · ×4") instead of repeating the same picture.
 
     The "turn" toggle shows the *other* orientation's real re-nest (Sparrow
-    packed the turned sheet separately) when one exists; for a square sheet with
-    no alternate it just rotates the picture. Either way the price / sheet-size
-    row is unchanged.
+    packed the turned sheet separately) when one exists; otherwise (a square
+    sheet, or parts free to turn 90° so the turned layout is the same one) it
+    just rotates the picture. Either way the price / sheet-size row is
+    unchanged.
     """
     if not active["_sheets"]:
         return
@@ -157,7 +158,8 @@ def _render_layout(active: dict, parts: list, key_suffix: str = "") -> None:
         value=False,
         key=f"dxf_su_rot::{key_suffix}",
         help="Näyttää Sparrown asettelun käännetylle levylle (sama levykoko ja "
-             "hinta, eri sijoittelu). Neliölevyllä vain kuva kääntyy.",
+             "hinta, eri sijoittelu). Neliölevyllä tai kun osat saa kääntää "
+             "90°, vain kuva kääntyy.",
     )
 
     # Pick which packing to draw: the alternate re-nest when turned, else primary.
@@ -174,7 +176,7 @@ def _render_layout(active: dict, parts: list, key_suffix: str = "") -> None:
         sheets = active["_sheets"]
         sw, sh = active["_sw"], active["_sh"]
         eff_w, eff_h = active["_eff_w"], active["_eff_h"]
-        svg_rotate = rotate and not alt  # square sheet: rotate the picture only
+        svg_rotate = rotate and not alt  # no re-nest: rotate the picture only
 
     total_sheets = sum(s.count for s in sheets)
     st.markdown(f"**Sijoittelu** — {total_sheets} levyä")

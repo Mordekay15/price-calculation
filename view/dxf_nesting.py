@@ -85,7 +85,7 @@ def render(data: dict) -> None:
     rc1, rc2, rc3 = st.columns(3)
     rot_label = rc1.selectbox("Sallitut kierrot", list(_ROTATIONS.keys()), key="dxf_rot")
     rotations = _ROTATIONS[rot_label]
-    time_limit = int(rc2.number_input("Sparrow-aikaraja / levy (s)", min_value=1,
+    time_limit = int(rc2.number_input("Sparrow-aikaraja / ajo (s)", min_value=1,
                                       value=8, step=1, key="dxf_sparrow_t"))
     seed = int(rc3.number_input("Siemen (seed)", min_value=0, value=0, step=1,
                                 key="dxf_sparrow_seed"))
