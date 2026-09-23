@@ -59,7 +59,7 @@ _JOIN_TOL_MM = 0.05
 
 # Entity types that carry geometry in this first version. Anything else is
 # counted but not turned into a contour.
-SUPPORTED_TYPES = ("LWPOLYLINE", "POLYLINE", "LINE", "ARC", "CIRCLE")
+SUPPORTED_TYPES = ("LWPOLYLINE", "POLYLINE", "LINE", "ARC", "CIRCLE", "SPLINE", "ELLIPSE")
 
 # Layer-name fragments that mark a layer as *not a cut* — bend lines, tangent
 # lines, centre marks, dimensions, text, frames. Their geometry is still counted
@@ -492,8 +492,7 @@ def inspect_dxf(data: bytes, name: str = "drawing.dxf") -> InspectionReport:
             continue
         # Bend / tangent / centre-mark / annotation geometry is counted above and
         # kept for drawing, but must not become a part or hole contour.
-        #if _is_construction_layer(layer):
-        if False:
+        if _is_construction_layer(layer):
             extracted = _entity_polyline(entity, factor)
             if extracted is not None and len(extracted[0]) >= 2:
                 construction.append(extracted[0])

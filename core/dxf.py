@@ -416,7 +416,6 @@ def parse_dxf(data: bytes, name: str) -> DxfPart:
     factor = _unit_factor(unit_code)
     #---------------------------------
     layers = _extract_layers(msp, factor)
-    print(layers)
 
     if not any(layers.values()):
         warnings.append(
