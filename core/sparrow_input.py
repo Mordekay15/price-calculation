@@ -75,6 +75,10 @@ DEFAULT_ORIENTATIONS: tuple[float, ...] = (0.0, 90.0, 180.0, 270.0)
 # round-off once the JSON is parsed by the Rust solver.
 _MIN_VERTEX_GAP_MM = 1e-4
 
+# How far (mm) a construction line may stick out of its part's bounding box and
+# still be drawn with the part (bend lines often end exactly on the outline).
+_CONSTRUCTION_BBOX_TOL_MM = 0.5
+
 
 Point = tuple[float, float]
 
@@ -197,7 +201,6 @@ def parts_from_report(
     """
     stem = part_id_prefix or _stem(report.name)
     outer_parts = report.parts
-    single = len(outer_parts) == 1
     parts: list[SparrowPart] = []
     for k, part in enumerate(outer_parts):
         holes = _holes_of(part, report)
@@ -210,26 +213,32 @@ def parts_from_report(
             dxf=report.name,
             width_mm=part.width_mm,
             height_mm=part.height_mm,
-            construction=_construction_of(part, report, single),
+            construction=_construction_of(part, report),
         ))
     return parts
 
 
-def _construction_of(part: Contour, report: InspectionReport, single: bool) -> list[list[Point]]:
+def _construction_of(part: Contour, report: InspectionReport) -> list[list[Point]]:
     """Bend/tangent/centre-mark lines that belong to this part.
 
-    With a single part every construction line is attached to it; otherwise a
-    line goes to the part whose outline contains the line's centroid.
+    A line belongs to the part when it lies within the part's bounding box and
+    its centroid is inside the outline. This holds even for a single-part file,
+    so a whole drawing sheet (frame, title block, text, dimensions) around the
+    part is never carried onto every placed copy.
     """
-    lines = [list(l) for l in report.construction_lines if len(l) >= 2]
-    if single:
-        return lines
+    x0, y0, x1, y1 = part.bbox
+    tol = _CONSTRUCTION_BBOX_TOL_MM
     out: list[list[Point]] = []
-    for line in lines:
+    for line in report.construction_lines:
+        if len(line) < 2:
+            continue
+        if any(x < x0 - tol or x > x1 + tol or y < y0 - tol or y > y1 + tol
+               for x, y in line):
+            continue
         cx = sum(x for x, _ in line) / len(line)
         cy = sum(y for _, y in line) / len(line)
         if _point_in_polygon((cx, cy), part.points):
-            out.append(line)
+            out.append(list(line))
     return out
 
 
