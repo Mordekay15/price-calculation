@@ -199,11 +199,17 @@ def _pack_best_orientation(
         )
         return pack, ew, eh, cw, ch
 
+    # Sparrow's fixed strip height is the sheet's short side; the strip runs
+    # along the long side (listed first, so it also wins a tie).
+    long_side, short_side = max(sw, sh), min(sw, sh)
     if sw == sh or _quarter_turn_free(parts):
-        options = [_try(sw, sh)]
+        options = [_try(long_side, short_side)]
     else:
         with ThreadPoolExecutor(max_workers=2) as pool:
-            options = list(pool.map(lambda d: _try(*d), [(sw, sh), (sh, sw)]))
+            options = list(pool.map(
+                lambda d: _try(*d),
+                [(long_side, short_side), (short_side, long_side)],
+            ))
 
     ok = [o for o in options if o[0].ok]
     if not ok:
