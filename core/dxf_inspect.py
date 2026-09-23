@@ -81,6 +81,23 @@ def _is_construction_layer(name: str) -> bool:
     low = (name or "").lower()
     return any(kw in low for kw in _CONSTRUCTION_LAYER_KEYWORDS)
 
+
+# Linetypes that are drawn solid. Anything else (DOT, DASHED, HIDDEN, CENTER,
+# PHANTOM, …) marks reference / hidden / centre geometry, which is never a cut.
+_SOLID_LINETYPES = ("", "CONTINUOUS", "BYBLOCK")
+
+
+def _is_non_cut_linetype(entity, doc) -> bool:
+    """True when the entity's effective linetype is not solid (e.g. dotted)."""
+    ltype = (getattr(entity.dxf, "linetype", "") or "BYLAYER").upper()
+    if ltype == "BYLAYER":
+        layer_name = getattr(entity.dxf, "layer", "0") or "0"
+        try:
+            ltype = (doc.layers.get(layer_name).dxf.linetype or "").upper()
+        except Exception:  # noqa: BLE001 — missing layer table entry: assume solid
+            return False
+    return ltype not in _SOLID_LINETYPES
+
 # Self-intersection is an O(n²) check; skip (and warn) above this many edges so a
 # densely flattened contour can never stall the inspection.
 _SELF_INTERSECT_EDGE_CAP = 3000
@@ -489,6 +506,10 @@ def inspect_dxf(data: bytes, name: str = "drawing.dxf") -> InspectionReport:
         report.layer_counts[layer] = report.layer_counts.get(layer, 0) + 1
 
         if etype not in SUPPORTED_TYPES:
+            continue
+        # Dotted / dashed / hidden geometry is reference, not a cut: counted
+        # above, but neither nested nor drawn.
+        if _is_non_cut_linetype(entity, doc):
             continue
         # Bend / tangent / centre-mark / annotation geometry is counted above and
         # kept for drawing, but must not become a part or hole contour.
