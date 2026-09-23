@@ -400,7 +400,9 @@ def parse_dxf(data: bytes, name: str) -> DxfPart:
     except Exception as exc:  # noqa: BLE001 — keep the app alive on anything
         return DxfPart(name=name, warnings=[f"Odottamaton virhe DXF:ää luettaessa: {exc}"])
 
-    msp = doc.modelspace()
+    msp = doc.modelspace() # get the model of dxf
+
+    #-----------------under question-------------
     texts = _extract_texts(msp)
 
     unit_code = int(getattr(doc, "units", 0) or 0)
@@ -412,6 +414,7 @@ def parse_dxf(data: bytes, name: str) -> DxfPart:
             unit_from_text = True
 
     factor = _unit_factor(unit_code)
+    #---------------------------------
     layers = _extract_layers(msp, factor)
 
     if not any(layers.values()):

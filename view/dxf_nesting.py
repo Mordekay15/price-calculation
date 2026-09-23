@@ -117,12 +117,15 @@ def render(data: dict) -> None:
     # ── Group by material + thickness (or per part) ─────────────────────────────
     groups: dict[tuple, list[dict]] = {}
     for prod in ready:
-        key = (prod["material"], prod["thickness"], prod["id"]) \
-            if nest_mode == "separate" else (prod["material"], prod["thickness"])
+        if nest_mode == "separate":
+            key = (prod["material"], prod["thickness"], prod["id"])
+        else:
+            key = (prod["material"], prod["thickness"])
         groups.setdefault(key, []).append(prod)
+    # ─────────────────────────────
 
     st.divider()
-    st.markdown("**Levyn käyttö — mikä levykoko on edullisin**")
+    st.markdown("**Levyn käyttö**")
 
     cache: dict = st.session_state.setdefault("dxf_sparrow_cache", {})
     if st.button("Laske levykäyttö (Sparrow)", key="dxf_sparrow_run"):

@@ -106,7 +106,7 @@ class SparrowResult:
 
 # ── Executable discovery ─────────────────────────────────────────────────────
 
-def find_executable(executable: str | os.PathLike | None = None) -> str | None:
+def find_executable(executable: str | os.PathLike | None = None) -> str | None: #in run_sparrow
     """Resolve the Sparrow binary path, or None if it can't be found.
 
     Order: explicit argument → ``$SPARROW_BIN`` → bundled ``bin/sparrow`` in the
@@ -252,7 +252,7 @@ def run_sparrow(
 
 # ── Result assembly ──────────────────────────────────────────────────────────
 
-def _collect_result(job_path: Path, proc, requested: dict[int, int]) -> SparrowResult:
+def _collect_result(job_path: Path, proc, requested: dict[int, int]) -> SparrowResult: #in run_sparrow
     stdout, stderr = proc.stdout or "", proc.stderr or ""
     total_req = sum(requested.values())
 
@@ -362,7 +362,7 @@ def _collect_result(job_path: Path, proc, requested: dict[int, int]) -> SparrowR
     )
 
 
-def _requested_counts(instance: dict) -> dict[int, int]:
+def _requested_counts(instance: dict) -> dict[int, int]: # in run_sparrow
     counts: dict[int, int] = {}
     for item in instance.get("items", []):
         try:
@@ -372,7 +372,7 @@ def _requested_counts(instance: dict) -> dict[int, int]:
     return counts
 
 
-def _read_solution(solution: dict) -> tuple[dict[int, int], dict]:
+def _read_solution(solution: dict) -> tuple[dict[int, int], dict]: #in collect_result
     """Extract placed-item counts and headline stats from a Sparrow output JSON.
 
     The solver's output is the instance echoed back plus a ``solution`` block:
@@ -397,7 +397,7 @@ def _read_solution(solution: dict) -> tuple[dict[int, int], dict]:
     return dict(counter), meta
 
 
-def _classify_failure(stderr: str, stdout: str) -> tuple[RunStatus, str]:
+def _classify_failure(stderr: str, stdout: str) -> tuple[RunStatus, str]:#in collect_result
     """Map Sparrow's error output to a status + human message.
 
     Sparrow reports failures with anyhow, printing ``Error: <message>`` followed
@@ -424,7 +424,7 @@ def _classify_failure(stderr: str, stdout: str) -> tuple[RunStatus, str]:
     return RunStatus.ERROR, err or "Sparrow päättyi virheeseen."
 
 
-def _error_message(stderr: str) -> str:
+def _error_message(stderr: str) -> str: #in classify_failure
     """Pull the anyhow top-level ``Error: <msg>`` out of stderr, past backtraces."""
     lines = (stderr or "").splitlines()
     for line in lines:
@@ -440,7 +440,7 @@ def _error_message(stderr: str) -> str:
     return ""
 
 
-def _is_backtrace_frame(line: str) -> bool:
+def _is_backtrace_frame(line: str) -> bool: #in error_message
     """True for a stack-backtrace frame line like ``3: some::function`` or ``at …``."""
     if line.startswith("at "):
         return True
@@ -448,68 +448,8 @@ def _is_backtrace_frame(line: str) -> bool:
     return head.isdigit()
 
 
-def _text(x) -> str:
+def _text(x) -> str: #in run_sparrow
     if x is None:
         return ""
     return x if isinstance(x, str) else x.decode("utf-8", "replace")
 
-
-# ── CLI: run Sparrow on an instance file without Streamlit ────────────────────
-
-def _main(argv: list[str] | None = None) -> int:
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Run Sparrow on a Sparrow/jagua-rs instance JSON file."
-    )
-    parser.add_argument("input", help="Path to the instance JSON file.")
-    parser.add_argument("--exe", default=None, help="Path to the sparrow binary.")
-    parser.add_argument("-t", "--time-limit", type=int, default=10)
-    parser.add_argument("-s", "--seed", type=int, default=0)
-    parser.add_argument("--no-early-termination", action="store_true")
-    parser.add_argument("--workers", type=int, default=None)
-    parser.add_argument("--out-dir", default=None,
-                        help="Where to copy final_*.svg / final_*.json (default: cwd).")
-    parser.add_argument("--keep-job-dir", action="store_true")
-    args = parser.parse_args(argv)
-
-    with open(args.input, encoding="utf-8") as fh:
-        instance = json.load(fh)
-
-    result = run_sparrow(
-        instance,
-        executable=args.exe,
-        time_limit_sec=args.time_limit,
-        seed=args.seed,
-        early_termination=not args.no_early_termination,
-        workers=args.workers,
-        keep_job_dir=args.keep_job_dir,
-    )
-
-    print(f"status:    {result.status.value}")
-    print(f"message:   {result.message}")
-    print(f"requested: {result.requested_counts} (total {result.total_requested})")
-    print(f"placed:    {result.placed_counts} (total {result.total_placed})")
-    if result.strip_width is not None:
-        print(f"strip:     width {result.strip_width}, height {result.strip_height}")
-    if result.density is not None:
-        print(f"density:   {result.density}")
-
-    # write the outputs out so the checkpoint can see final_*.svg / final_*.json
-    out_dir = Path(args.out_dir) if args.out_dir else Path.cwd()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    name = instance.get("name", "instance")
-    if result.svg is not None:
-        (out_dir / f"final_{name}.svg").write_text(result.svg, encoding="utf-8")
-        print(f"wrote:     {out_dir / f'final_{name}.svg'}")
-    if result.solution is not None:
-        (out_dir / f"final_{name}.json").write_text(
-            json.dumps(result.solution, indent=2), encoding="utf-8"
-        )
-        print(f"wrote:     {out_dir / f'final_{name}.json'}")
-
-    return 0 if result.ok else 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(_main())
