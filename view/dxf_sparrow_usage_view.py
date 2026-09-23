@@ -77,6 +77,11 @@ def render_group_sparrow(
 
     if cheapest_idx is None:
         st.warning("Osat eivät mahtuneet millekään hinnoitellulle levykoolle.")
+        # Show why each size failed — a Sparrow error (e.g. a broken binary)
+        # otherwise looks exactly like "the parts are too big".
+        reasons = {r.get("_reason") for r in rows if r.get("_reason")}
+        if reasons:
+            st.caption("Syy: " + " · ".join(sorted(reasons)))
         return None, None
 
     # Default to the cheapest; let the user click a (valid) row to override.

@@ -56,8 +56,11 @@ class RunStatus(str, Enum):
     ERROR = "error"
 
 
-# Names the runner will look for on PATH when no explicit path is given.
-_EXECUTABLE_NAMES = ("sparrow", "sparrow.exe")
+# Names the runner will look for on PATH when no explicit path is given. On
+# Windows only the .exe is considered: bin/ also ships the Linux build as
+# `bin/sparrow`, and Windows reports any existing file as "executable", so
+# picking it would make every run fail with "not a valid Win32 application".
+_EXECUTABLE_NAMES = ("sparrow.exe",) if os.name == "nt" else ("sparrow", "sparrow.exe")
 # Environment variable that can point directly at the binary.
 _ENV_VAR = "SPARROW_BIN"
 
