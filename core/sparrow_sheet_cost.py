@@ -46,6 +46,7 @@ def compute_options_sparrow(
     seed: int = 0,
     time_limit_sec: int = 8,
     pieces_kg_override: float | None = None,
+    on_progress=None,
 ) -> dict:
     """Compare every priced sheet size for one group, nesting with Sparrow.
 
@@ -61,6 +62,11 @@ def compute_options_sparrow(
     summary uses) so the summary total reconciles exactly with the sheet total —
     otherwise the Sparrow parser's slightly different bounding box makes the two
     disagree by a fraction of a percent.
+
+    ``on_progress``, if given, receives progress events for a UI:
+    ``on_progress("size", index=i, count=n, w=sw, h=sh)`` before each sheet size
+    and ``on_progress("sheet", w=draw_w, h=draw_h, placed=p, total=t)`` each
+    time a sheet layout is settled in one orientation.
     """
     n_pieces = sum(int(getattr(p, "quantity", 1)) for p in parts)
     if not parts or n_pieces <= 0:
@@ -90,14 +96,16 @@ def compute_options_sparrow(
     separation = float(rankavali_mm) if rankavali_mm else None
 
     rows = []
-    for _size_label, sw, sh, price_per_tonne in candidates:
+    for index, (_size_label, sw, sh, price_per_tonne) in enumerate(candidates):
+        if on_progress is not None:
+            on_progress("size", index=index, count=len(candidates), w=sw, h=sh)
         # Try the sheet both ways round (portrait / landscape) and keep the
         # tighter fit — the same as rotating the whole nest 90°, so an elongated
         # part is not forced to run along the wrong sheet axis.
         best, alt = _pack_best_orientation(
             parts, sw, sh, long_side_clamp_mm,
             run_fn=run_fn, seed=seed, time_limit_sec=time_limit_sec,
-            separation=separation,
+            separation=separation, on_progress=on_progress,
         )
         pack, eff_w, eff_h, draw_w, draw_h = best
         if not pack.ok:
@@ -159,7 +167,8 @@ def compute_options_sparrow(
 
 
 def _pack_best_orientation(
-    parts, sw, sh, clamp, *, run_fn, seed, time_limit_sec, separation
+    parts, sw, sh, clamp, *, run_fn, seed, time_limit_sec, separation,
+    on_progress=None,
 ):
     """Pack the sheet in both orientations; return ``(best, alt)``.
 
@@ -179,9 +188,14 @@ def _pack_best_orientation(
     """
     def _try(cw, ch):
         ew, eh = _effective_sheet(cw, ch, clamp)
+        on_sheet = None
+        if on_progress is not None:
+            def on_sheet(placed, total):
+                on_progress("sheet", w=cw, h=ch, placed=placed, total=total)
         pack = greedy_fixed_sheets(
             parts, ew, eh, run_fn=run_fn, seed=seed,
             time_limit_sec=time_limit_sec, separation=separation,
+            on_sheet=on_sheet,
         )
         return pack, ew, eh, cw, ch
 

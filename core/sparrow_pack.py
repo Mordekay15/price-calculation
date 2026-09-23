@@ -111,6 +111,7 @@ def greedy_fixed_sheets(
     time_limit_sec: int = 8,
     separation: float | None = None,
     max_sheets: int = 400,
+    on_sheet=None,
 ) -> PackResult:
     """Nest ``parts`` into fixed ``sheet_w`` × ``sheet_h`` sheets with Sparrow.
 
@@ -120,6 +121,9 @@ def greedy_fixed_sheets(
     time_limit_sec, separation)`` runs the solver and returns an object with
     ``ok`` (bool) and ``solution`` (dict) — typically wrapping
     ``core.sparrow_runner.run_sparrow``.
+
+    ``on_sheet(placed, total)``, if given, is called after each sheet layout is
+    settled with the running count of placed parts — for a progress display.
 
     Returns a ``PackResult``: ``ok`` with the distinct sheet layouts (each with
     its repeat ``count``), or not-ok with a
@@ -143,6 +147,7 @@ def greedy_fixed_sheets(
                        f"({w:.0f}×{h:.0f} mm)",
             )
 
+    n_total = sum(remaining)
     sheets: list[PackedSheet] = []
     while any(q > 0 for q in remaining):
         if sum(s.count for s in sheets) >= max_sheets:
@@ -201,6 +206,8 @@ def greedy_fixed_sheets(
             _poly_area(pl.outer) - sum(_poly_area(h) for h in pl.holes) for pl in best
         )
         sheets.append(PackedSheet(best, sheet_w, sheet_h, used_area, count))
+        if on_sheet is not None:
+            on_sheet(n_total - sum(remaining), n_total)
 
     return PackResult(ok=True, sheets=sheets)
 

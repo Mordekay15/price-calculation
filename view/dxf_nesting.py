@@ -13,8 +13,13 @@ metrics, a per-sheet layout, and a price breakdown (view/dxf_sparrow_usage_view)
 
 Sparrow does the nesting, so a working Sparrow binary is required; because each
 run is slow, the analysis is computed behind a button and cached per input
-signature until something changes.
+signature until something changes. While it runs, a progress bar shows the
+sheet size being nested, the Sparrow run count, placed parts and elapsed time.
 """
+
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, wait
 
 import streamlit as st
 
@@ -109,7 +114,10 @@ def render(data: dict) -> None:
         )
         return
 
+    progress = _Progress()
+
     def run_fn(instance, *, seed, time_limit_sec, separation):
+        progress.run_started()
         return run_sparrow(
             instance, executable=exe, time_limit_sec=int(time_limit_sec),
             seed=int(seed), min_item_separation=separation,
@@ -147,14 +155,25 @@ def render(data: dict) -> None:
                 net_area_by_fid.get(p["id"], 0.0) * thickness_mm * density * int(p["qty"])
                 for p in gprods
             )
-            with st.spinner(f"Sparrow laskee: {material} · {thickness} mm…"):
-                result = compute_options_sparrow(
+            # Nest in a worker thread so this (script) thread can keep the
+            # progress bar moving; Streamlit calls stay on this thread.
+            progress.reset()
+            label = f"{material} · {thickness} mm"
+            bar = st.progress(0.0, text=f"Sparrow laskee: {label}…")
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    compute_options_sparrow,
                     lookup, material, thickness, thickness_mm, gparts,
                     run_fn=run_fn, margin_pct=margin_pct,
                     long_side_clamp_mm=long_side_clamp_mm,
                     rankavali_mm=rankavali_mm, seed=seed, time_limit_sec=time_limit,
-                    pieces_kg_override=pieces_kg,
+                    pieces_kg_override=pieces_kg, on_progress=progress.event,
                 )
+                while not wait([future], timeout=0.5).done:
+                    value, text = progress.snapshot()
+                    bar.progress(value, text=f"{label} — {text}")
+                result = future.result()
+            bar.empty()
             cache[_sig(gkey, gprods, long_side_clamp_mm, rankavali_mm, rotations,
                        time_limit, seed, margin_pct)] = {
                 "result": result, "parts": gparts, "areas": net_area_by_fid,
@@ -239,6 +258,60 @@ def _poly_area(points) -> float:
         x2, y2 = points[(i + 1) % n]
         s += x1 * y2 - x2 * y1
     return abs(s) / 2.0
+
+
+class _Progress:
+    """Nesting progress, written by the Sparrow worker thread, read by the UI.
+
+    The bar moves per sheet size; within a size it follows the placed parts.
+    The per-sheet search (several Sparrow runs before the first sheet is
+    settled) places nothing yet, so each run also eases the bar forward a
+    little — it never sits still while Sparrow is working.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.reset()
+
+    def reset(self) -> None:
+        with self._lock:
+            self._start = time.monotonic()
+            self._runs = 0
+            self._size_index, self._size_count, self._size = 0, 1, ""
+            self._size_runs = 0
+            self._placed: dict[tuple, tuple[int, int]] = {}
+
+    def run_started(self) -> None:
+        with self._lock:
+            self._runs += 1
+            self._size_runs += 1
+
+    def event(self, kind: str, **kw) -> None:
+        with self._lock:
+            if kind == "size":
+                self._size_index, self._size_count = kw["index"], kw["count"]
+                self._size = f"{kw['w']}×{kw['h']}"
+                self._size_runs = 0
+                self._placed = {}
+            elif kind == "sheet":
+                self._placed[(kw["w"], kw["h"])] = (kw["placed"], kw["total"])
+
+    def snapshot(self) -> tuple[float, str]:
+        """``(bar value 0–1, status text)``."""
+        with self._lock:
+            done = min((p / t for p, t in self._placed.values() if t), default=0.0)
+            within = max(done, min(0.9, 1 - 0.85 ** self._size_runs))
+            value = min(0.99, (self._size_index + within) / self._size_count)
+            text = (
+                f"levykoko {self._size} ({self._size_index + 1}/{self._size_count})"
+                f" · Sparrow-ajo {self._runs}"
+            )
+            if self._placed:
+                placed = min(p for p, _ in self._placed.values())
+                total = next(iter(self._placed.values()))[1]
+                text += f" · sijoitettu {placed}/{total} kpl"
+            text += f" · {time.monotonic() - self._start:.0f} s"
+        return value, text
 
 
 def _sig(gkey, products, clamp, rankavali, rotations, time_limit, seed, margin_pct) -> str:
