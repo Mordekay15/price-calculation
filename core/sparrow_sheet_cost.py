@@ -51,7 +51,7 @@ def compute_options_sparrow(
     ``quantity``, ``allowed_orientations``, ``part_id``, ``width_mm``,
     ``height_mm``, ``shape_dict()``). Returns the same dict shape as
     ``core.sheet_usage.compute_options``: ``rows`` (each with ``_sheets`` set to
-    the ``PackedSheet`` list), ``n_pieces``, ``pieces_kg``, ``has_pieces``,
+    the distinct ``PackedSheet`` layouts, each with a repeat ``count``), ``n_pieces``, ``pieces_kg``, ``has_pieces``,
     ``has_candidates``.
 
     ``pieces_kg_override`` sets the total piece weight used to spread the sheet
@@ -103,9 +103,8 @@ def compute_options_sparrow(
             continue
 
         sheets_needed = pack.sheets_needed
-        used_area = sum(s.used_area for s in pack.sheets)
         capacity = sheets_needed * eff_w * eff_h
-        utilization = (used_area / capacity) if capacity else 0.0
+        utilization = (pack.used_area / capacity) if capacity else 0.0
 
         sheet_weight_kg = sw * sh * thickness_mm * density_for_material(material)
         sheet_kg = sheet_weight_kg * sheets_needed
@@ -189,9 +188,8 @@ def _pack_best_orientation(
 
     def _key(o):
         pack, ew, eh = o[0], o[1], o[2]
-        used = sum(s.used_area for s in pack.sheets)
         cap = pack.sheets_needed * ew * eh
-        return (pack.sheets_needed, -(used / cap if cap else 0.0))
+        return (pack.sheets_needed, -(pack.used_area / cap if cap else 0.0))
 
     best = min(ok, key=_key)
     alt = next((o for o in ok if o is not best), None)
@@ -203,7 +201,6 @@ def _alt_layout(alt) -> dict | None:
     if alt is None:
         return None
     pack, ew, eh, dw, dh = alt
-    used = sum(s.used_area for s in pack.sheets)
     cap = pack.sheets_needed * ew * eh
     return {
         "_sheets": pack.sheets,
@@ -212,7 +209,7 @@ def _alt_layout(alt) -> dict | None:
         "_sw": dw,
         "_sh": dh,
         "sheets_needed": pack.sheets_needed,
-        "utilization": (used / cap) if cap else 0.0,
+        "utilization": (pack.used_area / cap) if cap else 0.0,
     }
 
 

@@ -16,10 +16,16 @@ demands, each round:
      binary itself),
   3. keep every placed part that lands fully inside the first ``sheet_w`` of
      length — that is this sheet's contents (no part straddles the cut),
-  4. subtract those from the remaining demand and start the next sheet.
+  4. repeat that exact layout for as many further sheets as the remaining
+     demand still covers (100 parts at 25 per sheet → one Sparrow run, one
+     layout ×4) — re-running Sparrow for an identical demand would only
+     reproduce the same sheet,
+  5. subtract those from the remaining demand and start the next sheet; only a
+     smaller leftover (a different part mix) triggers a new Sparrow run.
 
 Rounds repeat until every part is placed or a part cannot fit the sheet at all.
-The result is a list of ``PackedSheet`` with real placements (rotation +
+The result is a list of distinct ``PackedSheet`` layouts, each with a
+``count`` of identical copies, with real placements (rotation +
 translation) and true-area utilisation, ready to price and draw.
 
 The module is deliberately free of ezdxf / Streamlit: parts are passed in as
@@ -55,12 +61,17 @@ class Placed:
 
 @dataclass
 class PackedSheet:
-    """One fixed sheet with the parts nested onto it."""
+    """One fixed sheet layout with the parts nested onto it.
+
+    ``count`` is how many identical sheets use this layout; ``used_area`` is
+    for a single sheet.
+    """
 
     placements: list[Placed]
     sheet_w: float
     sheet_h: float
     used_area: float                # summed true part area (holes subtracted)
+    count: int = 1
 
     @property
     def utilization(self) -> float:
@@ -78,7 +89,12 @@ class PackResult:
 
     @property
     def sheets_needed(self) -> int:
-        return len(self.sheets)
+        return sum(s.count for s in self.sheets)
+
+    @property
+    def used_area(self) -> float:
+        """Summed true part area over every physical sheet."""
+        return sum(s.used_area * s.count for s in self.sheets)
 
 
 def greedy_fixed_sheets(
@@ -101,7 +117,8 @@ def greedy_fixed_sheets(
     ``ok`` (bool) and ``solution`` (dict) — typically wrapping
     ``core.sparrow_runner.run_sparrow``.
 
-    Returns a ``PackResult``: ``ok`` with the per-sheet layout, or not-ok with a
+    Returns a ``PackResult``: ``ok`` with the distinct sheet layouts (each with
+    its repeat ``count``), or not-ok with a
     reason (a part too large for the sheet, the solver failed, or the sheet
     count blew past ``max_sheets``).
     """
@@ -124,7 +141,7 @@ def greedy_fixed_sheets(
 
     sheets: list[PackedSheet] = []
     while any(q > 0 for q in remaining):
-        if len(sheets) >= max_sheets:
+        if sum(s.count for s in sheets) >= max_sheets:
             return PackResult(ok=False, sheets=sheets, reason="liian monta levyä")
 
         active = [i for i, q in enumerate(remaining) if q > 0]
@@ -164,7 +181,16 @@ def greedy_fixed_sheets(
                 ok=False, sheets=sheets,
                 reason="osat eivät mahtuneet levylle annetulla rankavälillä",
             )
-        sheets.append(PackedSheet(kept, sheet_w, sheet_h, used_area))
+
+        # Reuse this layout while the remaining demand still covers its part
+        # mix — Sparrow would only reproduce the same sheet.
+        per_sheet: dict[int, int] = {}
+        for pl in kept:
+            per_sheet[pl.part_index] = per_sheet.get(pl.part_index, 0) + 1
+        repeats = min(remaining[i] // n for i, n in per_sheet.items())
+        for i, n in per_sheet.items():
+            remaining[i] -= repeats * n
+        sheets.append(PackedSheet(kept, sheet_w, sheet_h, used_area, 1 + repeats))
 
     return PackResult(ok=True, sheets=sheets)
 

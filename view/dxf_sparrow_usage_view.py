@@ -138,7 +138,10 @@ def render_group_sparrow(
 
 
 def _render_layout(active: dict, parts: list, key_suffix: str = "") -> None:
-    """Legend + one SVG per packed sheet for the active sheet size.
+    """Legend + one SVG per distinct sheet layout for the active sheet size.
+
+    Identical sheets are drawn once with a "×N" count and a sheet-number range
+    (e.g. "Levy 1–4 · ×4") instead of repeating the same picture.
 
     The "turn" toggle shows the *other* orientation's real re-nest (Sparrow
     packed the turned sheet separately) when one exists; for a square sheet with
@@ -173,7 +176,8 @@ def _render_layout(active: dict, parts: list, key_suffix: str = "") -> None:
         eff_w, eff_h = active["_eff_w"], active["_eff_h"]
         svg_rotate = rotate and not alt  # square sheet: rotate the picture only
 
-    st.markdown(f"**Sijoittelu** — {len(sheets)} levyä")
+    total_sheets = sum(s.count for s in sheets)
+    st.markdown(f"**Sijoittelu** — {total_sheets} levyä")
 
     # Which part indices actually appear, for a compact legend.
     used_indices = sorted({pl.part_index for s in sheets for pl in s.placements})
@@ -197,6 +201,17 @@ def _render_layout(active: dict, parts: list, key_suffix: str = "") -> None:
     target_px = 460
     scale = target_px / max(sw, sh)
 
+    # Sheet-number label per layout: "Levy 3", or "Levy 1–4 · ×4" for repeats.
+    labels = []
+    first = 1
+    for sheet in sheets:
+        last = first + sheet.count - 1
+        labels.append(
+            f"Levy {first}" if sheet.count == 1
+            else f"Levy {first}–{last} · ×{sheet.count}"
+        )
+        first = last + 1
+
     cols_per_row = min(4, len(sheets))
     for row_start in range(0, len(sheets), cols_per_row):
         row = sheets[row_start:row_start + cols_per_row]
@@ -204,7 +219,7 @@ def _render_layout(active: dict, parts: list, key_suffix: str = "") -> None:
         for col_idx, sheet in enumerate(row):
             with cols[col_idx]:
                 st.markdown(
-                    f"**Levy {row_start + col_idx + 1}** · käyttöaste "
+                    f"**{labels[row_start + col_idx]}** · käyttöaste "
                     f"{sheet.utilization * 100:.1f} %"
                 )
                 st.markdown(
