@@ -492,7 +492,8 @@ def inspect_dxf(data: bytes, name: str = "drawing.dxf") -> InspectionReport:
             continue
         # Bend / tangent / centre-mark / annotation geometry is counted above and
         # kept for drawing, but must not become a part or hole contour.
-        if _is_construction_layer(layer):
+        #if _is_construction_layer(layer):
+        if False:
             extracted = _entity_polyline(entity, factor)
             if extracted is not None and len(extracted[0]) >= 2:
                 construction.append(extracted[0])
