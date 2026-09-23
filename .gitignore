@@ -7,3 +7,6 @@ __pycache__/
 # keep the folder + its README, ignore the binaries (force-add to override).
 # /bin/*
 # !/bin/README.md
+
+# Sparrow run logs
+output/
