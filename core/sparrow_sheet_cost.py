@@ -19,6 +19,8 @@ polygon, holes, demand, allowed rotations and the mm bounding box.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from core.calculator import (
     calculate,
     density_for_material,
@@ -172,7 +174,8 @@ def _pack_best_orientation(
 
     The turned sheet is skipped when every part may turn a quarter: then its
     layout is just the first one rotated 90°, so re-nesting would only double
-    the Sparrow time.
+    the Sparrow time. Otherwise both orientations nest at the same time —
+    Sparrow's time limit is wall-clock, so the pair takes about as long as one.
     """
     def _try(cw, ch):
         ew, eh = _effective_sheet(cw, ch, clamp)
@@ -182,9 +185,11 @@ def _pack_best_orientation(
         )
         return pack, ew, eh, cw, ch
 
-    options = [_try(sw, sh)]
-    if sw != sh and not _quarter_turn_free(parts):
-        options.append(_try(sh, sw))
+    if sw == sh or _quarter_turn_free(parts):
+        options = [_try(sw, sh)]
+    else:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            options = list(pool.map(lambda d: _try(*d), [(sw, sh), (sh, sw)]))
 
     ok = [o for o in options if o[0].ok]
     if not ok:

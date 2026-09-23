@@ -14,11 +14,13 @@ demands, each round:
      injected ``run_fn`` — this module never launches the binary itself) to
      nest ``n`` parts in a strip as high as the sheet (``sheet_h``) and keeps
      the parts that land fully inside the first ``sheet_w`` of length (no part
-     straddles the cut). The first probe uses an area estimate; the search then
-     steps up from the best count found until a probe no longer fits all its
-     parts. Probing only about one sheet's worth matters: given the whole order
-     (say 400 parts) Sparrow spreads its effort over a long strip and the first
-     sheet comes out looser (18 parts where 25 fit),
+     straddles the cut). The first probe nests the whole remaining order: its
+     first sheet is a layout known to work, but often a loose one — Sparrow
+     spreads its effort over the long strip (400 parts: 18 on the sheet where
+     26 fit). The strip's length tells how densely Sparrow packed overall
+     (parts × ``sheet_w`` / strip length per sheet), so the next probe asks for
+     that many, focused on a single sheet: if they fit, it keeps stepping up
+     (+1, +2, +4 …); after the first miss it bisects down to the best count,
   2. repeat that sheet layout for as many further sheets as the remaining
      demand still covers (100 parts at 25 per sheet → one layout ×4) —
      re-running Sparrow for an identical demand would only reproduce the sheet,
@@ -153,8 +155,7 @@ def greedy_fixed_sheets(
             )
 
         total = sum(remaining)
-        first = min(total, _area_estimate(parts, remaining, sheet_w * sheet_h))
-        err, best = probe(first)
+        err, best, strip_len = probe(total)
         if err is not None:
             return PackResult(ok=False, sheets=sheets, reason=err)
         if not best:
@@ -166,22 +167,27 @@ def greedy_fixed_sheets(
             )
 
         # lo: most parts seen on one sheet; hi: smallest probe that didn't fit
-        # entirely (None while every probe fitted). Gallop up, then bisect.
-        lo = len(best)
-        hi = first if lo < first else None
-        step = 1
+        # entirely (None until one misses). Try the strip-density estimate,
+        # step up from there, then bisect.
+        lo, hi, step = len(best), None, 1
+        guess = int(total * sheet_w / strip_len) if strip_len else 0
         while lo < total and (hi is None or hi - lo > 1):
-            n = min(total, lo + step if hi is None else min(lo + step, (lo + hi) // 2))
-            if hi is not None and n >= hi:
+            stepping = False
+            if guess > lo:
+                n, guess = min(total, guess), 0
+            elif hi is None:
+                n, stepping = min(total, lo + step), True
+            else:
                 n = (lo + hi) // 2
-            err, kept = probe(n)
+            err, kept, _ = probe(n)
             if err is not None:
                 break  # keep the best sheet found so far
             if len(kept) > lo:
                 lo, best = len(kept), kept
             if len(kept) < n:
                 hi = n
-            step *= 2
+            elif stepping:
+                step *= 2
 
         per_sheet: dict[int, int] = {}
         for pl in best:
@@ -216,20 +222,13 @@ def _mix(remaining: list[int], n: int) -> dict[int, int]:
     return {i: c for i, c in mix.items() if c > 0}
 
 
-def _area_estimate(parts: list, remaining: list[int], sheet_area: float) -> int:
-    """Parts per sheet if the remaining mix tiled the sheet with no waste."""
-    total = sum(remaining)
-    mix_area = sum(_poly_area(parts[i].outer) * q for i, q in enumerate(remaining))
-    mean = mix_area / total if total else 0.0
-    return max(1, int(sheet_area / mean)) if mean > 0 else total
-
-
 def _probe(parts: list, demand: dict[int, int], sheet_w: float, sheet_h: float,
            *, run_fn, seed, time_limit_sec, separation):
-    """Nest ``demand`` with Sparrow; return ``(error, placed_on_sheet)``.
+    """Nest ``demand`` with Sparrow; return ``(error, placed_on_sheet, strip_len)``.
 
     ``error`` is None on success; the list holds the parts that land fully
-    inside the first ``sheet_w`` of the strip.
+    inside the first ``sheet_w`` of the strip; ``strip_len`` is the length of
+    the whole nested strip (None if the solver doesn't report it).
     """
     active = list(demand)
     instance = _build_instance(parts, demand, sheet_h)
@@ -237,7 +236,7 @@ def _probe(parts: list, demand: dict[int, int], sheet_w: float, sheet_h: float,
         instance, seed=seed, time_limit_sec=time_limit_sec, separation=separation
     )
     if not getattr(res, "ok", False) or getattr(res, "solution", None) is None:
-        return getattr(res, "message", "") or "Sparrow-ajo epäonnistui", []
+        return getattr(res, "message", "") or "Sparrow-ajo epäonnistui", [], None
 
     left = dict(demand)
     kept: list[Placed] = []
@@ -256,7 +255,7 @@ def _probe(parts: list, demand: dict[int, int], sheet_w: float, sheet_h: float,
         constr_t = [_rot(c, rot, trans) for c in getattr(part, "construction", [])]
         kept.append(Placed(orig_i, part.part_id, rot, trans, outer_t, holes_t, constr_t))
         left[orig_i] -= 1
-    return None, kept
+    return None, kept, getattr(res, "strip_width", None)
 
 
 # ── instance building ────────────────────────────────────────────────────────
