@@ -1,39 +1,39 @@
 """
 view/dxf_nesting.py
 ===================
-DXF nesting section (orchestrator) — Sparrow backend, sheet-usage design.
+DXF tab — Sparrow shape nesting with the same sheet-usage design as the
+manual calculator.
 
-The user uploads one or more DXF files — each file is one product — and
-configures each on its card (view/dxf_part_view.py). The parts are grouped by
-material + thickness, and for each group we answer "which priced sheet size is
-cheapest": Sparrow nests the real shapes onto fixed sheets one at a time
-(core/sparrow_pack + core/sheet_cost), and the result is shown with the
-same design as the manual calculator — the cheapest-sheet table, headline
-metrics, a per-sheet layout, and a price breakdown (view/sheet_usage.py).
+The user uploads DXF files (one product each) and configures each part on its
+card (view/dxf_part_view.py). Parts are grouped by material + thickness and,
+for each group, Sparrow nests the real shapes on every priced sheet size
+(core/sparrow_pack.py) to find the cheapest (view/sheet_usage.py).
 
-Sparrow does the nesting, so a working Sparrow binary is required; because each
-run is slow, the analysis is computed behind a button and cached per input
-signature until something changes. While it runs, a progress bar shows the
-sheet size being nested, the Sparrow run count, placed parts and elapsed time
-(view/sparrow_progress.py).
+Sparrow runs are slow, so they happen behind a button with a progress bar
+(view/sparrow_progress.py) and the results are cached per input signature
+until something changes.
 """
+
+from dataclasses import dataclass
 
 import streamlit as st
 
-from core.calculator import (
-    build_lookup,
-    get_materials,
-    parse_thickness_mm,
-)
-from core.copper import COPPER_MATERIAL
+from core.calculator import build_lookup, parse_thickness_mm
 from core.geometry import net_area
 from core.sparrow_input import parts_from_dxf
 from core.sparrow_pack import sparrow_options
 from core.sparrow_runner import find_executable, run_sparrow
+from view.common import (
+    group_products,
+    is_ready,
+    materials_with_copper,
+    render_grand_total,
+    render_groups,
+    render_margin,
+    render_nesting_settings,
+    render_pieces_summary,
+)
 from view.dxf_part_view import render_part_config, sync_store
-from view.margin_view import render_margin
-from view.nesting_settings_view import render_nesting_settings
-from view.pieces_summary_view import render_pieces_summary
 from view.sheet_usage import draw_sparrow_layout, render_group
 from view.sparrow_progress import SparrowProgress, run_with_progress
 
@@ -41,23 +41,31 @@ _ROTATIONS: dict[str, tuple[float, ...]] = {
     "0° / 90° / 180° / 270°": (0.0, 90.0, 180.0, 270.0),
     "0° / 90°": (0.0, 90.0),
 }
+_CACHE = "dxf_sparrow_cache"  # {signature: computed group}
+
+
+@dataclass(frozen=True)
+class _Settings:
+    """Every input besides the parts that changes a Sparrow result."""
+
+    nest_mode: str
+    rankavali_mm: int
+    clamp_mm: int
+    rotations: tuple[float, ...]
+    time_limit: int
+    seed: int
+    margin_pct: float
 
 
 def render(data: dict) -> None:
     lookup = build_lookup(data)
-
     st.subheader("DXF-nestaus")
     st.caption(
         "Lataa osat DXF-tiedostoina. Ohjelma lukee kunkin osan todellisen "
         "muodon ja mitat, sijoittelee ne Sparrow-moottorilla ja vertaa, mille "
         "levykoolle osat mahtuvat edullisimmin."
     )
-
-    materials = get_materials(lookup)
-    if COPPER_MATERIAL not in materials:
-        materials = sorted([*materials, COPPER_MATERIAL])
-
-    margin_pct = render_margin("dxf_margin_pct")  # getting kate
+    margin_pct = render_margin("dxf_margin_pct")
 
     uploaded = st.file_uploader(
         "Lataa DXF-tiedostot",
@@ -66,43 +74,18 @@ def render(data: dict) -> None:
         key="dxf_uploader",
         help="Voit ladata useita tiedostoja kerralla. Jokainen tiedosto on yksi tuote.",
     )
-
     parts = sync_store(uploaded)
     if not parts:
         st.info("Lataa vähintään yksi DXF-tiedosto aloittaaksesi.")
         return
-    uploaded_by_id = {u.file_id: u for u in (uploaded or [])}
 
-    # ── Per-part cards ─────────────────────────────────────────────────────────
-    st.markdown("**Osat**")
-    products: list[dict] = []
-    for idx, (fid, part) in enumerate(parts):
-        product = render_part_config(fid, part, idx, materials, lookup)
-        if product is not None:
-            products.append(product)
-
-    # ── Placement settings ─────────────────────────────────────────────────────
-    nest_mode, rankavali_mm, long_side_clamp_mm = render_nesting_settings(
-        key_prefix="dxf",
-        separate_label="Laske jokainen osa erikseen",
-    )
-    rc1, rc2, rc3 = st.columns(3)
-    rot_label = rc1.selectbox("Sallitut kierrot", list(_ROTATIONS.keys()), key="dxf_rot")
-    rotations = _ROTATIONS[rot_label]
-    time_limit = int(rc2.number_input("Sparrow-aikaraja / ajo (s)", min_value=1,
-                                      value=8, step=1, key="dxf_sparrow_t"))
-    seed = int(rc3.number_input("Siemen (seed)", min_value=0, value=0, step=1,
-                                key="dxf_sparrow_seed"))
-
-    ready = [
-        p for p in products
-        if p["material"] and p["thickness"] and p["width"] > 0 and p["height"] > 0
-    ]
-    if not ready:
+    products = _render_part_cards(parts, materials_with_copper(lookup), lookup)
+    settings = _render_settings(margin_pct)
+    groups = group_products(products, settings.nest_mode)
+    if not groups:
         st.info("Valitse materiaali ja paksuus vähintään yhdelle osalle.")
         return
 
-    # ── Require Sparrow ─────────────────────────────────────────────────────────
     exe = find_executable()
     if exe is None:
         st.error(
@@ -112,6 +95,50 @@ def render(data: dict) -> None:
         )
         return
 
+    st.divider()
+    st.markdown("**Levyn käyttö**")
+    cache: dict = st.session_state.setdefault(_CACHE, {})
+    if st.button("Laske levykäyttö (Sparrow)", key="dxf_sparrow_run"):
+        cache.clear()
+        _run(groups, {u.file_id: u for u in uploaded}, lookup, settings, exe, cache)
+    _show(products, groups, settings, cache)
+
+
+def _render_part_cards(parts, materials: list[str], lookup: dict) -> list[dict]:
+    """One card per uploaded part; returns the configured product dicts."""
+    st.markdown("**Osat**")
+    products = []
+    for idx, (fid, part) in enumerate(parts):
+        product = render_part_config(fid, part, idx, materials, lookup)
+        if product is not None:
+            products.append(product)
+    return products
+
+
+def _render_settings(margin_pct: float) -> _Settings:
+    nest_mode, rankavali_mm, clamp_mm = render_nesting_settings(
+        key_prefix="dxf",
+        separate_label="Laske jokainen osa erikseen",
+    )
+    c1, c2, c3 = st.columns(3)
+    rot_label = c1.selectbox("Sallitut kierrot", list(_ROTATIONS), key="dxf_rot")
+    time_limit = c2.number_input("Sparrow-aikaraja / ajo (s)", min_value=1,
+                                 value=8, step=1, key="dxf_sparrow_t")
+    seed = c3.number_input("Siemen (seed)", min_value=0, value=0, step=1,
+                           key="dxf_sparrow_seed")
+    return _Settings(nest_mode, rankavali_mm, clamp_mm, _ROTATIONS[rot_label],
+                     int(time_limit), int(seed), margin_pct)
+
+
+def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
+    """Stable cache key: the group, its parts and quantities, and the settings."""
+    prod_sig = ",".join(f"{p['id']}:{p['qty']}" for p in products)
+    return f"{key}|{prod_sig}|{settings}"
+
+
+def _run(groups, uploaded_by_id: dict, lookup: dict, settings: _Settings,
+         exe, cache: dict) -> None:
+    """Nest every group with Sparrow (behind a progress bar) into ``cache``."""
     progress = SparrowProgress()
 
     def run_fn(instance, *, seed, time_limit_sec, separation):
@@ -121,91 +148,64 @@ def render(data: dict) -> None:
             seed=int(seed), min_item_separation=separation,
         )
 
-    # ── Group by material + thickness (or per part) ─────────────────────────────
-    groups: dict[tuple, list[dict]] = {}
-    for prod in ready:
-        if nest_mode == "separate":
-            key = (prod["material"], prod["thickness"], prod["id"])
-        else:
-            key = (prod["material"], prod["thickness"])
-        groups.setdefault(key, []).append(prod)
-    # ─────────────────────────────
+    for key, prods in groups.items():
+        material, thickness = key[0], key[1]
+        thickness_mm = parse_thickness_mm(thickness)
+        if thickness_mm is None:
+            continue
+        parts, areas = _parts_for_group(prods, uploaded_by_id, settings.rotations)
+        result = run_with_progress(
+            progress, f"{material} · {thickness} mm",
+            sparrow_options,
+            lookup, material, thickness, thickness_mm, parts,
+            run_fn=run_fn, margin_pct=settings.margin_pct,
+            long_side_clamp_mm=settings.clamp_mm,
+            rankavali_mm=settings.rankavali_mm, seed=settings.seed,
+            time_limit_sec=settings.time_limit,
+        )
+        cache[_sig(key, prods, settings)] = {
+            "result": result, "parts": parts, "areas": areas,
+            "thickness_mm": thickness_mm,
+        }
 
-    st.divider()
-    st.markdown("**Levyn käyttö**")
 
-    cache: dict = st.session_state.setdefault("dxf_sparrow_cache", {})
-    if st.button("Laske levykäyttö (Sparrow)", key="dxf_sparrow_run"):
-        cache.clear()
-        for gkey, gprods in groups.items():
-            material, thickness = gkey[0], gkey[1]
-            thickness_mm = parse_thickness_mm(thickness)
-            if thickness_mm is None:
-                continue
-            gparts, net_area_by_fid = _parts_for_group(gprods, uploaded_by_id, rotations)
-            result = run_with_progress(
-                progress, f"{material} · {thickness} mm",
-                sparrow_options,
-                lookup, material, thickness, thickness_mm, gparts,
-                run_fn=run_fn, margin_pct=margin_pct,
-                long_side_clamp_mm=long_side_clamp_mm,
-                rankavali_mm=rankavali_mm, seed=seed, time_limit_sec=time_limit,
-            )
-            cache[_sig(gkey, gprods, long_side_clamp_mm, rankavali_mm, rotations,
-                       time_limit, seed, margin_pct)] = {
-                "result": result, "parts": gparts, "areas": net_area_by_fid,
-                "material": material, "thickness": thickness, "thickness_mm": thickness_mm,
-            }
+def _show(products: list[dict], groups, settings: _Settings, cache: dict) -> None:
+    """Render the cached result of every group, then the parts summary."""
+    areas: dict[str, float] = {}
 
-    # ── Render cached results per group ─────────────────────────────────────────
-    grand_total_eur = 0.0
-    any_priced = False
-    cheapest_prices: dict[str, float] = {}
-    areas_by_id: dict[str, float] = {}
-    stale = False
-    for gkey, gprods in groups.items():
-        sig = _sig(gkey, gprods, long_side_clamp_mm, rankavali_mm, rotations,
-                   time_limit, seed, margin_pct)
+    def render_one(key, prods):
+        sig = _sig(key, prods, settings)
         entry = cache.get(sig)
         if entry is None:
-            stale = True
-            continue
-        areas_by_id.update(entry.get("areas", {}))
-        total, ppt = render_group(
-            entry["material"], entry["thickness"], entry["thickness_mm"],
-            entry["result"], margin_pct=margin_pct, key=f"dxf_su_select::{sig}",
-            draw_layout=lambda active, e=entry, s=sig: draw_sparrow_layout(active, e["parts"], s),
+            return None
+        areas.update(entry["areas"])
+        return render_group(
+            key[0], key[1], entry["thickness_mm"], entry["result"],
+            margin_pct=settings.margin_pct, key=f"dxf_su_select::{sig}",
+            draw_layout=lambda active: draw_sparrow_layout(active, entry["parts"], sig),
         )
-        if total is not None:
-            grand_total_eur += total
-            any_priced = True
-        if ppt is not None:
-            for gp in gprods:
-                cheapest_prices[gp["id"]] = ppt
 
-    if stale and not any_priced:
+    prices, grand_total, missing = render_groups(groups, render_one)
+    if missing and grand_total is None:
         st.info("Paina **Laske levykäyttö (Sparrow)** laskeaksesi levytarpeen ja hinnan.")
         return
-    if stale:
+    if missing:
         st.warning("Asetukset muuttuivat — laske uudelleen päivittääksesi kaikki ryhmät.")
+    render_grand_total(grand_total, len(groups))
 
-    if any_priced and len(groups) > 1:
-        st.divider()
-        st.metric("Yhdistetty edullisin yhteissumma (€)", f"{grand_total_eur:,.2f}")
-
-    render_pieces_summary(ready, cheapest_prices, from_dxf=True, areas_mm2=areas_by_id)
+    ready = [p for p in products if is_ready(p)]
+    render_pieces_summary(ready, prices, from_dxf=True, areas_mm2=areas)
 
 
 def _parts_for_group(
     products: list[dict], uploaded_by_id: dict, rotations: tuple
 ) -> tuple[list, dict[str, float]]:
-    """Build Sparrow parts for a group, plus each product's net area (mm²/piece).
+    """Sparrow parts for a group, plus each product's real area (mm²/piece).
 
-    Returns ``(parts, net_area_by_id)`` where the area is one piece's true cut
-    area (outer outline minus holes), summed over the product's contours.
+    The area is one piece's outline minus its holes, summed over its contours.
     """
     out: list = []
-    net_area_by_fid: dict[str, float] = {}
+    areas: dict[str, float] = {}
     for prod in products:
         up = uploaded_by_id.get(prod["id"])
         if up is None:
@@ -215,14 +215,5 @@ def _parts_for_group(
             allowed_orientations=rotations,
         )
         out.extend(gparts)
-        net_area_by_fid[prod["id"]] = sum(net_area(p.outer, p.holes) for p in gparts)
-    return out, net_area_by_fid
-
-
-def _sig(gkey, products, clamp, rankavali, rotations, time_limit, seed, margin_pct) -> str:
-    """Stable cache key: group + every input that changes the result."""
-    prod_sig = ",".join(f"{p['id']}:{p['qty']}" for p in products)
-    return (
-        f"{gkey}|{prod_sig}|c{clamp}|r{rankavali}|rot{rotations}"
-        f"|t{time_limit}|s{seed}|m{margin_pct}"
-    )
+        areas[prod["id"]] = sum(net_area(p.outer, p.holes) for p in gparts)
+    return out, areas

@@ -167,7 +167,6 @@ def render_part_config(
         "width":       width,
         "height":      height,
         "qty":         qty,
-        "_global_idx": idx,
     }
 
 
