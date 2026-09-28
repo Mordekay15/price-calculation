@@ -228,4 +228,4 @@ def render_pieces_summary(
     if total_cost_eur:
         m2.metric("Materiaalikustannukset yhteensä (€)", f"{total_cost_eur:,.2f}")
     st.caption("€/kpl jakaa koko levyn kustannuksen kappaleiden kesken painon mukaan.")
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.dataframe(rows, width="stretch", hide_index=True)

@@ -41,7 +41,7 @@ def render_group(
 
     event = st.dataframe(
         _table_rows(options, n_pieces, cheapest_idx),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         on_select="rerun",
         selection_mode="single-row",
@@ -177,7 +177,7 @@ def _render_breakdown(
     with st.expander("Näytä laskennan erittely"):
         st.dataframe(
             [{"Vaihe": v, "Laskenta": calc, "Arvo": val} for v, calc, val in steps],
-            use_container_width=True, hide_index=True,
+            width="stretch", hide_index=True,
         )
         if pieces_kg:
             st.caption(
