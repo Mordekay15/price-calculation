@@ -1,22 +1,6 @@
-"""
-core/sparrow.py
-===============
-Everything about the Sparrow nesting engine (the jagua-rs strip packer),
-from a DXF part to a priced sheet size. Pure Python, no Streamlit.
-
-1. Parts      ``part_from_report`` turns a DXF part (core/dxf.py) into a
-              ``SparrowPart``: cleaned outline and holes, allowed rotations.
-2. Running    ``find_executable`` / ``run_sparrow`` run the solver binary on
-              one strip instance and return the placements.
-3. Packing    ``greedy_fixed_sheets`` fills fixed W×H sheets one at a time —
-              Sparrow itself only knows an endless strip.
-4. Costing    ``sparrow_options`` prices every sheet size with it
-              (core/sheet_cost.py), trying each sheet both ways round.
-
-The solver is passed in as ``run_fn(instance, *, seed, time_limit_sec,
-separation)`` (normally a wrapper around ``run_sparrow``), so packing and
-costing can be tested without the binary.
-"""
+"""Sparrow shape nesting, from a DXF part to a priced sheet size: parts, running
+the solver, fixed-sheet packing (Sparrow only knows an endless strip) and
+costing. The solver is passed in as ``run_fn``, so tests need no binary."""
 
 from __future__ import annotations
 

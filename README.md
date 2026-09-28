@@ -16,12 +16,24 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-The DXF tab needs the Sparrow executable. See [`bin/README.md`](bin/README.md).
+The DXF tab needs the Sparrow executable (see below).
 
 Price lists are uploaded as PDFs in the sidebar (Tata Steel and Tibnor are
 detected automatically). They are saved as `price_data_<supplier>.json` next to
 the app, so re-upload only when a new monthly list arrives. Copper has no list
 price; set its €/kg in the sidebar.
+
+## Sparrow executable
+
+The DXF tab runs the [Sparrow](https://github.com/JeroenGar/sparrow) solver.
+`core/sparrow.py` looks for it in this order:
+
+1. the `SPARROW_BIN` environment variable
+2. `bin/sparrow` (Linux / macOS) or `bin/sparrow.exe` (Windows)
+3. `sparrow` / `sparrow.exe` on the `PATH`
+
+The repo ships both builds in `bin/`. For another platform, build or download
+Sparrow and set `SPARROW_BIN` or replace the file in `bin/`.
 
 ## Tests
 
@@ -32,14 +44,14 @@ pytest
 
 The tests take a few seconds. They cover pricing and copper, sheet costing and
 utilisation, the DXF reader rules (on drawings generated in the test), the
-Sparrow fixed-sheet search (with a small fake solver), the price store, and a
+Sparrow fixed-sheet search (with a small fake solver), the supplier store, and a
 smoke test of the whole page. `tests/test_sparrow.py::test_real_sparrow_binary`
 also runs the real Sparrow executable and is skipped when it is not installed.
 
 ## Deploy (Streamlit Community Cloud)
 
-1. Push the repo to GitHub, including a Linux Sparrow binary in `bin/` if the
-   DXF tab is needed (`git add -f bin/sparrow`).
+1. Push the repo to GitHub. The Linux Sparrow binary in `bin/sparrow` is
+   committed, so the DXF tab works there too.
 2. On [streamlit.io/cloud](https://streamlit.io/cloud), connect the repo. It
    installs `requirements.txt` automatically.
 
@@ -49,24 +61,27 @@ also runs the real Sparrow executable and is skipped when it is not installed.
 app.py                  page setup: sidebar, then the two tabs
 
 core/                   pure logic, no Streamlit
-  pricing.py            price lookup, materials, densities, weights, copper
-  sheet_cost.py         price every sheet size for a group (packer passed in)
+  pricing.py            price lookup, materials, thickness, densities, weight_kg, copper
+  sheet_cost.py         price every sheet size (SheetOption), grouping, per-piece cost
   rect_nesting.py       bounding-box packer (manual tab)
   sparrow.py            Sparrow: DXF part → solver run → fixed sheets → cost
   dxf.py                the DXF reader: the part that is shown, nested and priced
   geometry.py           polygon helpers (area, bbox, rotate, point-in-polygon)
-  price_store.py        the supplier list and the saved price-list JSON files
-  price_parser/         PDF price-list parsers (Tata Steel, Tibnor)
+  suppliers/            supplier list, detection, saved price lists, PDF parsers
+    cells.py            cell cleaning and thickness-range helpers for the parsers
+    tatasteel.py        Tata Steel price list
+    tibnor.py           Tibnor price list
 
 view/                   Streamlit UI
   sidebar.py            price-list upload, supplier status, copper price
   calculator_tab.py     manual tab and its product cards
   dxf_tab.py            DXF tab, its part cards and the Sparrow run
-  common.py             inputs, grouping and totals shared by both tabs
-  sheet_usage.py        the sheet-size table, metrics, breakdown and drawings
+  common.py             inputs, the per-group loop, totals, pieces summary
+  sheet_usage.py        the sheet-size table, metrics and price breakdown
+  drawing.py            every SVG: sheet layouts and the DXF part preview
   sparrow_progress.py   progress bar while Sparrow runs
 
-bin/                    the Sparrow executable (see bin/README.md)
+bin/                    the Sparrow executables (see "Sparrow executable")
 tests/                  pytest suite (see "Tests" above)
 ```
 
@@ -114,9 +129,10 @@ ring-shaped part, so keep frames on their own layer.
 
 | What you want to change | Where |
 |---|---|
-| Support a new supplier PDF | `core/price_parser/` (new parser) + `SUPPLIERS` in `core/price_store.py` |
+| Support a new supplier PDF | a parser in `core/suppliers/` + an entry in `SUPPLIERS` (`core/suppliers/__init__.py`) |
 | Densities, copper sizes or price range | `core/pricing.py` |
 | How a sheet size is priced | `core/sheet_cost.py` |
 | Which DXF layers are left out, or which drawing marks are recognised | `core/dxf.py` |
 | Sparrow settings or the fixed-sheet search | `core/sparrow.py` |
 | Inputs shared by both tabs | `view/common.py` |
+| Colours and layout drawings | `view/drawing.py` |
