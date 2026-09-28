@@ -7,7 +7,7 @@ the sheet-usage step found a price — the per-piece and batch cost, plus the
 total weight and material-cost metrics.
 
 render_pieces_summary() takes the products and the cheapest price-per-tonne per
-product id (from view/sheet_usage_view.py). The ``from_dxf`` flag switches the
+product id (from view/sheet_usage.py). The ``from_dxf`` flag switches the
 labels and the leading column: the manual calculator shows a running piece
 number ("Kappaleyhteenveto"), while the DXF page shows each part's name
 ("Osayhteenveto"). The DXF-only name column never appears on the basic

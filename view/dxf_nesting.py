@@ -9,7 +9,7 @@ material + thickness, and for each group we answer "which priced sheet size is
 cheapest": Sparrow nests the real shapes onto fixed sheets one at a time
 (core/sparrow_pack + core/sheet_cost), and the result is shown with the
 same design as the manual calculator — the cheapest-sheet table, headline
-metrics, a per-sheet layout, and a price breakdown (view/dxf_sparrow_usage_view).
+metrics, a per-sheet layout, and a price breakdown (view/sheet_usage.py).
 
 Sparrow does the nesting, so a working Sparrow binary is required; because each
 run is slow, the analysis is computed behind a button and cached per input
@@ -31,10 +31,10 @@ from core.sparrow_input import parts_from_dxf
 from core.sparrow_pack import sparrow_options
 from core.sparrow_runner import find_executable, run_sparrow
 from view.dxf_part_view import render_part_config, sync_store
-from view.dxf_sparrow_usage_view import render_group_sparrow
 from view.margin_view import render_margin
 from view.nesting_settings_view import render_nesting_settings
 from view.pieces_summary_view import render_pieces_summary
+from view.sheet_usage import draw_sparrow_layout, render_group
 from view.sparrow_progress import SparrowProgress, run_with_progress
 
 _ROTATIONS: dict[str, tuple[float, ...]] = {
@@ -171,10 +171,10 @@ def render(data: dict) -> None:
             stale = True
             continue
         areas_by_id.update(entry.get("areas", {}))
-        total, ppt = render_group_sparrow(
+        total, ppt = render_group(
             entry["material"], entry["thickness"], entry["thickness_mm"],
-            entry["result"], entry["parts"], long_side_clamp_mm=long_side_clamp_mm,
-            margin_pct=margin_pct, key_suffix=sig,
+            entry["result"], margin_pct=margin_pct, key=f"dxf_su_select::{sig}",
+            draw_layout=lambda active, e=entry, s=sig: draw_sparrow_layout(active, e["parts"], s),
         )
         if total is not None:
             grand_total_eur += total

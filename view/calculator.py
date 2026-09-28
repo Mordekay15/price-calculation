@@ -17,19 +17,21 @@ Flow:
 
 ``render`` is the public entry point; it wires together the per-section view
 modules (view/margin_view.py, view/product_view.py,
-view/nesting_settings_view.py, view/sheet_usage_view.py,
+view/nesting_settings_view.py, view/sheet_usage.py,
 view/pieces_summary_view.py) and the small ``_render_*`` / ``_build_*`` helpers
 below, each of which owns one section of the page.
 """
 
 import streamlit as st
-from core.calculator import build_lookup, get_materials
+
+from core.calculator import build_lookup, get_materials, parse_thickness_mm
 from core.copper import COPPER_MATERIAL
+from core.nesting import rect_options
 from view.margin_view import render_margin
 from view.nesting_settings_view import render_nesting_settings
 from view.pieces_summary_view import render_pieces_summary
 from view.product_view import render_products
-from view.sheet_usage_view import render_group
+from view.sheet_usage import draw_rect_layout, render_group, render_mix_costs
 
 
 def _build_groups(products: list[dict], nest_mode: str) -> dict[tuple, list[dict]]:
@@ -76,14 +78,23 @@ def _render_sheet_usage(
     any_priced      = False
     for group_key, group_prods in groups.items():
         material, thickness = group_key[0], group_key[1]
-        cheapest_eur, cheapest_ppt = render_group(
-            lookup=lookup,
-            material=material,
-            thickness=thickness,
-            products=group_prods,
-            margin_pct=margin_pct,
-            long_side_clamp_mm=long_side_clamp_mm,
+        thickness_mm = parse_thickness_mm(thickness)
+        if thickness_mm is None:
+            continue
+        result = rect_options(
+            lookup, material, thickness, thickness_mm, group_prods,
+            margin_pct=margin_pct, long_side_clamp_mm=long_side_clamp_mm,
             rankavali_mm=rankavali_mm,
+        )
+
+        def draw(active, prods=group_prods, t_mm=thickness_mm, mat=material):
+            render_mix_costs(active, prods, t_mm, mat)
+            draw_rect_layout(active, prods, rankavali_mm)
+
+        ids = "-".join(str(p["id"]) for p in group_prods)
+        cheapest_eur, cheapest_ppt = render_group(
+            material, thickness, thickness_mm, result, margin_pct=margin_pct,
+            key=f"sheet_select::{material}::{thickness}::{ids}", draw_layout=draw,
         )
         if cheapest_eur is not None:
             grand_total_eur += cheapest_eur
