@@ -23,6 +23,19 @@ detected automatically). They are saved as `price_data_<supplier>.json` next to
 the app, so re-upload only when a new monthly list arrives. Copper has no list
 price; set its €/kg in the sidebar.
 
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+The tests take a few seconds. They cover pricing and copper, sheet costing and
+utilisation, the DXF reader rules (on drawings generated in the test), the
+Sparrow fixed-sheet search (with a small fake solver), the price store, and a
+smoke test of the whole page. `tests/test_sparrow.py::test_real_sparrow_binary`
+also runs the real Sparrow executable and is skipped when it is not installed.
+
 ## Deploy (Streamlit Community Cloud)
 
 1. Push the repo to GitHub, including a Linux Sparrow binary in `bin/` if the
@@ -54,6 +67,7 @@ view/                   Streamlit UI
   sparrow_progress.py   progress bar while Sparrow runs
 
 bin/                    the Sparrow executable (see bin/README.md)
+tests/                  pytest suite (see "Tests" above)
 ```
 
 ## How a price is calculated
