@@ -1,19 +1,12 @@
-"""
-core/parser/tibnor.py
-=====================
-Parses the Tibnor monthly price list PDF.
-
-Tibnor's tables are less regular than Tata Steel's — headers wrap across
-several rows, and page 2 holds two sub-tables side by side — so columns are
-identified by header keyword with a positional fallback rather than by fixed
-index. All prices are normalised to €/tn so they share the calculator pipeline.
-"""
+"""Tibnor monthly price list. Headers wrap over several rows and page 2 has two
+tables side by side, so columns are found by header keyword (falling back to
+position). Prices are normalised to €/tn like every other supplier."""
 
 import io
 
 import pdfplumber
 
-from core.price_parser.helpers import clean, expand_range_rows, to_float
+from core.suppliers.cells import clean, expand_range_rows, to_float
 
 
 # ── Config ────────────────────────────────────────────────────────────────────

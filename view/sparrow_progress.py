@@ -1,16 +1,5 @@
-"""
-view/sparrow_progress.py
-========================
-Progress bar for a long Sparrow nesting computation.
-
-``run_with_progress`` runs the computation in a worker thread and, on the
-Streamlit script thread, redraws a progress bar every half second from a
-``SparrowProgress`` tracker: the sheet size being nested (i/n), the Sparrow run
-count, parts placed so far and the elapsed time. The worker only feeds the
-tracker (``run_started`` from the solver wrapper, ``event`` as the
-computation's ``on_progress`` callback); every Streamlit call stays on the
-script thread.
-"""
+"""Progress bar for a long Sparrow run: the work runs in a worker thread that
+feeds a ``SparrowProgress`` tracker; the script thread redraws the bar."""
 
 from __future__ import annotations
 

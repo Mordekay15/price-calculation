@@ -1,11 +1,5 @@
-"""
-core/geometry.py
-================
-Small 2-D polygon helpers shared by the DXF reader and the Sparrow nesting.
-
-A point is an ``(x, y)`` tuple in millimetres; a ring is a list of points
-(closed implicitly — the last point connects back to the first).
-"""
+"""Small 2-D polygon helpers. A point is an ``(x, y)`` tuple in mm; a ring is
+a list of points, closed implicitly."""
 
 from __future__ import annotations
 

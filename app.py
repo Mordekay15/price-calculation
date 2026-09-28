@@ -1,11 +1,5 @@
-"""
-Stremet Price Tool — Streamlit App
-
-Entry point. Page setup, then sidebar (price data in) → the two tabs.
-Supplier upload slots and persistence live in view/sidebar.py and
-core/price_store.py; the tabs live in view/calculator_tab.py and
-view/dxf_tab.py.
-"""
+"""Stremet Price Tool — Streamlit entry point: page setup, the sidebar (price
+data in), then the manual and DXF tabs."""
 
 import streamlit as st
 

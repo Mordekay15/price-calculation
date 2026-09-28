@@ -1,28 +1,9 @@
-"""
-core/rect_nesting.py
-====================
-Bounding-box nesting for the manual calculator (the DXF tab nests real shapes
-with Sparrow, core/sparrow.py).
-
-Given an order (list of rectangular products with quantities) and the inner
-dimensions of a metal sheet, work out how many sheets are needed and how the
-products lay out on each sheet. Pieces from different products may share a
-sheet — leftover space on one sheet is reused for the next product.
-
-The packer uses a guillotine-cut heuristic:
-  - sort pieces by their longest side, descending
-  - for each piece, try every existing sheet's free rectangles and pick the
-    one with the smallest leftover area (Best-Area-Fit)
-  - rotate 90° if that gives a fit when the natural orientation does not
-  - on placement, split the chosen free rect into a right and bottom strip
-
-This is a greedy heuristic, not optimal — but it is deterministic, fast, and
-gives good results for typical sheet-metal orders.
-"""
+"""Bounding-box nesting for the manual tab: a greedy guillotine packer
+(longest side first, best-area fit, 90° rotation) and ``rect_options``."""
 
 from dataclasses import dataclass, field
 
-from core.sheet_cost import Packing, compute_options, effective_sheet
+from core.sheet_cost import GroupCost, Packing, compute_options, effective_sheet
 
 
 # ── Packing ───────────────────────────────────────────────────────────────────
@@ -47,10 +28,6 @@ class Sheet:
     def __post_init__(self):
         if not self.free_rects:
             self.free_rects = [(0, 0, self.w, self.h)]
-
-    @property
-    def used_area(self) -> int:
-        return sum(p.w * p.h for p in self.placements)
 
 
 def _try_place(sheet: Sheet, rw: int, rh: int, product_idx: int,
@@ -165,7 +142,7 @@ def rect_options(
     margin_pct: float = 0.0,
     long_side_clamp_mm: int = 0,
     rankavali_mm: int = 0,
-) -> dict:
+) -> GroupCost | None:
     """``core.sheet_cost.compute_options`` with the bounding-box packer.
 
     Each piece is grown by the cut gap (rankaväli) so the packer leaves room

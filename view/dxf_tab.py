@@ -1,18 +1,7 @@
-"""
-view/dxf_tab.py
-===============
-DXF tab — Sparrow shape nesting with the same sheet-usage design as the
-manual calculator.
-
-The user uploads DXF files (one product each) and configures each part on its
-card (bottom of this module). Parts are grouped by material + thickness and,
-for each group, Sparrow nests the real shapes on every priced sheet size
-(core/sparrow.py) to find the cheapest (view/sheet_usage.py).
-
-Sparrow runs are slow, so they happen behind a button with a progress bar
-(view/sparrow_progress.py) and the results are cached per input signature
-until something changes.
-"""
+"""The DXF tab: one uploaded DXF per part, configured on its card; parts are
+grouped by material + thickness and Sparrow nests the real shapes on every
+priced sheet size, behind a button and a progress bar, cached until an input
+changes."""
 
 from dataclasses import dataclass
 
@@ -21,10 +10,9 @@ import streamlit as st
 from core.pricing import build_lookup, parse_thickness_mm
 from core.dxf import DxfFile, DxfReport, read_dxf
 from core.geometry import net_area
+from core.sheet_cost import group_products, is_ready
 from core.sparrow import find_executable, part_from_report, run_sparrow, sparrow_options
 from view.common import (
-    group_products,
-    is_ready,
     materials_with_copper,
     render_grand_total,
     render_groups,
@@ -33,7 +21,8 @@ from view.common import (
     render_material_thickness,
     render_pieces_summary,
 )
-from view.sheet_usage import draw_sparrow_layout, render_group
+from view.drawing import draw_sparrow_layout, preview_svg
+from view.sheet_usage import render_group
 from view.sparrow_progress import SparrowProgress, run_with_progress
 
 _ROTATIONS: dict[str, tuple[float, ...]] = {
@@ -192,7 +181,9 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict) -> Non
     render_grand_total(grand_total, len(groups))
 
     ready = [p for p in products if is_ready(p)]
-    render_pieces_summary(ready, prices, from_dxf=True, areas_mm2=areas)
+    render_pieces_summary(ready, prices, title="Osayhteenveto",
+                          weight_label="Osien yhteispaino (kg)", lead="Osa",
+                          areas_mm2=areas)
 
 
 def _parts_for_group(
@@ -275,7 +266,7 @@ def _render_part_config(
         layers = _render_layer_picker(fid, dxf)
         report = _part(fid, dxf, layers)
 
-        preview = _preview_svg(report)
+        preview = preview_svg(report)
         if preview:
             st.markdown(preview, unsafe_allow_html=True)
         if report.dropped:
@@ -363,54 +354,3 @@ def _render_layer_picker(fid: str, dxf: DxfFile) -> set[str] | None:
     if hidden:
         st.caption("Jätetty oletuksena pois: " + ", ".join(hidden))
     return chosen
-
-
-def _preview_svg(report: DxfReport, px: int = 260) -> str:
-    """Small preview of the part (drawing Y flipped).
-
-    The part is filled (holes cut out), reference lines are dashed, open lines
-    inside the part are red, and geometry dropped outside the part is grey.
-    """
-    rings = ([report.outline.points] if report.outline else []) + [h.points for h in report.holes]
-    groups = (rings, report.reference_lines, report.open_lines, report.dropped)
-    pts = [p for group in groups for ring in group for p in ring]
-    if not pts:
-        return ""
-    min_x = min(x for x, _ in pts)
-    min_y = min(y for _, y in pts)
-    w = max(x for x, _ in pts) - min_x
-    h = max(y for _, y in pts) - min_y
-    if w <= 0 or h <= 0:
-        return ""
-    stroke = max(0.5, max(w, h) / 300)
-
-    def d(lines, close):
-        return " ".join(
-            "M " + " L ".join(f"{x - min_x:.1f} {h - (y - min_y):.1f}" for x, y in line)
-            + (" Z" if close else "")
-            for line in lines if len(line) >= 2
-        )
-
-    scale = px / max(w, h)
-    out = [
-        f'<svg width="{w * scale:.0f}" height="{h * scale:.0f}" '
-        f'viewBox="{-stroke} {-stroke} {w + 2 * stroke:.1f} {h + 2 * stroke:.1f}" '
-        f'preserveAspectRatio="xMidYMid meet" '
-        f'style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:4px;'
-        f'max-width:100%;height:auto;margin:4px 0 2px;">'
-    ]
-    if report.dropped:
-        out.append(f'<path d="{d(report.dropped, False)}" fill="none" stroke="#cbd5e1" '
-                   f'stroke-width="{stroke:.2f}"/>')
-    if rings:
-        out.append(f'<path d="{d(rings, True)}" fill="#3b82f6" fill-opacity="0.12" '
-                   f'fill-rule="evenodd" stroke="#2563eb" stroke-width="{stroke:.2f}"/>')
-    if report.reference_lines:
-        out.append(f'<path d="{d(report.reference_lines, False)}" fill="none" '
-                   f'stroke="#475569" stroke-width="{stroke * 0.7:.2f}" '
-                   f'stroke-dasharray="{stroke * 4:.1f} {stroke * 3:.1f}"/>')
-    if report.open_lines:
-        out.append(f'<path d="{d(report.open_lines, False)}" fill="none" stroke="#dc2626" '
-                   f'stroke-width="{stroke * 1.5:.2f}"/>')
-    out.append("</svg>")
-    return "".join(out)

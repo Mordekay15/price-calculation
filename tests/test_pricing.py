@@ -8,7 +8,8 @@ from core.pricing import (
     get_sizes_for_material,
     get_thicknesses_for_material,
     parse_thickness_mm,
-    piece_weight_kg,
+    thickness_sort_key,
+    weight_kg,
 )
 
 DATA = {
@@ -40,13 +41,14 @@ def test_parse_thickness_uses_the_first_value_and_decimal_comma():
     assert parse_thickness_mm("0,7/0,75") == 0.7
     assert parse_thickness_mm("1,25") == 1.25
     assert parse_thickness_mm("abc") is None
+    assert sorted(["abc", "10", "0,7/0,75", "2"], key=thickness_sort_key) == ["0,7/0,75", "2", "10", "abc"]
 
 
 def test_density_and_weight():
     assert density_for_material("S235") == 8.0e-6
     assert density_for_material("ALUMIINI 5754") == 2.7e-6
     # 1000 × 1000 × 1 mm of steel weighs 8 kg
-    assert piece_weight_kg(1000, 1000, 1, "S235") == 8.0
+    assert weight_kg(1000 * 1000, 1, "S235") == 8.0
 
 
 def test_copper_is_unpriced_until_a_price_is_set():

@@ -1,37 +1,6 @@
-"""
-core/dxf.py
-===========
-The one DXF reader: turns an uploaded file into the part that is shown on the
-card, nested by Sparrow and priced — or explains why it cannot be priced.
-
-Two stages:
-
-``read_dxf(data, name) -> DxfFile``
-    Reads the file once. Blocks (INSERT) are exploded, curves flattened to
-    polylines in millimetres, and every piece of geometry is kept with its CAD
-    layer. The unit comes from the $INSUNITS header; failing that from a
-    ``Un="mm"`` style text label; failing that, a drawing whose extents are
-    exactly an ISO A0–A4 sheet is taken to be in millimetres.
-
-``DxfFile.part(layers) -> DxfReport``
-    Builds the part from the chosen layers. By default that is every layer
-    whose name does not look like drawing furniture (frame, title, dimension,
-    text, bend, info, …) — see ``suggested_layers``; the card lets the user
-    change the choice.
-
-    * Pieces that only together form a loop (e.g. four LINEs) are chained.
-    * The main part is the largest closed outline; closed outlines directly
-      inside it are its holes. Anything outside it (detail views, sketches,
-      stray lines) is dropped.
-    * Reference lines are drawn, never cut: lines inside the part from the
-      other layers (bend lines, centre marks, dashed lines), outlines inside a
-      hole (countersinks / threads drawn as concentric circles) and the ISO
-      thread symbol (a thin ¾-circle around a hole).
-
-A report with ``problems`` cannot be priced; each problem is a plain-Finnish
-reason (no unit, no closed outline, an open line inside the part, a
-self-crossing outline, …).
-"""
+"""The one DXF reader: ``read_dxf`` reads a file once, ``DxfFile.part(layers)``
+builds the part that is shown, nested and priced — or the reasons it cannot be
+priced (see "How a DXF file is read" in the README)."""
 
 from __future__ import annotations
 
@@ -42,7 +11,7 @@ from dataclasses import dataclass, field
 
 from ezdxf import path, recover
 
-from core.geometry import area, bbox, point_in_polygon, representative_point
+from core.geometry import area, bbox, bbox_wh, point_in_polygon, representative_point
 
 Point = tuple[float, float]
 
@@ -143,13 +112,11 @@ class Contour:
 
     @property
     def width_mm(self) -> float:
-        x0, _, x1, _ = bbox(self.points)
-        return x1 - x0
+        return bbox_wh(self.points)[0]
 
     @property
     def height_mm(self) -> float:
-        _, y0, _, y1 = bbox(self.points)
-        return y1 - y0
+        return bbox_wh(self.points)[1]
 
 
 @dataclass
