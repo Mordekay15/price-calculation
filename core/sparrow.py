@@ -1,10 +1,12 @@
 """Sparrow shape nesting, from a DXF part to a priced sheet size: parts, running
-the solver, fixed-sheet packing (Sparrow only knows an endless strip) and
-costing. The solver is passed in as ``run_fn``, so tests need no binary."""
+the solver, fixed-sheet packing (Sparrow only knows an endless strip; the part
+mixes per sheet come from ``core.patterns``) and costing. The solver is passed
+in as ``run_fn``, so tests need no binary."""
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -16,6 +18,7 @@ from pathlib import Path
 
 from core.dxf import DxfReport
 from core.geometry import bbox, bbox_wh, net_area, rotate_translate, signed_area
+from core.patterns import CoverItem, Library, Pattern, cheapest_cover, search_patterns
 from core.sheet_cost import GroupCost, Packing, compute_options, effective_sheet
 
 Point = tuple[float, float]
@@ -234,23 +237,31 @@ def _error_message(stderr: str) -> str:
 # ── 3. Fixed-sheet packing ────────────────────────────────────────────────────
 #
 # Sparrow minimises the length of an open strip; it does not pack into a fixed
-# W×H sheet. greedy_fixed_sheets fills one sheet at a time. Each round:
+# W×H sheet. A mix of parts *fits* a sheet when Sparrow nests it in a strip as
+# high as the sheet and every part lands within the first sheet_w of length.
 #
-#   1. search for the most parts one sheet holds. A probe nests n parts in a
-#      strip as high as the sheet and keeps the parts that land fully inside
-#      the first sheet_w of length (no part straddles the cut). The first probe
-#      nests the whole remaining order: a layout known to work, but often loose
-#      — Sparrow spreads its effort over the long strip (400 parts: 18 on the
-#      sheet where 26 fit). The strip's length tells how densely Sparrow packed
-#      overall, so the next probe asks for that many on a single sheet; if they
-#      fit it keeps stepping up (+1, +2, +4 …), after the first miss it bisects;
-#   2. repeat that sheet layout for as many sheets as the remaining demand still
-#      covers (100 parts at 25 per sheet → one layout ×4);
-#   3. subtract those and start the next sheet with the smaller leftover.
+#   1. one strip run of the whole order seeds the search: every sheet_w window
+#      of that strip is a layout known to fit;
+#   2. core.patterns.search_patterns asks Sparrow about a few more mixes (e.g.
+#      4 big + 4 small), each answer settling many other mixes;
+#   3. core.patterns.cheapest_cover repeats the best layouts until the order
+#      is covered (100 parts at 25 per sheet → one layout ×4).
 
 # Tolerance (mm) for the "inside the sheet" test — absorbs solver float round-off
 # and the tiny overhang a separation gap can introduce.
 _TOL = 0.5
+
+# Sparrow runs per sheet size after the seeding strip run.
+_PROBE_BUDGET = 8
+
+
+@dataclass(frozen=True)
+class NestSettings:
+    """How every Sparrow run is made."""
+
+    seed: int = 0
+    time_limit_sec: int = 8
+    separation: float | None = None
 
 
 @dataclass
@@ -278,153 +289,119 @@ class PackedSheet:
     count: int = 1
 
 
-@dataclass
-class PackResult:
-    """Outcome of packing one sheet size."""
-
-    ok: bool
-    sheets: list[PackedSheet] = field(default_factory=list)
-    reason: str = ""
-
-    @property
-    def sheets_needed(self) -> int:
-        return sum(s.count for s in self.sheets)
-
-    @property
-    def used_area(self) -> float:
-        """Real part area over every physical sheet."""
-        return sum(s.used_area * s.count for s in self.sheets)
-
-
-def greedy_fixed_sheets(
+def pack_fixed_sheets(
     parts: list[SparrowPart],
     sheet_w: float,
     sheet_h: float,
     *,
     run_fn,
-    seed: int = 0,
-    time_limit_sec: int = 8,
-    separation: float | None = None,
-    max_sheets: int = 400,
-    on_sheet=None,
-) -> PackResult:
+    settings: NestSettings = NestSettings(),
+) -> tuple[list[PackedSheet], str]:
     """Nest every part's ``quantity`` onto fixed ``sheet_w`` × ``sheet_h`` sheets.
 
-    ``on_sheet(placed, total)``, if given, is called after each sheet layout is
-    settled — for a progress display. Not ok (with a reason) when a part is
-    too large for the sheet, the solver fails, or the sheets exceed ``max_sheets``.
+    Returns ``(sheets, reason)``; ``reason`` is empty on success, else why the
+    parts could not be nested (a part too large, a solver error…).
     """
-    if sheet_w <= 0 or sheet_h <= 0:
-        return PackResult(ok=False, reason="virheellinen levykoko")
+    patterns, reason = pattern_library(parts, sheet_w, sheet_h, run_fn=run_fn, settings=settings)
+    if reason:
+        return [], reason
+    demand = tuple(int(p.quantity) for p in parts)
+    cover = cheapest_cover(demand, {"sheet": Library(1.0, patterns)}, shares=_areas(parts))
+    if cover is None:
+        return [], "osat eivät mahtuneet levylle annetulla rankavälillä"
+    return [_packed_sheet(item, sheet_w, sheet_h) for item in cover], ""
 
-    remaining = [int(p.quantity) for p in parts]
-    for i, p in enumerate(parts):
+
+def pattern_library(parts, sheet_w: float, sheet_h: float, *, run_fn,
+                    settings: NestSettings) -> tuple[tuple[Pattern, ...], str]:
+    """The largest part mixes found to fit one sheet, each with its layout;
+    ``(patterns, reason)`` with a reason instead when nothing can be nested."""
+    for p in parts:
         w, h = bbox_wh(p.outer)
-        if remaining[i] > 0 and not _fits(w, h, sheet_w, sheet_h, p.allowed_orientations):
-            return PackResult(ok=False, reason=f"osa {p.part_id} ei mahdu levylle "
-                                               f"({w:.0f}×{h:.0f} mm)")
+        if p.quantity > 0 and not _fits(w, h, sheet_w, sheet_h, p.allowed_orientations):
+            return (), f"osa {p.part_id} ei mahdu levylle ({w:.0f}×{h:.0f} mm)"
 
-    n_total = sum(remaining)
-    sheets: list[PackedSheet] = []
-    while any(q > 0 for q in remaining):
-        if sum(s.count for s in sheets) >= max_sheets:
-            return PackResult(ok=False, sheets=sheets, reason="liian monta levyä")
+    def fits(mix):
+        err, placed, _ = _strip(parts, mix, sheet_h, run_fn, settings)
+        kept = [] if err else _window(placed, 0.0, sheet_w, sheet_h)
+        return _mix_of(kept, len(parts)), kept
 
-        def probe(n: int):
-            return _probe(parts, _mix(remaining, n), sheet_w, sheet_h, run_fn=run_fn,
-                          seed=seed, time_limit_sec=time_limit_sec, separation=separation)
-
-        total = sum(remaining)
-        err, best, strip_len = probe(total)
-        if err is not None:
-            return PackResult(ok=False, sheets=sheets, reason=err)
-        if not best:
-            # Nothing fit within the sheet although each part fits in isolation —
-            # usually the separation gap makes even one part overflow.
-            return PackResult(ok=False, sheets=sheets,
-                              reason="osat eivät mahtuneet levylle annetulla rankavälillä")
-
-        # lo: most parts seen on one sheet; hi: smallest probe that didn't fit
-        # entirely (None until one misses). Try the strip-density estimate,
-        # step up from there, then bisect.
-        lo, hi, step = len(best), None, 1
-        guess = int(total * sheet_w / strip_len) if strip_len else 0
-        while lo < total and (hi is None or hi - lo > 1):
-            stepping = False
-            if guess > lo:
-                n, guess = min(total, guess), 0
-            elif hi is None:
-                n, stepping = min(total, lo + step), True
-            else:
-                n = (lo + hi) // 2
-            err, kept, _ = probe(n)
-            if err is not None:
-                break  # keep the best sheet found so far
-            if len(kept) > lo:
-                lo, best = len(kept), kept
-            if len(kept) < n:
-                hi = n
-            elif stepping:
-                step *= 2
-
-        per_sheet = Counter(pl.part_index for pl in best)
-        # Reuse this layout while the remaining demand still covers its part mix.
-        count = min(remaining[i] // n for i, n in per_sheet.items())
-        for i, n in per_sheet.items():
-            remaining[i] -= count * n
-        used_area = sum(net_area(pl.outer, pl.holes) for pl in best)
-        sheets.append(PackedSheet(best, sheet_w, sheet_h, used_area, count))
-        if on_sheet is not None:
-            on_sheet(n_total - sum(remaining), n_total)
-
-    return PackResult(ok=True, sheets=sheets)
+    demand = tuple(int(p.quantity) for p in parts)
+    err, placed, strip_len = _strip(parts, demand, sheet_h, run_fn, settings)
+    if err:
+        return (), err
+    windows = [_window(placed, k * sheet_w, sheet_w, sheet_h)
+               for k in range(math.ceil((strip_len or 0) / sheet_w))]
+    seeds = tuple(Pattern(_mix_of(w, len(parts)), w) for w in windows)
+    shares = tuple(a / (sheet_w * sheet_h) for a in _areas(parts))
+    patterns = search_patterns(demand, fits, shares=shares, budget=_PROBE_BUDGET, seeds=seeds)
+    if not patterns:
+        # Each part fits in isolation, so usually the separation gap makes even
+        # one part overflow.
+        return (), "osat eivät mahtuneet levylle annetulla rankavälillä"
+    return tuple(patterns), ""
 
 
-def _mix(remaining: list[int], n: int) -> dict[int, int]:
-    """Pick ``n`` parts from the remaining demand, in proportion to it, as
-    ``{part_index: count}`` — a proportional mix keeps a layout repeatable."""
-    total = sum(remaining)
-    if n >= total:
-        return {i: q for i, q in enumerate(remaining) if q > 0}
-    raw = {i: q * n / total for i, q in enumerate(remaining) if q > 0}
-    mix = {i: int(r) for i, r in raw.items()}
-    short = n - sum(mix.values())
-    for i in sorted(raw, key=lambda i: raw[i] - mix[i], reverse=True)[:short]:
-        mix[i] += 1
-    return {i: c for i, c in mix.items() if c > 0}
-
-
-def _probe(parts, demand: dict[int, int], sheet_w: float, sheet_h: float,
-           *, run_fn, seed, time_limit_sec, separation):
-    """Nest ``demand`` in a strip ``sheet_h`` high.
-
-    Returns ``(error, placed_on_sheet, strip_len)``: error is None on success;
-    the list holds the parts that land fully inside the first ``sheet_w``.
-    """
-    active = list(demand)
-    instance = _build_instance(parts, demand, sheet_h)
-    res = run_fn(instance, seed=seed, time_limit_sec=time_limit_sec, separation=separation)
+def _strip(parts, mix, strip_h: float, run_fn, settings: NestSettings):
+    """Nest ``mix`` in a strip ``strip_h`` high: ``(error, placed, strip_len)``,
+    error None on success."""
+    active = [i for i, n in enumerate(mix) if n > 0]
+    instance = _build_instance(parts, {i: mix[i] for i in active}, strip_h)
+    res = run_fn(instance, seed=settings.seed, time_limit_sec=settings.time_limit_sec,
+                 separation=settings.separation)
     if not res.ok:
         return res.message or "Sparrow-ajo epäonnistui", [], None
-
-    left = dict(demand)
-    kept: list[Placed] = []
+    placed = []
     for local_id, rot, trans in res.placements:
-        if local_id < 0 or local_id >= len(active):
-            continue
-        orig_i = active[local_id]
-        part = parts[orig_i]
-        outer = rotate_translate(part.outer, rot, trans)
-        minx, miny, maxx, maxy = bbox(outer)
-        if minx < -_TOL or miny < -_TOL or maxx > sheet_w + _TOL or maxy > sheet_h + _TOL:
-            continue  # spills past this sheet
-        if left[orig_i] <= 0:
-            continue
-        kept.append(Placed(orig_i, part.part_id, rot, trans, outer,
-                           [rotate_translate(h, rot, trans) for h in part.holes],
-                           [rotate_translate(c, rot, trans) for c in part.construction]))
-        left[orig_i] -= 1
-    return None, kept, res.strip_width
+        if 0 <= local_id < len(active):
+            part = parts[active[local_id]]
+            placed.append(Placed(
+                active[local_id], part.part_id, rot, trans,
+                rotate_translate(part.outer, rot, trans),
+                [rotate_translate(h, rot, trans) for h in part.holes],
+                [rotate_translate(c, rot, trans) for c in part.construction]))
+    return None, placed, res.strip_width
+
+
+def _window(placed: list[Placed], x0: float, sheet_w: float, sheet_h: float) -> list[Placed]:
+    """The parts lying fully in ``[x0, x0 + sheet_w]`` of a strip, moved to x = 0."""
+    kept = []
+    for pl in placed:
+        minx, miny, maxx, maxy = bbox(pl.outer)
+        if minx >= x0 - _TOL and maxx <= x0 + sheet_w + _TOL and miny >= -_TOL \
+                and maxy <= sheet_h + _TOL:
+            kept.append(_shifted(pl, -x0))
+    return kept
+
+
+def _shifted(pl: Placed, dx: float) -> Placed:
+    if dx == 0:
+        return pl
+    move = lambda ring: [(x + dx, y) for x, y in ring]  # noqa: E731
+    tx, ty = pl.translation
+    return Placed(pl.part_index, pl.part_id, pl.rotation_deg, (tx + dx, ty), move(pl.outer),
+                  [move(h) for h in pl.holes], [move(c) for c in pl.construction])
+
+
+def _mix_of(placed: list[Placed], n_parts: int) -> tuple[int, ...]:
+    counts = Counter(pl.part_index for pl in placed)
+    return tuple(counts[i] for i in range(n_parts))
+
+
+def _areas(parts) -> tuple[float, ...]:
+    return tuple(net_area(p.outer, p.holes) for p in parts)
+
+
+def _packed_sheet(item: CoverItem, sheet_w: float, sheet_h: float) -> PackedSheet:
+    """A cover item as a sheet: the pattern's layout cut down to the mix used."""
+    left = list(item.mix)
+    placements = []
+    for pl in item.pattern.layout:
+        if left[pl.part_index] > 0:
+            left[pl.part_index] -= 1
+            placements.append(pl)
+    used = sum(net_area(pl.outer, pl.holes) for pl in placements)
+    return PackedSheet(placements, sheet_w, sheet_h, used, item.count)
 
 
 def _build_instance(parts, demand: dict[int, int], strip_height: float) -> dict:
@@ -467,19 +444,16 @@ def sparrow_options(
     """``core.sheet_cost.compute_options`` with Sparrow shape nesting.
 
     ``on_progress``, if given, receives ``("size", index=, count=, w=, h=)``
-    before each sheet size and ``("sheet", w=, h=, placed=, total=)`` each time
-    a sheet layout is settled in one orientation.
+    before each sheet size and ``("sheet", w=, h=, placed=, total=)`` once a
+    sheet size is nested in one orientation.
     """
     n_pieces = sum(p.quantity for p in parts)
     part_area_mm2 = sum(net_area(p.outer, p.holes) * p.quantity for p in parts)
-    separation = float(rankavali_mm) if rankavali_mm else None
+    settings = NestSettings(seed, time_limit_sec, float(rankavali_mm) if rankavali_mm else None)
 
     def pack_fn(sw: int, sh: int) -> Packing:
-        best, alt = _pack_best_orientation(
-            parts, sw, sh, long_side_clamp_mm,
-            run_fn=run_fn, seed=seed, time_limit_sec=time_limit_sec,
-            separation=separation, on_progress=on_progress,
-        )
+        best, alt = _pack_best_orientation(parts, sw, sh, long_side_clamp_mm, run_fn=run_fn,
+                                           settings=settings, on_progress=on_progress)
         best.alt = alt
         return best
 
@@ -490,8 +464,8 @@ def sparrow_options(
     )
 
 
-def _pack_best_orientation(parts, sw, sh, clamp, *, run_fn, seed, time_limit_sec,
-                           separation, on_progress=None) -> tuple[Packing, Packing | None]:
+def _pack_best_orientation(parts, sw, sh, clamp, *, run_fn, settings: NestSettings,
+                           on_progress=None) -> tuple[Packing, Packing | None]:
     """Pack the sheet both ways round (portrait / landscape); return ``(best, alt)``.
 
     ``best`` has the fewest sheets (on a tie the long-side strip) and drives
@@ -505,16 +479,13 @@ def _pack_best_orientation(parts, sw, sh, clamp, *, run_fn, seed, time_limit_sec
     """
     def attempt(cw, ch) -> Packing:
         ew, eh = effective_sheet(cw, ch, clamp)
-        on_sheet = None
+        sheets, reason = pack_fixed_sheets(parts, ew, eh, run_fn=run_fn, settings=settings)
         if on_progress is not None:
-            on_sheet = lambda placed, total: on_progress(  # noqa: E731
-                "sheet", w=cw, h=ch, placed=placed, total=total)
-        pack = greedy_fixed_sheets(parts, ew, eh, run_fn=run_fn, seed=seed,
-                                   time_limit_sec=time_limit_sec, separation=separation,
-                                   on_sheet=on_sheet)
-        return Packing(sheets=pack.sheets, sheets_needed=pack.sheets_needed,
+            total = sum(p.quantity for p in parts)
+            on_progress("sheet", w=cw, h=ch, placed=0 if reason else total, total=total)
+        return Packing(sheets=sheets, sheets_needed=sum(s.count for s in sheets),
                        eff_w=ew, eff_h=eh, draw_w=cw, draw_h=ch,
-                       failed=0 if pack.ok else 1, reason=pack.reason)
+                       failed=1 if reason else 0, reason=reason)
 
     # Sparrow's fixed strip height is the sheet's short side; the strip runs
     # along the long side (listed first, so it also wins a tie).

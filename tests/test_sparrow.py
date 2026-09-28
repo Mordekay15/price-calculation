@@ -3,6 +3,7 @@ fixed-sheet search and the costing run in milliseconds; one test runs the real
 executable when it is installed."""
 
 import math
+from collections import Counter
 
 import pytest
 
@@ -14,7 +15,7 @@ from core.sparrow import (
     _error_message,
     _result,
     find_executable,
-    greedy_fixed_sheets,
+    pack_fixed_sheets,
     part_from_report,
     run_sparrow,
     sparrow_options,
@@ -71,18 +72,31 @@ def test_error_message_skips_the_backtrace():
     assert _error_message(stderr) == "Simple polygon must have at least 3 points"
 
 
-def test_greedy_fills_a_sheet_then_repeats_the_layout():
+def test_fills_a_sheet_then_repeats_the_layout():
     # 100 mm squares on a 250 × 250 sheet: two columns of two fit → 4 per sheet
-    pack = greedy_fixed_sheets([square(quantity=10)], 250, 250, run_fn=fake_solver)
-    assert pack.ok
-    assert [(len(s.placements), s.count) for s in pack.sheets] == [(4, 2), (2, 1)]
-    assert pack.sheets_needed == 3
-    assert math.isclose(pack.used_area, 10 * 100 * 100)
+    sheets, reason = pack_fixed_sheets([square(quantity=10)], 250, 250, run_fn=fake_solver)
+    assert reason == ""
+    assert [(len(s.placements), s.count) for s in sheets] == [(4, 2), (2, 1)]
+    assert math.isclose(sum(s.used_area * s.count for s in sheets), 10 * 100 * 100)
 
 
-def test_greedy_reports_a_part_too_big_for_the_sheet():
-    pack = greedy_fixed_sheets([square(size=300, name="big")], 250, 250, run_fn=fake_solver)
-    assert not pack.ok and "big" in pack.reason
+def test_mixed_parts_are_all_placed_on_the_fewest_sheets():
+    runs = []
+    counting = lambda inst, **kw: runs.append(inst) or fake_solver(inst, **kw)  # noqa: E731
+    parts = [square(200, quantity=5, name="big"), square(100, quantity=4, name="small")]
+    sheets, reason = pack_fixed_sheets(parts, 400, 400, run_fn=counting)
+    assert reason == ""
+    assert sum(s.count for s in sheets) == 2                 # 5·4 + 4·1 dm² on 16 dm² sheets
+    placed = Counter(pl.part_id for s in sheets for pl in s.placements for _ in range(s.count))
+    assert placed == {"big": 5, "small": 4}
+    assert all(0 <= x <= 400 for s in sheets for pl in s.placements for x, _ in pl.outer)
+    assert len(runs) <= 1 + 8                                # seed strip + probe budget
+
+
+def test_reports_a_part_too_big_for_the_sheet():
+    sheets, reason = pack_fixed_sheets([square(size=300, name="big")], 250, 250,
+                                       run_fn=fake_solver)
+    assert not sheets and "big" in reason
 
 
 def test_sparrow_options_prices_with_the_given_solver():
