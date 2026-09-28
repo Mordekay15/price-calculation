@@ -22,7 +22,7 @@ gives good results for typical sheet-metal orders.
 
 from dataclasses import dataclass, field
 
-from core.sheet_cost import Packing, compute_options, effective_sheet
+from core.sheet_cost import GroupCost, Packing, compute_options, effective_sheet
 
 
 # ── Packing ───────────────────────────────────────────────────────────────────
@@ -47,10 +47,6 @@ class Sheet:
     def __post_init__(self):
         if not self.free_rects:
             self.free_rects = [(0, 0, self.w, self.h)]
-
-    @property
-    def used_area(self) -> int:
-        return sum(p.w * p.h for p in self.placements)
 
 
 def _try_place(sheet: Sheet, rw: int, rh: int, product_idx: int,
@@ -165,7 +161,7 @@ def rect_options(
     margin_pct: float = 0.0,
     long_side_clamp_mm: int = 0,
     rankavali_mm: int = 0,
-) -> dict:
+) -> GroupCost | None:
     """``core.sheet_cost.compute_options`` with the bounding-box packer.
 
     Each piece is grown by the cut gap (rankaväli) so the packer leaves room

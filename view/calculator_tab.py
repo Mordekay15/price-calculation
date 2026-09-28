@@ -1,16 +1,6 @@
-"""
-view/calculator_tab.py
-======================
-The manual price calculator tab ("Hintalaskuri").
-
-  1. The user adds product cards: material, thickness, width × height (mm) and
-     quantity. The cards live in ``st.session_state.calc_products``.
-  2. "Levyn käyttö" groups the pieces by material + thickness (or per product
-     with the "Sijoittelutapa" toggle) and, for each group, compares every
-     priced sheet size with the bounding-box packer and highlights the cheapest
-     (view/sheet_usage.py).
-  3. The pieces summary lists every product's weight and cost.
-"""
+"""The manual calculator tab ("Hintalaskuri"): rectangular product cards, their
+sheet usage per material + thickness group (bounding-box packer) and the
+pieces summary."""
 
 import uuid
 
@@ -18,8 +8,8 @@ import streamlit as st
 
 from core.pricing import build_lookup, parse_thickness_mm
 from core.rect_nesting import rect_options
+from core.sheet_cost import group_products
 from view.common import (
-    group_products,
     materials_with_copper,
     render_grand_total,
     render_groups,
@@ -28,7 +18,8 @@ from view.common import (
     render_material_thickness,
     render_pieces_summary,
 )
-from view.sheet_usage import draw_rect_layout, render_group, render_mix_costs
+from view.drawing import draw_rect_layout
+from view.sheet_usage import render_group
 
 
 def render(data: dict) -> None:
@@ -49,15 +40,11 @@ def render(data: dict) -> None:
             margin_pct=margin_pct, long_side_clamp_mm=long_side_clamp_mm,
             rankavali_mm=rankavali_mm,
         )
-
-        def draw(active):
-            render_mix_costs(active, prods, thickness_mm, material)
-            draw_rect_layout(active, prods, rankavali_mm)
-
         ids = "-".join(str(p["id"]) for p in prods)
         return render_group(
             material, thickness, thickness_mm, result, margin_pct=margin_pct,
-            key=f"sheet_select::{material}::{thickness}::{ids}", draw_layout=draw,
+            key=f"sheet_select::{material}::{thickness}::{ids}",
+            draw_layout=lambda option: draw_rect_layout(option, prods, rankavali_mm),
         )
 
     groups = group_products(products, nest_mode)
@@ -67,7 +54,8 @@ def render(data: dict) -> None:
         st.markdown("**Levyn käyttö**")
         prices, grand_total, _ = render_groups(groups, render_one)
         render_grand_total(grand_total, len(groups))
-    render_pieces_summary(products, prices)
+    render_pieces_summary(products, prices, title="Kappaleyhteenveto",
+                          weight_label="Kappaleiden yhteispaino (kg)", lead="#")
 
 
 # ── Product cards ─────────────────────────────────────────────────────────────

@@ -32,7 +32,7 @@ from pathlib import Path
 
 from core.dxf import DxfReport
 from core.geometry import bbox, bbox_wh, net_area, rotate_translate, signed_area
-from core.sheet_cost import Packing, compute_options, effective_sheet, utilization
+from core.sheet_cost import GroupCost, Packing, compute_options, effective_sheet
 
 Point = tuple[float, float]
 
@@ -210,14 +210,12 @@ def run_sparrow(
         shutil.rmtree(job, ignore_errors=True)
 
 
-def _result(instance: dict, solution: dict | None, error: str = "") -> SparrowResult:
+def _result(instance: dict, solution: dict) -> SparrowResult:
     """Read a Sparrow output JSON; not ok unless every requested item was placed.
 
     The output is the instance echoed back plus a ``solution`` block:
     ``{"strip_width", "layout": {"placed_items": [...]}, ...}``.
     """
-    if solution is None:
-        return SparrowResult(False, error)
     sol = solution.get("solution", solution)
     layout = sol.get("layout", {}) if isinstance(sol, dict) else {}
     placements = []
@@ -481,7 +479,7 @@ def sparrow_options(
     seed: int = 0,
     time_limit_sec: int = 8,
     on_progress=None,
-) -> dict:
+) -> GroupCost | None:
     """``core.sheet_cost.compute_options`` with Sparrow shape nesting.
 
     ``on_progress``, if given, receives ``("size", index=, count=, w=, h=)``
@@ -498,13 +496,8 @@ def sparrow_options(
             run_fn=run_fn, seed=seed, time_limit_sec=time_limit_sec,
             separation=separation, on_progress=on_progress,
         )
-        pack, eff_w, eff_h, draw_w, draw_h = best
-        if not pack.ok:
-            return Packing(sheets=[], sheets_needed=0, eff_w=eff_w, eff_h=eff_h,
-                           draw_w=sw, draw_h=sh, failed=1, reason=pack.reason)
-        return Packing(sheets=pack.sheets, sheets_needed=pack.sheets_needed,
-                       eff_w=eff_w, eff_h=eff_h, draw_w=draw_w, draw_h=draw_h,
-                       alt=_alt_layout(alt))
+        best.alt = alt
+        return best
 
     return compute_options(
         lookup, material, thickness, thickness_mm,
@@ -514,21 +507,19 @@ def sparrow_options(
 
 
 def _pack_best_orientation(parts, sw, sh, clamp, *, run_fn, seed, time_limit_sec,
-                           separation, on_progress=None):
+                           separation, on_progress=None) -> tuple[Packing, Packing | None]:
     """Pack the sheet both ways round (portrait / landscape); return ``(best, alt)``.
 
-    Each attempt is ``(pack, eff_w, eff_h, draw_w, draw_h)``: ``draw_w × draw_h``
-    is that orientation's sheet and ``eff_w × eff_h`` its usable area after the
-    clamp. ``best`` has the fewest sheets (on a tie the long-side strip) and
-    drives the price; ``alt`` is the other orientation's real re-nest, for the
-    "turn the sheet" view (None when square, skipped or not fitting). When
-    neither fits, ``(first_attempt, None)`` is returned to surface the failure.
+    ``best`` has the fewest sheets (on a tie the long-side strip) and drives
+    the price; ``alt`` is the other orientation's real re-nest, for the "turn
+    the sheet" view (None when square, skipped or not fitting). When neither
+    fits, ``(first_attempt, None)`` is returned to surface the failure.
 
     The turned sheet is skipped when every part may turn a quarter: its layout
     would just be the first one rotated. Otherwise both nest at the same time —
     Sparrow's time limit is wall-clock, so the pair takes about as long as one.
     """
-    def attempt(cw, ch):
+    def attempt(cw, ch) -> Packing:
         ew, eh = effective_sheet(cw, ch, clamp)
         on_sheet = None
         if on_progress is not None:
@@ -537,7 +528,9 @@ def _pack_best_orientation(parts, sw, sh, clamp, *, run_fn, seed, time_limit_sec
         pack = greedy_fixed_sheets(parts, ew, eh, run_fn=run_fn, seed=seed,
                                    time_limit_sec=time_limit_sec, separation=separation,
                                    on_sheet=on_sheet)
-        return pack, ew, eh, cw, ch
+        return Packing(sheets=pack.sheets, sheets_needed=pack.sheets_needed,
+                       eff_w=ew, eff_h=eh, draw_w=cw, draw_h=ch,
+                       failed=0 if pack.ok else 1, reason=pack.reason)
 
     # Sparrow's fixed strip height is the sheet's short side; the strip runs
     # along the long side (listed first, so it also wins a tie).
@@ -549,10 +542,10 @@ def _pack_best_orientation(parts, sw, sh, clamp, *, run_fn, seed, time_limit_sec
             options = list(pool.map(lambda d: attempt(*d),
                                     [(long_side, short_side), (short_side, long_side)]))
 
-    ok = [o for o in options if o[0].ok]
+    ok = [o for o in options if not o.failed]
     if not ok:
         return options[0], None
-    best = min(ok, key=lambda o: o[0].sheets_needed)
+    best = min(ok, key=lambda o: o.sheets_needed)
     return best, next((o for o in ok if o is not best), None)
 
 
@@ -566,15 +559,3 @@ def _quarter_turn_free(parts) -> bool:
         if any((a + 90) % 360 not in angles for a in angles):
             return False
     return True
-
-
-def _alt_layout(alt) -> dict | None:
-    """The other orientation's attempt as a small display dict."""
-    if alt is None:
-        return None
-    pack, ew, eh, dw, dh = alt
-    return {
-        "_sheets": pack.sheets, "_eff_w": ew, "_eff_h": eh, "_sw": dw, "_sh": dh,
-        "sheets_needed": pack.sheets_needed,
-        "utilization": utilization(pack.used_area, dw, dh, pack.sheets_needed),
-    }

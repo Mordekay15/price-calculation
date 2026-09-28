@@ -64,7 +64,6 @@ def test_result_needs_every_requested_item_placed():
     assert ok.ok and ok.strip_width == 50.0 and ok.placements[0] == (0, 90.0, (1.0, 2.0))
     assert not _result(instance, placed(1)).ok
     assert not _result(instance, placed(0)).ok
-    assert _result(instance, None, "boom").message == "boom"
 
 
 def test_error_message_skips_the_backtrace():
@@ -91,11 +90,21 @@ def test_sparrow_options_prices_with_the_given_solver():
     events = []
     result = sparrow_options(lookup, "S235", "2", 2.0, [square(quantity=10)], run_fn=fake_solver,
                              on_progress=lambda kind, **kw: events.append(kind))
-    row = result["rows"][0]
-    assert row["Tarvittavat levyt"] == 1
-    assert row["Käyttöaste"] == "5.0 %"                  # 10 × 0.01 m² of 2 m²
-    assert row["Yhteensä €"] == 28.8                     # 32 kg × 900 €/tn
+    option = result.options[0]
+    assert option.sheets_needed == 1
+    assert math.isclose(option.utilization, 0.05)        # 10 × 0.01 m² of 2 m²
+    assert math.isclose(option.total_eur, 28.8)          # 32 kg × 900 €/tn
     assert events[0] == "size" and "sheet" in events
+
+
+def test_parts_that_may_not_turn_are_also_nested_on_the_turned_sheet():
+    part = SparrowPart(part_id="r", quantity=6, outer=[(0, 0), (300, 0), (300, 200), (0, 200)],
+                       allowed_orientations=(0.0,), width_mm=300, height_mm=200)
+    result = sparrow_options({("2", "S235 | 1000x2000"): 900.0}, "S235", "2", 2.0, [part],
+                             run_fn=fake_solver)
+    packing = result.options[0].packing
+    assert (packing.draw_w, packing.draw_h) == (2000, 1000)
+    assert (packing.alt.draw_w, packing.alt.draw_h) == (1000, 2000)
 
 
 @pytest.mark.sparrow
