@@ -104,6 +104,8 @@ def render_group(
 
 
 def _size_label(o: SheetOption) -> str:
+    if o.combo:
+        return " + ".join(f"{_size_label(sub)} ×{sub.sheets_needed}" for sub in o.combo)
     return f"{fmt_m(o.sw)} × {fmt_m(o.sh)} m"
 
 
@@ -150,25 +152,38 @@ def _render_breakdown(
     density_g_cm3 = density_for_material(material) * 1e6
     margin_factor = 1 + margin_pct / 100
 
-    steps = [
-        ("1. Perushinta (hinnastosta)",
-         f"{material}, {thickness} mm",
-         f"{o.base_ppt:,.2f} €/tn"),
-        (f"2. Lisää kate (+{margin_pct:g}%)",
-         f"{o.base_ppt:,.2f} × {margin_factor:.4f}",
-         f"{o.adjusted_ppt:,.2f} €/tn"),
-        ("3. Materiaalin tiheys",
-         f"tiheys({material})",
-         f"{density_g_cm3:.2f} g/cm³"),
-        ("4. Yhden levyn paino",
-         f"{o.sw} × {o.sh} × {thickness_mm:g} mm × {density_g_cm3:.2f} g/cm³",
-         f"{o.sheet_weight_kg:,.2f} kg"),
-        ("5. Tarvittavat levyt (sijoittelusta)",
-         f"{n_pieces} kpl sijoitettu {_size_label(o)} levylle",
-         f"{o.sheets_needed}"),
-        ("6. Levyjen kokonaispaino",
-         f"{o.sheet_weight_kg:,.2f} × {o.sheets_needed}",
-         f"{o.sheet_kg:,.2f} kg"),
+    # Steps 1–2 and 4–6 are per sheet size: once, or once per size of a combination.
+    sizes = o.combo or [o]
+
+    def per_size(sub: SheetOption, title: str) -> str:
+        return f"{title} — {_size_label(sub)}" if o.combo else title
+
+    steps = []
+    for sub in sizes:
+        steps += [
+            (per_size(sub, "1. Perushinta (hinnastosta)"),
+             f"{material}, {thickness} mm",
+             f"{sub.base_ppt:,.2f} €/tn"),
+            (per_size(sub, f"2. Lisää kate (+{margin_pct:g}%)"),
+             f"{sub.base_ppt:,.2f} × {margin_factor:.4f}",
+             f"{sub.adjusted_ppt:,.2f} €/tn"),
+        ]
+    steps.append(("3. Materiaalin tiheys",
+                  f"tiheys({material})",
+                  f"{density_g_cm3:.2f} g/cm³"))
+    for sub in sizes:
+        steps += [
+            (per_size(sub, "4. Yhden levyn paino"),
+             f"{sub.sw} × {sub.sh} × {thickness_mm:g} mm × {density_g_cm3:.2f} g/cm³",
+             f"{sub.sheet_weight_kg:,.2f} kg"),
+            (per_size(sub, "5. Tarvittavat levyt (sijoittelusta)"),
+             f"{n_pieces} kpl sijoitettu {_size_label(o)} levyille",
+             f"{sub.sheets_needed}"),
+            (per_size(sub, "6. Levyjen kokonaispaino"),
+             f"{sub.sheet_weight_kg:,.2f} × {sub.sheets_needed}",
+             f"{sub.sheet_kg:,.2f} kg"),
+        ]
+    steps += [
         ("7. Kappaleiden kokonaispaino",
          "Σ (pinta-ala × p × tiheys × määrä)",
          f"{pieces_kg:,.2f} kg"),

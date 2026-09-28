@@ -4,7 +4,7 @@ shapes) and the DXF part preview on a card."""
 import streamlit as st
 
 from core.dxf import DxfReport
-from core.sheet_cost import SheetOption, utilization
+from core.sheet_cost import SheetOption, fmt_m, utilization
 
 
 # ── Shared pieces ─────────────────────────────────────────────
@@ -139,7 +139,13 @@ def draw_sparrow_layout(option: SheetOption, parts: list, key: str) -> None:
     (e.g. "Levy 1–4 · ×4"). The "turn" toggle shows the *other* orientation's
     real re-nest when Sparrow made one; otherwise (a square sheet, or parts free
     to turn 90°) it just rotates the picture. The price never changes.
+    A combination of sizes is drawn size by size, without the toggle.
     """
+    if option.combo:
+        for sub in option.combo:
+            st.markdown(f"**{fmt_m(sub.sw)} × {fmt_m(sub.sh)} m**")
+            _draw_packing(sub.packing, parts, rotate=False)
+        return
     alt = option.packing.alt
     rotate = st.checkbox(
         "Käännä levy 90°",
@@ -158,8 +164,11 @@ def draw_sparrow_layout(option: SheetOption, parts: list, key: str) -> None:
             f"{utilization(used, alt.draw_w, alt.draw_h, alt.sheets_needed) * 100:.1f} %, "
             f"{alt.sheets_needed} levyä."
         )
-    turn_picture = rotate and not alt  # no re-nest: rotate the picture only
+    _draw_packing(shown, parts, rotate=rotate and not alt)  # no re-nest: turn the picture
 
+
+def _draw_packing(shown, parts: list, *, rotate: bool) -> None:
+    """The legend and one card per distinct sheet layout of one packing."""
     sheets = shown.sheets
     sw, sh = shown.draw_w, shown.draw_h
     st.markdown(f"**Sijoittelu** — {sum(s.count for s in sheets)} levyä")
@@ -180,8 +189,7 @@ def draw_sparrow_layout(option: SheetOption, parts: list, key: str) -> None:
         first = last + 1
         cards.append((
             f"**{label}** · käyttöaste {utilization(sheet.used_area, sw, sh) * 100:.1f} %",
-            _shape_sheet_svg(sheet, sw, sh, shown.eff_w, shown.eff_h,
-                             scale, turn_picture),
+            _shape_sheet_svg(sheet, sw, sh, shown.eff_w, shown.eff_h, scale, rotate),
         ))
     _render_sheet_grid(cards)
 

@@ -579,7 +579,8 @@ def _combo(nester: SheetNester, result: GroupCost, part_area_mm2: float) -> Shee
         if not reason:
             libraries[i] = Library(o.total_eur / o.sheets_needed, patterns, o.sw * o.sh)
     cover = cheapest_cover(nester.demand(), libraries, shares=_areas(nester.parts))
-    used = sorted({item.key for item in cover or []})
+    used = sorted({item.key for item in cover or []},
+                  key=lambda i: -singles[i].sw * singles[i].sh)      # biggest sheet first
     if len(used) < 2:
         return None
     parts = []
