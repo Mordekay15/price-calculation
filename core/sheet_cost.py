@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.pricing import density_for_material, get_sizes_for_material
+from core.pricing import get_sizes_for_material, weight_kg
 
 
 @dataclass
@@ -124,8 +124,7 @@ def compute_options(
         return {"rows": [], "n_pieces": n_pieces, "pieces_kg": 0.0,
                 "has_pieces": True, "has_candidates": False}
 
-    density = density_for_material(material)
-    pieces_kg = part_area_mm2 * thickness_mm * density
+    pieces_kg = weight_kg(part_area_mm2, thickness_mm, material)
 
     rows = []
     for index, (sw, sh, price_per_tonne) in enumerate(candidates):
@@ -138,7 +137,7 @@ def compute_options(
             continue
 
         sheets_needed = packing.sheets_needed
-        sheet_weight_kg = sw * sh * thickness_mm * density
+        sheet_weight_kg = weight_kg(sw * sh, thickness_mm, material)
         util = utilization(part_area_mm2, sw, sh, sheets_needed)
         sheet_kg = sheet_weight_kg * sheets_needed
         billable_kg = sheet_kg

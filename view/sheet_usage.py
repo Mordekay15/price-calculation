@@ -16,7 +16,7 @@ Only the layout drawing differs per tab, so the caller passes it in:
 
 import streamlit as st
 
-from core.pricing import COPPER_MATERIAL, density_for_material, piece_weight_kg
+from core.pricing import COPPER_MATERIAL, density_for_material, weight_kg
 from core.sheet_cost import cheapest_index, fmt_m, utilization
 
 
@@ -343,7 +343,7 @@ def render_mix_costs(active: dict, products: list[dict], thickness_mm: float,
         return
     rows = []
     for prod in products:
-        one_kg = piece_weight_kg(prod["width"], prod["height"], thickness_mm, material)
+        one_kg = weight_kg(prod["width"] * prod["height"], thickness_mm, material)
         unit_cost = one_kg * active["_ppt"] / 1000
         rows.append({
             "Tuote":       prod.get("name") or f"#{prod['_global_idx'] + 1}",

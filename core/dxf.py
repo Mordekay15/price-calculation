@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 
 from ezdxf import path, recover
 
-from core.geometry import area, bbox, point_in_polygon, representative_point
+from core.geometry import area, bbox, bbox_wh, point_in_polygon, representative_point
 
 Point = tuple[float, float]
 
@@ -143,13 +143,11 @@ class Contour:
 
     @property
     def width_mm(self) -> float:
-        x0, _, x1, _ = bbox(self.points)
-        return x1 - x0
+        return bbox_wh(self.points)[0]
 
     @property
     def height_mm(self) -> float:
-        _, y0, _, y1 = bbox(self.points)
-        return y1 - y0
+        return bbox_wh(self.points)[1]
 
 
 @dataclass

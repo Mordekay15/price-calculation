@@ -19,11 +19,10 @@ import streamlit as st
 from core.pricing import (
     COPPER_MATERIAL,
     COPPER_THICKNESSES,
-    density_for_material,
     get_materials,
     get_thicknesses_for_material,
     parse_thickness_mm,
-    piece_weight_kg,
+    weight_kg,
 )
 
 
@@ -254,11 +253,8 @@ def render_pieces_summary(
         thickness_mm = parse_thickness_mm(prod["thickness"]) if prod["thickness"] else None
         if thickness_mm is None:
             continue
-        net_area = areas_mm2.get(prod["id"])
-        if net_area is not None:
-            one_weight = net_area * thickness_mm * density_for_material(prod["material"])
-        else:
-            one_weight = piece_weight_kg(prod["width"], prod["height"], thickness_mm, prod["material"])
+        area = areas_mm2.get(prod["id"], prod["width"] * prod["height"])
+        one_weight = weight_kg(area, thickness_mm, prod["material"])
         batch_weight = one_weight * prod["qty"]
         total_weight_kg += batch_weight
 

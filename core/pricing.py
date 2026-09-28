@@ -1,14 +1,5 @@
-"""
-core/pricing.py
-===============
-Price data and material facts — pure, no Streamlit, no I/O.
-
-* ``build_lookup`` flattens the parsed price lists into
-  ``(thickness, "Material | Size") -> €/tn``.
-* Materials, sizes and thicknesses available in that lookup.
-* Densities and piece weights.
-* Copper: always selectable, priced per kilo by the user (sidebar).
-"""
+"""Price data and material facts, pure (no Streamlit, no I/O): the price lookup,
+materials / sizes / thicknesses in it, densities and weights, and copper."""
 
 THICKNESS_KEY = "Paksuus (mm)"
 
@@ -38,6 +29,11 @@ def density_for_material(material: str | None) -> float:
     return DENSITIES_KG_PER_MM3["steel"]
 
 
+def weight_kg(area_mm2: float, thickness_mm: float, material: str | None = None) -> float:
+    """Weight in kg of a flat piece of ``area_mm2``, using the material's density."""
+    return area_mm2 * thickness_mm * density_for_material(material)
+
+
 # ── Lookup builder ────────────────────────────────────────────────────────────
 
 def build_lookup(data: dict) -> dict:
@@ -64,14 +60,20 @@ def build_lookup(data: dict) -> dict:
     return lookup
 
 
-# ── Sorting ───────────────────────────────────────────────────────────────────
+# ── Thickness ─────────────────────────────────────────────────────────────────
+
+def parse_thickness_mm(thickness_str: str) -> float | None:
+    """Convert a thickness label like '0,7/0,75' or '1,25' to mm as float."""
+    try:
+        return float(thickness_str.replace(",", ".").split("/")[0].split("x")[0])
+    except (ValueError, IndexError, AttributeError):
+        return None
+
 
 def thickness_sort_key(t: str) -> float:
     """Sort thickness strings numerically, push non-numeric ones to the end."""
-    try:
-        return float(t.replace(",", ".").split("/")[0].split("x")[0]) if t and t[0].isdigit() else 999
-    except (ValueError, IndexError):
-        return 999
+    mm = parse_thickness_mm(t)
+    return 999 if mm is None else mm
 
 
 # ── Material / size helpers ───────────────────────────────────────────────────
@@ -107,26 +109,6 @@ def get_thicknesses_for_material(lookup: dict, material: str) -> list[str]:
         if extract_material_and_size(lbl)[0] == material
     }
     return sorted(thicks, key=thickness_sort_key)
-
-
-# ── Weight calculation ────────────────────────────────────────────────────────
-
-def parse_thickness_mm(thickness_str: str) -> float | None:
-    """Convert a thickness label like '0,7/0,75' or '1,25' to mm as float."""
-    try:
-        return float(thickness_str.replace(",", ".").split("/")[0].split("x")[0])
-    except (ValueError, IndexError, AttributeError):
-        return None
-
-
-def piece_weight_kg(
-    width_mm: float,
-    height_mm: float,
-    thickness_mm: float,
-    material: str | None = None,
-) -> float:
-    """Weight of a rectangular plate in kg, using the material's density."""
-    return width_mm * height_mm * thickness_mm * density_for_material(material)
 
 
 # ── Copper ────────────────────────────────────────────────────────────────────
