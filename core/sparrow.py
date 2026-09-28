@@ -19,6 +19,7 @@ from pathlib import Path
 from core.dxf import DxfReport
 from core.geometry import bbox, bbox_wh, net_area, rotate_translate, signed_area
 from core.patterns import CoverItem, Library, Pattern, cheapest_cover, search_patterns
+from core.rect_nesting import pack as box_pack
 from core.sheet_cost import GroupCost, Packing, compute_options, effective_sheet
 
 Point = tuple[float, float]
@@ -240,6 +241,8 @@ def _error_message(stderr: str) -> str:
 # W×H sheet. A mix of parts *fits* a sheet when Sparrow nests it in a strip as
 # high as the sheet and every part lands within the first sheet_w of length.
 #
+#   0. a mix whose bounding boxes already fit (core.rect_nesting) needs no
+#      Sparrow run at all — Sparrow is only asked about tighter, interlocking mixes;
 #   1. one strip run of the whole order seeds the search: every sheet_w window
 #      of that strip is a layout known to fit;
 #   2. core.patterns.search_patterns asks Sparrow about a few more mixes (e.g.
@@ -321,12 +324,20 @@ def pattern_library(parts, sheet_w: float, sheet_h: float, *, run_fn,
         if p.quantity > 0 and not _fits(w, h, sheet_w, sheet_h, p.allowed_orientations):
             return (), f"osa {p.part_id} ei mahdu levylle ({w:.0f}×{h:.0f} mm)"
 
+    gap = settings.separation or 0.0
+
     def fits(mix):
+        boxed = _box_layout(parts, mix, sheet_w, sheet_h, gap)
+        if boxed is not None:
+            return mix, boxed
         err, placed, _ = _strip(parts, mix, sheet_h, run_fn, settings)
         kept = [] if err else _window(placed, 0.0, sheet_w, sheet_h)
         return _mix_of(kept, len(parts)), kept
 
     demand = tuple(int(p.quantity) for p in parts)
+    boxed = _box_layout(parts, demand, sheet_w, sheet_h, gap)
+    if boxed is not None:
+        return (Pattern(demand, boxed),), ""
     err, placed, strip_len = _strip(parts, demand, sheet_h, run_fn, settings)
     if err:
         return (), err
@@ -351,16 +362,33 @@ def _strip(parts, mix, strip_h: float, run_fn, settings: NestSettings):
                  separation=settings.separation)
     if not res.ok:
         return res.message or "Sparrow-ajo epäonnistui", [], None
-    placed = []
-    for local_id, rot, trans in res.placements:
-        if 0 <= local_id < len(active):
-            part = parts[active[local_id]]
-            placed.append(Placed(
-                active[local_id], part.part_id, rot, trans,
-                rotate_translate(part.outer, rot, trans),
-                [rotate_translate(h, rot, trans) for h in part.holes],
-                [rotate_translate(c, rot, trans) for c in part.construction]))
+    placed = [_placed(parts, active[local_id], rot, trans)
+              for local_id, rot, trans in res.placements if 0 <= local_id < len(active)]
     return None, placed, res.strip_width
+
+
+def _box_layout(parts, mix, sheet_w: float, sheet_h: float, gap: float) -> list[Placed] | None:
+    """``mix`` on one sheet by bounding boxes alone (0° / 90°), no Sparrow run;
+    None when the boxes do not fit. Boxes grow by ``gap``, so the sheet does
+    too: the last part in a row needs no gap after it."""
+    pieces = [(i, c, *(d + gap for d in bbox_wh(parts[i].outer)))
+              for i, n in enumerate(mix) for c in range(n)]
+    sheets, failed = box_pack(pieces, sheet_w + gap, sheet_h + gap, allow_rotation=True)
+    if failed or len(sheets) != 1:
+        return None
+    layout = []
+    for box in sheets[0].placements:
+        rot = 90.0 if box.rotated else 0.0
+        minx, miny, _, _ = bbox(rotate_translate(parts[box.product_idx].outer, rot, (0.0, 0.0)))
+        layout.append(_placed(parts, box.product_idx, rot, (box.x - minx, box.y - miny)))
+    return layout
+
+
+def _placed(parts, index: int, rot: float, trans: tuple[float, float]) -> Placed:
+    part = parts[index]
+    return Placed(index, part.part_id, rot, trans, rotate_translate(part.outer, rot, trans),
+                  [rotate_translate(h, rot, trans) for h in part.holes],
+                  [rotate_translate(c, rot, trans) for c in part.construction])
 
 
 def _window(placed: list[Placed], x0: float, sheet_w: float, sheet_h: float) -> list[Placed]:

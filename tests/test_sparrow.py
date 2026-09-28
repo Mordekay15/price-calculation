@@ -93,6 +93,17 @@ def test_mixed_parts_are_all_placed_on_the_fewest_sheets():
     assert len(runs) <= 1 + 8                                # seed strip + probe budget
 
 
+def test_a_mix_that_fits_by_bounding_boxes_needs_no_sparrow_run():
+    runs = []
+    counting = lambda inst, **kw: runs.append(inst) or fake_solver(inst, **kw)  # noqa: E731
+    bar = SparrowPart(part_id="bar", quantity=2, outer=[(0, 0), (300, 0), (300, 100), (0, 100)])
+    sheets, reason = pack_fixed_sheets([bar], 250, 350, run_fn=counting)   # needs a 90° turn
+    assert reason == "" and runs == []
+    assert [(len(s.placements), s.count) for s in sheets] == [(2, 1)]
+    assert all(-1e-6 <= x <= 250 and -1e-6 <= y <= 350
+               for pl in sheets[0].placements for x, y in pl.outer)
+
+
 def test_reports_a_part_too_big_for_the_sheet():
     sheets, reason = pack_fixed_sheets([square(size=300, name="big")], 250, 250,
                                        run_fn=fake_solver)
