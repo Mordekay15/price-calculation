@@ -5,7 +5,7 @@ a material and thickness, price every sheet size. The nesting is passed in as
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from core.pricing import get_sizes_for_material, parse_thickness_mm, weight_kg
 
@@ -35,7 +35,12 @@ class Packing:
 class SheetOption:
     """One priced sheet size. When ``failed`` > 0 the pieces did not fit and
     only the size, prices, packing and reason are set; a ``skipped`` size was
-    not nested at all (it could not be the cheapest) and has no packing."""
+    not nested at all (it could not be the cheapest) and has no packing.
+
+    A combination of sizes (see ``combo_option``) lists one option per size in
+    ``combo``; its own ``sw``/``sh`` are the first size's, its packing is None
+    and its prices and sheet weight are averages over the sizes.
+    """
 
     sw: int
     sh: int
@@ -50,6 +55,7 @@ class SheetOption:
     failed: int = 0
     reason: str = ""
     skipped: bool = False
+    combo: list[SheetOption] | None = None
 
     @property
     def ok(self) -> bool:
@@ -125,9 +131,10 @@ def compute_options(
     no pieces or no priced size.
 
     With ``skip_dearer`` (for a slow packer) sizes are packed cheapest-looking
-    first, and a size whose cost at a perfect fill (``⌈part area / sheet
-    area⌉`` sheets) is already dearer than a size priced before is not packed
-    at all but marked ``skipped``.
+    first, and a size is not packed at all but marked ``skipped`` when even its
+    cheapest possible use — one sheet of it, the rest of the part area at the
+    lowest €/mm² of any size — is dearer than a size priced before. So it can
+    neither win alone nor in a combination of sizes.
 
     ``part_area_mm2`` is the total real part area of the group (see
     ``utilization``); the piece weight the sheet cost is spread over is derived
@@ -151,9 +158,11 @@ def compute_options(
     def sheet_eur(sw: int, sh: int, price_per_tonne: float) -> float:
         return price_per_tonne * with_margin * weight_kg(sw * sh, thickness_mm, material) / 1000
 
+    eur_per_mm2 = min(sheet_eur(*c) / (c[0] * c[1]) for c in candidates)
+
     def lower_bound(i: int) -> float:
         sw, sh, price_per_tonne = candidates[i]
-        return math.ceil(part_area_mm2 / (sw * sh)) * sheet_eur(sw, sh, price_per_tonne)
+        return sheet_eur(sw, sh, price_per_tonne) + max(0.0, part_area_mm2 - sw * sh) * eur_per_mm2
 
     order = list(range(len(candidates)))
     if skip_dearer:
@@ -184,6 +193,35 @@ def compute_options(
             best_eur = min(best_eur, option.total_eur)
         options[i] = option
     return GroupCost(options, n_pieces, pieces_kg)
+
+
+def combo_option(parts: list[tuple[SheetOption, Packing]], *, part_area_mm2: float,
+                 pieces_kg: float) -> SheetOption:
+    """One option for sheets of several sizes. ``parts`` pairs each size's
+    single-size option (for its price and sheet weight) with that size's share
+    of the sheets; ``part_area_mm2`` / ``pieces_kg`` are the group's."""
+    subs = []
+    for single, packing in parts:
+        n = packing.sheets_needed
+        subs.append(replace(single, packing=packing, sheets_needed=n,
+                            total_eur=single.adjusted_ppt * single.sheet_weight_kg * n / 1000,
+                            utilization=0.0, bill_rate_ppt=0.0))
+    total_eur = sum(o.total_eur for o in subs)
+    kg = sum(o.sheet_kg for o in subs)
+    n_sheets = sum(o.sheets_needed for o in subs)
+    bought_mm2 = sum(o.sw * o.sh * o.sheets_needed for o in subs)
+    return SheetOption(
+        subs[0].sw, subs[0].sh,
+        base_ppt=sum(o.base_ppt * o.sheet_kg for o in subs) / kg,
+        adjusted_ppt=total_eur * 1000 / kg,
+        packing=None,
+        sheet_weight_kg=kg / n_sheets,
+        sheets_needed=n_sheets,
+        total_eur=total_eur,
+        bill_rate_ppt=total_eur * 1000 / pieces_kg if pieces_kg else 0.0,
+        utilization=part_area_mm2 / bought_mm2,
+        combo=subs,
+    )
 
 
 def cheapest_index(options: list[SheetOption]) -> int | None:

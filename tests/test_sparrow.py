@@ -9,6 +9,7 @@ import pytest
 
 from core.dxf import read_dxf
 from core.geometry import bbox, signed_area
+from core.sheet_cost import cheapest_index
 from core.sparrow import (
     SparrowPart,
     SparrowResult,
@@ -132,6 +133,21 @@ def test_sparrow_options_prices_with_the_given_solver():
     assert math.isclose(option.utilization, 0.05)        # 10 × 0.01 m² of 2 m²
     assert math.isclose(option.total_eur, 28.8)          # 32 kg × 900 €/tn
     assert events[0] == "size" and "sheet" in events
+
+
+def test_a_combination_of_sizes_is_offered_when_cheaper():
+    # 3 × 1 m² parts: 2 on a cheap 2 m² sheet + 1 on a dearer 1 m² sheet beats
+    # either size alone (2 × 2 m² or 3 × 1 m²).
+    lookup = {("2", "S235 | 1000x2000"): 800.0, ("2", "S235 | 1000x1000"): 1000.0}
+    result = sparrow_options(lookup, "S235", "2", 2.0, [square(1000, quantity=3)],
+                             run_fn=fake_solver)
+    combo = result.options[cheapest_index(result.options)]
+    assert combo.combo is not None and combo.sheets_needed == 2
+    assert sorted((o.sw, o.sh, o.sheets_needed) for o in combo.combo) == [
+        (1000, 1000, 1), (1000, 2000, 1)]
+    assert math.isclose(combo.total_eur, sum(o.total_eur for o in combo.combo))
+    assert math.isclose(combo.utilization, 1.0)
+    assert combo.total_eur < min(o.total_eur for o in result.options if o.combo is None)
 
 
 def test_parts_that_may_not_turn_are_also_nested_on_the_turned_sheet():

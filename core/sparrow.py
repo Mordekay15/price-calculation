@@ -14,14 +14,21 @@ import tempfile
 import threading
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from core.dxf import DxfReport
 from core.geometry import bbox, bbox_wh, net_area, rotate_translate, signed_area
 from core.patterns import CoverItem, Library, Mix, Pattern, cheapest_cover, search_patterns, within
 from core.rect_nesting import pack as box_pack
-from core.sheet_cost import GroupCost, Packing, compute_options, effective_sheet
+from core.sheet_cost import (
+    GroupCost,
+    Packing,
+    SheetOption,
+    combo_option,
+    compute_options,
+    effective_sheet,
+)
 
 Point = tuple[float, float]
 
@@ -325,7 +332,7 @@ class SheetNester:
         patterns, reason = self.library(sheet_w, sheet_h)
         if reason:
             return [], reason
-        cover = cheapest_cover(self._demand(), {"sheet": Library(1.0, patterns)},
+        cover = cheapest_cover(self.demand(), {"sheet": Library(1.0, patterns)},
                                shares=_areas(self.parts))
         if cover is None:
             return [], _NO_FIT
@@ -338,7 +345,7 @@ class SheetNester:
             w, h = bbox_wh(p.outer)
             if p.quantity > 0 and not _fits(w, h, sheet_w, sheet_h, p.allowed_orientations):
                 return (), f"osa {p.part_id} ei mahdu levylle ({w:.0f}×{h:.0f} mm)"
-        demand = self._demand()
+        demand = self.demand()
         fitted, layout = self._without_sparrow(sheet_w, sheet_h, demand) or (None, None)
         if fitted == demand:
             return (Pattern(demand, layout),), ""
@@ -350,7 +357,7 @@ class SheetNester:
                                    shares=shares, budget=_PROBE_BUDGET, seeds=seeds)
         return (tuple(patterns), "") if patterns else ((), _NO_FIT)
 
-    def _demand(self) -> Mix:
+    def demand(self) -> Mix:
         return tuple(int(p.quantity) for p in self.parts)
 
     def _seeds(self, sheet_w: float, sheet_h: float):
@@ -359,7 +366,7 @@ class SheetNester:
         with self._lock:
             strip = self._strips.get(sheet_h)
         if strip is None:
-            strip = _strip(self.parts, self._demand(), sheet_h, self.run_fn, self.settings)
+            strip = _strip(self.parts, self.demand(), sheet_h, self.run_fn, self.settings)
             with self._lock:
                 self._strips[sheet_h] = strip
         err, placed, strip_len = strip
@@ -395,13 +402,19 @@ class SheetNester:
     def _known(self, sheet_w: float, sheet_h: float, mix: Mix):
         """``(fitted, layout)`` when an earlier answer settles ``mix``, else None."""
         with self._lock:
-            for w, h, fitted, layout in self._fits:
-                if w <= sheet_w + _TOL and h <= sheet_h + _TOL and within(mix, fitted):
-                    return mix, _cut(layout, mix)
-            for w, h, missed in self._misses:
-                if w >= sheet_w - _TOL and h >= sheet_h - _TOL and within(missed, mix):
-                    return (0,) * len(mix), []
-        return None
+            smaller = [(fitted, layout) for w, h, fitted, layout in self._fits
+                       if w <= sheet_w + _TOL and h <= sheet_h + _TOL]
+            missed = any(w >= sheet_w - _TOL and h >= sheet_h - _TOL and within(m, mix)
+                         for w, h, m in self._misses)
+        for fitted, layout in smaller:
+            if within(mix, fitted):
+                return mix, _cut(layout, mix)
+        if not missed:
+            return None
+        # A known miss: answer with the largest known fit inside it, as Sparrow did.
+        fitted, layout = max(((f, lay) for f, lay in smaller if within(f, mix)),
+                             key=lambda fl: sum(fl[0]), default=((0,) * len(mix), []))
+        return fitted, _cut(layout, fitted)
 
 
 def _strip(parts, mix, strip_h: float, run_fn, settings: NestSettings):
@@ -544,11 +557,41 @@ def sparrow_options(
         best.alt = alt
         return best
 
-    return compute_options(
+    result = compute_options(
         lookup, material, thickness, thickness_mm,
         n_pieces=n_pieces, part_area_mm2=part_area_mm2, pack=pack_fn,
         margin_pct=margin_pct, on_progress=on_progress, skip_dearer=True,
     )
+    combo = _combo(nester, result, part_area_mm2) if result is not None else None
+    if combo is not None:
+        result.options.append(combo)
+    return result
+
+
+def _combo(nester: SheetNester, result: GroupCost, part_area_mm2: float) -> SheetOption | None:
+    """Sheets of several sizes (e.g. the leftover on a smaller sheet) when that
+    beats every single size; built from the sizes already nested, so it needs
+    no new Sparrow run."""
+    singles = [o for o in result.options if o.ok]
+    libraries = {}
+    for i, o in enumerate(singles):
+        patterns, reason = nester.library(o.packing.eff_w, o.packing.eff_h)
+        if not reason:
+            libraries[i] = Library(o.total_eur / o.sheets_needed, patterns, o.sw * o.sh)
+    cover = cheapest_cover(nester.demand(), libraries, shares=_areas(nester.parts))
+    used = sorted({item.key for item in cover or []})
+    if len(used) < 2:
+        return None
+    parts = []
+    for i in used:
+        o = singles[i]
+        sheets = [_packed_sheet(item, o.packing.eff_w, o.packing.eff_h)
+                  for item in cover if item.key == i]
+        packing = replace(o.packing, sheets=sheets, alt=None,
+                          sheets_needed=sum(s.count for s in sheets))
+        parts.append((o, packing))
+    combo = combo_option(parts, part_area_mm2=part_area_mm2, pieces_kg=result.pieces_kg)
+    return combo if combo.total_eur < min(o.total_eur for o in singles) - 1e-6 else None
 
 
 def _pack_best_orientation(nester: SheetNester, sw, sh, clamp, on_progress=None) -> tuple[Packing, Packing | None]:
