@@ -27,6 +27,7 @@ from core.calculator import (
     parse_thickness_mm,
 )
 from core.copper import COPPER_MATERIAL
+from core.geometry import net_area
 from core.sparrow_input import parts_from_dxf
 from core.sparrow_runner import find_executable, run_sparrow
 from core.sparrow_sheet_cost import compute_options_sparrow
@@ -226,26 +227,8 @@ def _parts_for_group(
             allowed_orientations=rotations,
         )
         out.extend(gparts)
-        net_area_by_fid[prod["id"]] = sum(_net_area(p) for p in gparts)
+        net_area_by_fid[prod["id"]] = sum(net_area(p.outer, p.holes) for p in gparts)
     return out, net_area_by_fid
-
-
-def _net_area(part) -> float:
-    """One part's true cut area (mm²): outer outline minus its holes."""
-    return _poly_area(part.outer) - sum(_poly_area(h) for h in part.holes)
-
-
-def _poly_area(points) -> float:
-    """Absolute shoelace area of a ring."""
-    n = len(points)
-    if n < 3:
-        return 0.0
-    s = 0.0
-    for i in range(n):
-        x1, y1 = points[i]
-        x2, y2 = points[(i + 1) % n]
-        s += x1 * y2 - x2 * y1
-    return abs(s) / 2.0
 
 
 def _sig(gkey, products, clamp, rankavali, rotations, time_limit, seed, margin_pct) -> str:

@@ -40,8 +40,9 @@ injected callable, so the greedy logic is unit-testable without the binary.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
+
+from core.geometry import bbox, bbox_wh, net_area, rotate_translate
 
 Point = tuple[float, float]
 
@@ -139,7 +140,7 @@ def greedy_fixed_sheets(
     for i, p in enumerate(parts):
         if remaining[i] <= 0:
             continue
-        w, h = _bbox_wh(p.outer)
+        w, h = bbox_wh(p.outer)
         if not _fits(w, h, sheet_w, sheet_h, getattr(p, "allowed_orientations", None)):
             return PackResult(
                 ok=False,
@@ -203,7 +204,7 @@ def greedy_fixed_sheets(
         for i, n in per_sheet.items():
             remaining[i] -= count * n
         used_area = sum(
-            _poly_area(pl.outer) - sum(_poly_area(h) for h in pl.holes) for pl in best
+            net_area(pl.outer, pl.holes) for pl in best
         )
         sheets.append(PackedSheet(best, sheet_w, sheet_h, used_area, count))
         if on_sheet is not None:
@@ -252,14 +253,14 @@ def _probe(parts: list, demand: dict[int, int], sheet_w: float, sheet_h: float,
             continue
         orig_i = active[local_id]
         part = parts[orig_i]
-        outer_t = _rot(part.outer, rot, trans)
-        minx, miny, maxx, maxy = _bbox(outer_t)
+        outer_t = rotate_translate(part.outer, rot, trans)
+        minx, miny, maxx, maxy = bbox(outer_t)
         if minx < -_TOL or miny < -_TOL or maxx > sheet_w + _TOL or maxy > sheet_h + _TOL:
             continue  # spills past this sheet
         if left[orig_i] <= 0:
             continue
-        holes_t = [_rot(h, rot, trans) for h in getattr(part, "holes", [])]
-        constr_t = [_rot(c, rot, trans) for c in getattr(part, "construction", [])]
+        holes_t = [rotate_translate(h, rot, trans) for h in getattr(part, "holes", [])]
+        constr_t = [rotate_translate(c, rot, trans) for c in getattr(part, "construction", [])]
         kept.append(Placed(orig_i, part.part_id, rot, trans, outer_t, holes_t, constr_t))
         left[orig_i] -= 1
     return None, kept, getattr(res, "strip_width", None)
@@ -315,39 +316,7 @@ def _read_placements(solution: dict):
     return out
 
 
-# ── geometry helpers ─────────────────────────────────────────────────────────
-
-def _rot(points, rotation_deg: float, t: tuple[float, float]):
-    """Apply p' = R(θ)·p + t to a list of mm points."""
-    th = math.radians(rotation_deg)
-    c, s = math.cos(th), math.sin(th)
-    tx, ty = t
-    return [(x * c - y * s + tx, x * s + y * c + ty) for x, y in points]
-
-
-def _bbox(points):
-    xs = [p[0] for p in points]
-    ys = [p[1] for p in points]
-    return min(xs), min(ys), max(xs), max(ys)
-
-
-def _bbox_wh(points) -> tuple[float, float]:
-    minx, miny, maxx, maxy = _bbox(points)
-    return maxx - minx, maxy - miny
-
-
-def _poly_area(points) -> float:
-    """Absolute shoelace area of a ring."""
-    n = len(points)
-    if n < 3:
-        return 0.0
-    s = 0.0
-    for i in range(n):
-        x1, y1 = points[i]
-        x2, y2 = points[(i + 1) % n]
-        s += x1 * y2 - x2 * y1
-    return abs(s) / 2.0
-
+# ── fit check ────────────────────────────────────────────────────────────────
 
 def _fits(w: float, h: float, sw: float, sh: float, orients) -> bool:
     """True if a w×h part fits an sw×sh sheet in some allowed orientation."""

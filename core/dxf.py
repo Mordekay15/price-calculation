@@ -35,6 +35,8 @@ import numpy as np
 from ezdxf import disassemble, recover
 from PIL import Image, ImageDraw
 
+from core.geometry import bbox
+
 # Curve flattening tolerance (drawing units). Arcs/splines are approximated by
 # line segments no further than this from the true curve. 0.2 units ≈ 0.2 mm on
 # a mm drawing — smooth enough to look right, cheap enough to render fast.
@@ -214,9 +216,7 @@ def _unit_factor(unit_code: int) -> float:
 # ── Main-part extraction ─────────────────────────────────────────────────────
 
 def _poly_bbox(polys):
-    xs = [x for poly in polys for x, _ in poly]
-    ys = [y for poly in polys for _, y in poly]
-    return min(xs), min(ys), max(xs), max(ys)
+    return bbox([p for poly in polys for p in poly])
 
 
 def _cluster_polylines(polylines, tol: float):

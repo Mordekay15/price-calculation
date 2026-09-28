@@ -48,6 +48,8 @@ from dataclasses import dataclass, field
 import ezdxf
 from ezdxf import path, recover
 
+from core.geometry import area, point_in_polygon, representative_point
+
 # Curve flattening tolerance in *drawing units* (arcs/circles/bulges are
 # approximated by segments no further than this from the true curve).
 _FLATTENING_DISTANCE = 0.2
@@ -242,52 +244,6 @@ def _mm_per_unit(unit_code: int) -> float:
     return _UNITS_TO_MM.get(unit_code, 1.0)
 
 
-def _shoelace_area(points: list[Point]) -> float:
-    """Absolute polygon area (mm²) via the shoelace formula."""
-    n = len(points)
-    if n < 3:
-        return 0.0
-    s = 0.0
-    for i in range(n):
-        x1, y1 = points[i]
-        x2, y2 = points[(i + 1) % n]
-        s += x1 * y2 - x2 * y1
-    return abs(s) / 2.0
-
-
-def _point_in_polygon(pt: Point, poly: list[Point]) -> bool:
-    """Ray-casting point-in-polygon test (even–odd rule)."""
-    x, y = pt
-    inside = False
-    n = len(poly)
-    j = n - 1
-    for i in range(n):
-        xi, yi = poly[i]
-        xj, yj = poly[j]
-        if (yi > y) != (yj > y):
-            x_cross = xi + (y - yi) * (xj - xi) / (yj - yi) if yj != yi else xi
-            if x < x_cross:
-                inside = not inside
-        j = i
-    return inside
-
-
-def _representative_point(poly: list[Point]) -> Point:
-    """A point that is inside the polygon (centroid, nudged if it lands outside)."""
-    n = len(poly)
-    cx = sum(x for x, _ in poly) / n
-    cy = sum(y for _, y in poly) / n
-    if _point_in_polygon((cx, cy), poly):
-        return cx, cy
-    # Concave shape: scan a horizontal line through the centroid for an inside x.
-    xs = sorted({x for x, _ in poly})
-    for a, b in zip(xs, xs[1:]):
-        mid = (a + b) / 2
-        if _point_in_polygon((mid, cy), poly):
-            return mid, cy
-    return cx, cy
-
-
 def _segments_cross(p1: Point, p2: Point, p3: Point, p4: Point) -> bool:
     """True if open segment p1p2 properly crosses p3p4 (shared endpoints ignored)."""
     def orient(a, b, c):
@@ -434,7 +390,7 @@ def _mark_holes(contours: list[Contour]) -> None:
     just construction/tangent geometry — back into separate parts.
     """
     closed = [c for c in contours if c.closed and len(c.points) >= 3]
-    reps = {id(c): _representative_point(c.points) for c in closed}
+    reps = {id(c): representative_point(c.points) for c in closed}
     for c in closed:
         depth = 0
         for other in closed:
@@ -442,7 +398,7 @@ def _mark_holes(contours: list[Contour]) -> None:
                 continue
             if other.area_mm2 <= c.area_mm2:
                 continue
-            if _point_in_polygon(reps[id(c)], other.points):
+            if point_in_polygon(reps[id(c)], other.points):
                 depth += 1
         c.depth = depth
         c.is_hole = depth >= 1
@@ -539,7 +495,7 @@ def inspect_dxf(data: bytes, name: str = "drawing.dxf") -> InspectionReport:
 
     # 3) Measure area, self-intersection, and hole nesting.
     for c in report.contours:
-        c.area_mm2 = _shoelace_area(c.points)
+        c.area_mm2 = area(c.points)
         if c.closed:
             if len(c.points) > _SELF_INTERSECT_EDGE_CAP:
                 report.warnings.append(

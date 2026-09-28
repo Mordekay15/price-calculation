@@ -57,13 +57,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from core.dxf_inspect import (
-    Contour,
-    InspectionReport,
-    _point_in_polygon,
-    _representative_point,
-    inspect_dxf,
-)
+from core.dxf_inspect import Contour, InspectionReport, inspect_dxf
+from core.geometry import point_in_polygon, representative_point, signed_area
 
 # Default rotations offered to the packer (degrees). Four quadrant orientations
 # suit rectangular-ish sheet-metal parts; override per call when a part may only
@@ -123,16 +118,6 @@ class SparrowPart:
 
 # ── Ring cleaning / winding ──────────────────────────────────────────────────
 
-def _signed_area(points: list[Point]) -> float:
-    s = 0.0
-    n = len(points)
-    for i in range(n):
-        x1, y1 = points[i]
-        x2, y2 = points[(i + 1) % n]
-        s += x1 * y2 - x2 * y1
-    return s / 2.0
-
-
 def _clean_ring(points: list[Point]) -> list[Point]:
     """Return a simple ring safe for jagua-rs `import_simple_polygon`.
 
@@ -160,14 +145,14 @@ def _clean_ring(points: list[Point]) -> list[Point]:
 
 def _as_ccw(points: list[Point]) -> list[Point]:
     pts = _clean_ring(points)
-    if _signed_area(pts) < 0:
+    if signed_area(pts) < 0:
         pts = pts[::-1]
     return pts
 
 
 def _as_cw(points: list[Point]) -> list[Point]:
     pts = _clean_ring(points)
-    if _signed_area(pts) > 0:
+    if signed_area(pts) > 0:
         pts = pts[::-1]
     return pts
 
@@ -226,7 +211,7 @@ def _construction_of(part: Contour, report: InspectionReport) -> list[list[Point
             continue
         cx = sum(x for x, _ in line) / len(line)
         cy = sum(y for _, y in line) / len(line)
-        if _point_in_polygon((cx, cy), part.points):
+        if point_in_polygon((cx, cy), part.points):
             out.append(list(line))
     return out
 
@@ -240,7 +225,7 @@ def _holes_of(part: Contour, report: InspectionReport) -> list[Contour]:
     """
     result = []
     for h in report.holes:
-        if _point_in_polygon(_representative_point(h.points), part.points):
+        if point_in_polygon(representative_point(h.points), part.points):
             result.append(h)
     return result
 
