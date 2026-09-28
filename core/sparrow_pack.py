@@ -40,9 +40,12 @@ injected callable, so the greedy logic is unit-testable without the binary.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
+from core.calculator import piece_weight_kg
 from core.geometry import bbox, bbox_wh, net_area, rotate_translate
+from core.sheet_cost import Packing, compute_options, effective_sheet
 
 Point = tuple[float, float]
 
@@ -326,3 +329,161 @@ def _fits(w: float, h: float, sw: float, sh: float, orients) -> bool:
     if can_swap and h <= sw + _TOL and w <= sh + _TOL:
         return True
     return False
+
+
+# ── Costing with Sparrow ─────────────────────────────────────────────────────
+
+def sparrow_options(
+    lookup: dict,
+    material: str,
+    thickness: str,
+    thickness_mm: float,
+    parts: list,
+    *,
+    run_fn,
+    margin_pct: float = 0.0,
+    long_side_clamp_mm: int = 0,
+    rankavali_mm: int = 0,
+    seed: int = 0,
+    time_limit_sec: int = 8,
+    pieces_kg_override: float | None = None,
+    on_progress=None,
+) -> dict:
+    """``core.sheet_cost.compute_options`` with Sparrow shape nesting.
+
+    ``parts`` are ``SparrowPart``-like objects. ``pieces_kg_override`` sets the
+    total piece weight the sheet cost is spread over — pass the net-area weight
+    the per-part summary uses so the two totals reconcile exactly.
+
+    ``on_progress``, if given, receives ``("size", index=, count=, w=, h=)``
+    before each sheet size and ``("sheet", w=, h=, placed=, total=)`` each time
+    a sheet layout is settled in one orientation.
+    """
+    n_pieces = sum(int(getattr(p, "quantity", 1)) for p in parts)
+    if pieces_kg_override is not None:
+        pieces_kg = float(pieces_kg_override)
+    else:
+        pieces_kg = sum(
+            piece_weight_kg(p.width_mm, p.height_mm, thickness_mm, material)
+            * int(getattr(p, "quantity", 1))
+            for p in parts
+        )
+    separation = float(rankavali_mm) if rankavali_mm else None
+
+    def pack_fn(sw: int, sh: int) -> Packing:
+        # Try the sheet both ways round (portrait / landscape) and keep the
+        # tighter fit — the same as rotating the whole nest 90°, so an elongated
+        # part is not forced to run along the wrong sheet axis.
+        best, alt = _pack_best_orientation(
+            parts, sw, sh, long_side_clamp_mm,
+            run_fn=run_fn, seed=seed, time_limit_sec=time_limit_sec,
+            separation=separation, on_progress=on_progress,
+        )
+        pack, eff_w, eff_h, draw_w, draw_h = best
+        if not pack.ok:
+            return Packing(sheets=[], sheets_needed=0, utilization=0.0,
+                           eff_w=eff_w, eff_h=eff_h, draw_w=sw, draw_h=sh,
+                           failed=1, reason=pack.reason)
+        return Packing(
+            sheets=pack.sheets,
+            sheets_needed=pack.sheets_needed,
+            utilization=_utilization(pack, eff_w, eff_h),
+            eff_w=eff_w, eff_h=eff_h, draw_w=draw_w, draw_h=draw_h,
+            alt=_alt_layout(alt),
+        )
+
+    return compute_options(
+        lookup, material, thickness, thickness_mm,
+        n_pieces=n_pieces if parts else 0, pieces_kg=pieces_kg, pack=pack_fn,
+        margin_pct=margin_pct, on_progress=on_progress,
+    )
+
+
+def _utilization(pack: PackResult, eff_w: int, eff_h: int) -> float:
+    cap = pack.sheets_needed * eff_w * eff_h
+    return (pack.used_area / cap) if cap else 0.0
+
+
+def _pack_best_orientation(
+    parts, sw, sh, clamp, *, run_fn, seed, time_limit_sec, separation,
+    on_progress=None,
+):
+    """Pack the sheet in both orientations; return ``(best, alt)``.
+
+    Each attempt is ``(pack, eff_w, eff_h, draw_w, draw_h)`` where
+    ``draw_w × draw_h`` is that orientation's sheet layout and ``eff_w × eff_h``
+    its usable area after the clamp. ``best`` is the tighter fit (fewest sheets,
+    tie-broken by utilisation) and drives the price; ``alt`` is the *other*
+    orientation's real re-nest (or None when the sheet is square, the other
+    orientation didn't fit, or it was skipped) — used for the "turn the sheet"
+    view. When neither orientation fits, ``(first_attempt, None)`` is returned
+    so the caller can surface the failure.
+
+    The turned sheet is skipped when every part may turn a quarter: then its
+    layout is just the first one rotated 90°, so re-nesting would only double
+    the Sparrow time. Otherwise both orientations nest at the same time —
+    Sparrow's time limit is wall-clock, so the pair takes about as long as one.
+    """
+    def _try(cw, ch):
+        ew, eh = effective_sheet(cw, ch, clamp)
+        on_sheet = None
+        if on_progress is not None:
+            on_sheet = lambda placed, total: on_progress(  # noqa: E731
+                "sheet", w=cw, h=ch, placed=placed, total=total)
+        pack = greedy_fixed_sheets(
+            parts, ew, eh, run_fn=run_fn, seed=seed,
+            time_limit_sec=time_limit_sec, separation=separation,
+            on_sheet=on_sheet,
+        )
+        return pack, ew, eh, cw, ch
+
+    # Sparrow's fixed strip height is the sheet's short side; the strip runs
+    # along the long side (listed first, so it also wins a tie).
+    long_side, short_side = max(sw, sh), min(sw, sh)
+    if sw == sh or _quarter_turn_free(parts):
+        options = [_try(long_side, short_side)]
+    else:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            options = list(pool.map(
+                lambda d: _try(*d),
+                [(long_side, short_side), (short_side, long_side)],
+            ))
+
+    ok = [o for o in options if o[0].ok]
+    if not ok:
+        return options[0], None
+    best = min(ok, key=lambda o: (o[0].sheets_needed, -_utilization(o[0], o[1], o[2])))
+    alt = next((o for o in ok if o is not best), None)
+    return best, alt
+
+
+def _quarter_turn_free(parts) -> bool:
+    """True if every part's allowed rotations are closed under +90°.
+
+    Then any layout turned 90° is still a valid layout (on the turned sheet).
+    ``None`` / empty orientations mean free rotation.
+    """
+    for p in parts:
+        orients = getattr(p, "allowed_orientations", None)
+        if not orients:
+            continue
+        angles = {round(float(a)) % 360 for a in orients}
+        if any((a + 90) % 360 not in angles for a in angles):
+            return False
+    return True
+
+
+def _alt_layout(alt) -> dict | None:
+    """Pack the alternate-orientation attempt into a small display dict."""
+    if alt is None:
+        return None
+    pack, ew, eh, dw, dh = alt
+    return {
+        "_sheets": pack.sheets,
+        "_eff_w": ew,
+        "_eff_h": eh,
+        "_sw": dw,
+        "_sh": dh,
+        "sheets_needed": pack.sheets_needed,
+        "utilization": _utilization(pack, ew, eh),
+    }

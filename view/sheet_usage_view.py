@@ -8,7 +8,7 @@ per-product cost split, a nesting layout, and a price breakdown.
 Used by the manual calculator (view/calculator.py); the DXF section reuses its
 price breakdown (view/dxf_sparrow_usage_view.py).
 
-The heavy costing lives in core/sheet_usage.py (pure, no Streamlit); this module
+The heavy costing lives in core/sheet_cost.py (pure, no Streamlit); this module
 is just the rendering around it.
 """
 
@@ -20,7 +20,8 @@ from core.calculator import (
     piece_weight_kg,
 )
 from core.copper import COPPER_MATERIAL
-from core.sheet_usage import cheapest_index, compute_options, _fmt_m
+from core.nesting import rect_options
+from core.sheet_cost import cheapest_index, fmt_m
 
 
 def render_group(
@@ -43,7 +44,7 @@ def render_group(
     if thickness_mm is None:
         return None, None
 
-    result = compute_options(
+    result = rect_options(
         lookup=lookup,
         material=material,
         thickness=thickness,
@@ -229,7 +230,7 @@ def _render_breakdown(
         },
         {
             "Vaihe":    "5. Tarvittavat levyt (sijoittelusta)",
-            "Laskenta": f"{n_pieces} kpl sijoitettu {_fmt_m(sw)} × {_fmt_m(sh)} m levylle",
+            "Laskenta": f"{n_pieces} kpl sijoitettu {fmt_m(sw)} × {fmt_m(sh)} m levylle",
             "Arvo":     f"{sheets_needed}",
         },
         {

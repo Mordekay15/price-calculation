@@ -6,7 +6,7 @@ Sheet-usage UI for the DXF page, with the Sparrow nesting backend.
 Same design as the manual calculator's sheet-usage view (compare every priced
 sheet size, pick the cheapest that fits, show metrics, a per-sheet layout, and a
 price breakdown) — but the nesting is done by Sparrow via
-``core.sparrow_sheet_cost.compute_options_sparrow`` /
+``core.sparrow_pack.sparrow_options`` /
 ``core.sparrow_pack.greedy_fixed_sheets`` instead of the bounding-box packer.
 
 Because each Sparrow run is comparatively slow, the caller computes the result
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from core.sheet_usage import cheapest_index
+from core.sheet_cost import cheapest_index
 from view.sheet_usage_view import _render_breakdown
 
 # Distinct, accessible colours per part index. Cycles for many parts.

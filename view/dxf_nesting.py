@@ -7,7 +7,7 @@ The user uploads one or more DXF files — each file is one product — and
 configures each on its card (view/dxf_part_view.py). The parts are grouped by
 material + thickness, and for each group we answer "which priced sheet size is
 cheapest": Sparrow nests the real shapes onto fixed sheets one at a time
-(core/sparrow_pack + core/sparrow_sheet_cost), and the result is shown with the
+(core/sparrow_pack + core/sheet_cost), and the result is shown with the
 same design as the manual calculator — the cheapest-sheet table, headline
 metrics, a per-sheet layout, and a price breakdown (view/dxf_sparrow_usage_view).
 
@@ -29,8 +29,8 @@ from core.calculator import (
 from core.copper import COPPER_MATERIAL
 from core.geometry import net_area
 from core.sparrow_input import parts_from_dxf
+from core.sparrow_pack import sparrow_options
 from core.sparrow_runner import find_executable, run_sparrow
-from core.sparrow_sheet_cost import compute_options_sparrow
 from view.dxf_part_view import render_part_config, sync_store
 from view.dxf_sparrow_usage_view import render_group_sparrow
 from view.margin_view import render_margin
@@ -156,7 +156,7 @@ def render(data: dict) -> None:
             )
             result = run_with_progress(
                 progress, f"{material} · {thickness} mm",
-                compute_options_sparrow,
+                sparrow_options,
                 lookup, material, thickness, thickness_mm, gparts,
                 run_fn=run_fn, margin_pct=margin_pct,
                 long_side_clamp_mm=long_side_clamp_mm,
