@@ -7,10 +7,11 @@ card, nested by Sparrow and priced — or explains why it cannot be priced.
 Two stages:
 
 ``read_dxf(data, name) -> DxfFile``
-    Reads the file once. Blocks (INSERT) are exploded, curves flattened to polylines in
-    millimetres, and every piece of geometry is kept with its CAD layer. The
-    unit comes from the $INSUNITS header, or from a ``Un="mm"`` style text
-    label when the header has none.
+    Reads the file once. Blocks (INSERT) are exploded, curves flattened to
+    polylines in millimetres, and every piece of geometry is kept with its CAD
+    layer. The unit comes from the $INSUNITS header; failing that from a
+    ``Un="mm"`` style text label; failing that, a drawing whose extents are
+    exactly an ISO A0–A4 sheet is taken to be in millimetres.
 
 ``DxfFile.part(layers) -> DxfReport``
     Builds the part from the chosen layers. By default that is every layer
@@ -19,15 +20,17 @@ Two stages:
     change the choice.
 
     * Pieces that only together form a loop (e.g. four LINEs) are chained.
-    * The main part is the largest closed outline; closed outlines inside it
-      are its holes. Anything outside it (detail views, sketches, stray lines)
-      is dropped.
-    * Lines inside the part from the other layers (bend lines, centre marks,
-      dashed lines) are kept as reference lines: drawn, never cut.
+    * The main part is the largest closed outline; closed outlines directly
+      inside it are its holes. Anything outside it (detail views, sketches,
+      stray lines) is dropped.
+    * Reference lines are drawn, never cut: lines inside the part from the
+      other layers (bend lines, centre marks, dashed lines), outlines inside a
+      hole (countersinks / threads drawn as concentric circles) and the ISO
+      thread symbol (a thin ¾-circle around a hole).
 
 A report with ``problems`` cannot be priced; each problem is a plain-Finnish
-reason (no unit, no closed outline, an outline inside a hole, open lines
-inside the part, a self-crossing outline, …).
+reason (no unit, no closed outline, an open line inside the part, a
+self-crossing outline, …).
 """
 
 from __future__ import annotations
@@ -172,7 +175,7 @@ class DxfFile:
 
     name: str
     unit_label: str = ""
-    unit_from_text: bool = False
+    unit_note: str = ""          # how the unit was found, when not from the header
     pieces: list[_Piece] = field(default_factory=list)
     texts: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)          # file-level
@@ -236,17 +239,27 @@ class DxfFile:
         main = max(top, key=lambda c: c.width_mm * c.height_mm)
         report.outline = main
 
+        inner = []
         for c in contours:
             if c is main:
                 continue
             pt = representative_point(c.points) if c.closed else c.points[len(c.points) // 2]
-            if not point_in_polygon(pt, main.points):
-                report.dropped.append(c.points)
-            elif c.closed:
-                report.holes.append(c)
+            if point_in_polygon(pt, main.points):
+                inner.append(c)
             else:
-                report.open_lines.append(c.points)
+                report.dropped.append(c.points)
+        # Holes are the outlines directly inside the part. An outline inside a
+        # hole (a countersink or thread drawn as concentric circles) and a thin
+        # ¾-circle around a hole (the ISO thread symbol) are drawing marks of
+        # that hole: drawn, not cut. Any other open line is a real gap.
+        report.holes = [c for c in inner if c.closed and c.depth == 1]
         report.reference_lines = _lines_inside(main, [p.points for p in reference])
+        rings = [c for c in inner if c.closed]
+        for c in inner:
+            if c.closed and c.depth >= 2 or not c.closed and _is_thread_mark(c.points, rings):
+                report.reference_lines.append(c.points)
+            elif not c.closed:
+                report.open_lines.append(c.points)
 
         report.problems += _part_problems(report)
         return report
@@ -270,15 +283,11 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
     unit_code = int(getattr(doc, "units", 0) or 0)
     if unit_code not in _UNITS:
         unit_code = _unit_from_texts(f.texts)
-        f.unit_from_text = unit_code is not None
-    if unit_code is None:
-        f.problems.append(
-            "Piirustuksesta puuttuu mittayksikkö ($INSUNITS tai Un=-teksti), joten "
-            "mittoja ei voi tulkita varmasti. Tallenna DXF uudelleen yksikkö (mm) asetettuna."
-        )
-        factor, f.unit_label = 1.0, "ei yksikköä"
-    else:
-        factor, f.unit_label = _UNITS[unit_code]
+        if unit_code is not None:
+            f.unit_note = "luettu piirustuksen tekstistä"
+    # Without a unit, read in drawing units; a standard sheet size below may
+    # still show they are millimetres.
+    factor, f.unit_label = _UNITS.get(unit_code, (1.0, "ei yksikköä"))
 
     for entity in entities:
         etype = entity.dxftype()
@@ -293,6 +302,17 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
         if extracted is not None:
             pts, closed = extracted
             f.pieces.append(_Piece(pts, closed, layer, not _is_dashed(entity, doc)))
+
+    if unit_code is None:
+        sheet = _iso_sheet([pt for p in f.pieces for pt in p.points])
+        if sheet:
+            f.unit_label, f.unit_note = "mm", f"päätelty piirustusarkin koosta ({sheet})"
+        else:
+            f.problems.append(
+                "Piirustuksesta puuttuu mittayksikkö ($INSUNITS tai Un=-teksti), "
+                "eikä piirustusarkin koosta voi päätellä sitä, joten mittoja ei voi "
+                "tulkita varmasti. Tallenna DXF uudelleen yksikkö (mm) asetettuna."
+            )
     return f
 
 
@@ -300,11 +320,6 @@ def _part_problems(report: DxfReport) -> list[str]:
     """Why a built part cannot be priced — each reason in plain Finnish."""
     out = []
     rings = [report.outline, *report.holes]
-    if any(h.depth >= 2 for h in report.holes):
-        out.append(
-            "Reiän sisällä on toinen ääriviiva — todennäköisesti kehys osan "
-            "ympärillä samalla tasolla, tai osa piirretty toisen osan sisään."
-        )
     if report.open_lines:
         n = len(report.open_lines)
         lines = "1 viiva osan sisällä ei" if n == 1 else f"{n} viivaa osan sisällä ei"
@@ -315,6 +330,53 @@ def _part_problems(report: DxfReport) -> list[str]:
     if report.outline.area_mm2 < 1e-6:
         out.append("Ääriviivan pinta-ala on nolla (viallinen geometria).")
     return out
+
+
+# ISO 216 drawing sheets (mm), long × short side.
+_ISO_SHEETS = {"A0": (1189, 841), "A1": (841, 594), "A2": (594, 420),
+               "A3": (420, 297), "A4": (297, 210)}
+_ISO_SHEET_TOL = 2.0
+
+
+def _iso_sheet(points: list[Point]) -> str | None:
+    """The ISO sheet whose size the drawing's extents match (in mm), if any."""
+    if not points:
+        return None
+    x0, y0, x1, y1 = bbox(points)
+    long_side, short_side = max(x1 - x0, y1 - y0), min(x1 - x0, y1 - y0)
+    for name, (a, b) in _ISO_SHEETS.items():
+        if abs(long_side - a) <= _ISO_SHEET_TOL and abs(short_side - b) <= _ISO_SHEET_TOL:
+            return name
+    return None
+
+
+def _is_thread_mark(line: list[Point], rings: list[Contour]) -> bool:
+    """Is this open line the ISO thread symbol — an arc centred on a hole ring
+    and a little larger than it (e.g. a ¾-circle of Ø4 around an M4 tap hole)?"""
+    circle = _circle_through(line[0], line[len(line) // 2], line[-1])
+    if circle is None:
+        return False
+    (cx, cy), r = circle
+    if any(abs(((x - cx) ** 2 + (y - cy) ** 2) ** 0.5 - r) > 0.02 * r for x, y in line):
+        return False                                   # not a circular arc
+    for ring in rings:
+        hx0, hy0, hx1, hy1 = bbox(ring.points)
+        hr = (hx1 - hx0) / 2
+        if (abs((hx0 + hx1) / 2 - cx) <= 0.05 * r and abs((hy0 + hy1) / 2 - cy) <= 0.05 * r
+                and 0.98 * hr <= r <= 1.5 * hr):
+            return True
+    return False
+
+
+def _circle_through(a: Point, b: Point, c: Point) -> tuple[Point, float] | None:
+    """Centre and radius of the circle through three points (None if collinear)."""
+    d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]))
+    if abs(d) < 1e-12:
+        return None
+    sa, sb, sc = a[0] ** 2 + a[1] ** 2, b[0] ** 2 + b[1] ** 2, c[0] ** 2 + c[1] ** 2
+    cx = (sa * (b[1] - c[1]) + sb * (c[1] - a[1]) + sc * (a[1] - b[1])) / d
+    cy = (sa * (c[0] - b[0]) + sb * (a[0] - c[0]) + sc * (b[0] - a[0])) / d
+    return (cx, cy), ((a[0] - cx) ** 2 + (a[1] - cy) ** 2) ** 0.5
 
 
 def _lines_inside(main: Contour, lines: list[list[Point]]) -> list[list[Point]]:

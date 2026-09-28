@@ -68,8 +68,8 @@ def render_part_config(
         # material choice, never nested.
         if dxf.texts:
             st.caption("Piirustuksen tekstit: " + " · ".join(dxf.texts))
-        if dxf.unit_from_text:
-            st.caption(f"Yksikkö luettu piirustuksen tekstistä ({dxf.unit_label}).")
+        if dxf.unit_note:
+            st.caption(f"Yksikkö {dxf.unit_note}: {dxf.unit_label}.")
 
         layers = _render_layer_picker(fid, dxf)
         report = _part(fid, dxf, layers)
