@@ -86,8 +86,13 @@ def render(data: dict) -> None:
     st.divider()
     st.markdown("**Levyn käyttö**")
     cache: dict = st.session_state.setdefault(_CACHE, {})
+    # Only groups without a result are nested; a part already nested on its
+    # own (separate mode) keeps its result when others are added or changed.
+    n_new = sum(_sig(k, p, settings) not in cache and parse_thickness_mm(k[1]) is not None
+                for k, p in groups.items())
     b1, b2 = st.columns(2)
-    run = b1.button("Laske levykäyttö (Sparrow)", key="dxf_sparrow_run",
+    run = b1.button(_run_label(n_new, len(groups)), key="dxf_sparrow_run",
+                    disabled=n_new == 0,
                     help="Laskee vain ryhmät, joilla ei vielä ole tulosta. Jo "
                          "lasketut osat (sama määrä, tasot ja asetukset) "
                          "käyttävät aiempaa tulosta.")
@@ -95,12 +100,19 @@ def render(data: dict) -> None:
                       help="Hylkää aiemmat tulokset ja ajaa Sparrown jokaiselle ryhmälle.")
     if rerun:
         cache.clear()
-    if run or rerun:
-        # Only groups without a result; a part already nested on its own
-        # (separate mode) keeps its result when others are added or changed.
-        todo = {k: p for k, p in groups.items() if _sig(k, p, settings) not in cache}
-        _run(todo, lookup, settings, exe, cache)
-    _show(products, groups, settings, cache)
+    nest = _nester(lookup, settings, exe) if run or rerun else None
+    _show(products, groups, settings, cache, nest)
+    if nest is not None:
+        st.rerun()  # redraw the button with the new count ("kaikki laskettu")
+
+
+def _run_label(n_new: int, n_groups: int) -> str:
+    """The run button's label: how many groups a click would nest."""
+    if n_new == 0:
+        return "Laske levykäyttö (Sparrow) — kaikki laskettu"
+    if n_new < n_groups:
+        return f"Laske levykäyttö (Sparrow) — {n_new} uutta"
+    return "Laske levykäyttö (Sparrow)"
 
 
 def _render_part_cards(parts, materials: list[str], lookup: dict) -> list[dict]:
@@ -135,8 +147,18 @@ def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
     return f"{key}|{prod_sig}|{settings}"
 
 
-def _run(groups, lookup: dict, settings: _Settings, exe, cache: dict) -> None:
-    """Nest every group with Sparrow (behind a progress bar) into ``cache``."""
+def _group_label(key: tuple, prods: list[dict]) -> str:
+    """The group's heading, e.g. ``S235 · 2 mm``, plus the part's name when it
+    is nested on its own."""
+    label = f"{key[0]} · {key[1]} mm"
+    if len(key) > 2:
+        label += " · " + ", ".join(p["name"] for p in prods)
+    return label
+
+
+def _nester(lookup: dict, settings: _Settings, exe):
+    """``nest(key, prods)``: one group nested with Sparrow behind a progress bar,
+    returned as a cache entry (None when its thickness can't be read)."""
     progress = SparrowProgress()
 
     def run_fn(instance, *, seed, time_limit_sec, separation):
@@ -146,14 +168,14 @@ def _run(groups, lookup: dict, settings: _Settings, exe, cache: dict) -> None:
             seed=int(seed), min_item_separation=separation,
         )
 
-    for key, prods in groups.items():
+    def nest(key: tuple, prods: list[dict]) -> dict | None:
         material, thickness = key[0], key[1]
         thickness_mm = parse_thickness_mm(thickness)
         if thickness_mm is None:
-            continue
+            return None
         parts, areas = _parts_for_group(prods, settings.rotations)
         result = run_with_progress(
-            progress, f"{material} · {thickness} mm",
+            progress, _group_label(key, prods),
             sparrow_options,
             lookup, material, thickness, thickness_mm, parts,
             run_fn=run_fn, margin_pct=settings.margin_pct,
@@ -161,20 +183,32 @@ def _run(groups, lookup: dict, settings: _Settings, exe, cache: dict) -> None:
             rankavali_mm=settings.rankavali_mm, seed=settings.seed,
             time_limit_sec=settings.time_limit,
         )
-        cache[_sig(key, prods, settings)] = {
-            "result": result, "parts": parts, "areas": areas,
-            "thickness_mm": thickness_mm,
-        }
+        return {"result": result, "parts": parts, "areas": areas,
+                "thickness_mm": thickness_mm}
+
+    return nest
 
 
-def _show(products: list[dict], groups, settings: _Settings, cache: dict) -> None:
-    """Render the cached result of every group, then the parts summary."""
+def _show(products: list[dict], groups, settings: _Settings, cache: dict,
+          nest=None) -> None:
+    """Render every group's result, then the parts summary.
+
+    With ``nest`` (the run button was pressed), a group without a result is
+    nested in its own place first, so each result shows as soon as it is ready
+    instead of after the whole run.
+    """
     areas: dict[str, float] = {}
 
     def render_one(key, prods):
         sig = _sig(key, prods, settings)
         entry = cache.get(sig)
+        if entry is None and nest is not None:
+            entry = nest(key, prods)
+            if entry is not None:
+                cache[sig] = entry
         if entry is None:
+            st.markdown(f"**{_group_label(key, prods)}**")
+            st.caption("Odottaa laskentaa.")
             return None
         areas.update(entry["areas"])
         return render_group(
@@ -188,8 +222,9 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict) -> Non
         st.info("Paina **Laske levykäyttö (Sparrow)** laskeaksesi levytarpeen ja hinnan.")
         return
     if missing:
-        st.warning("Osa ryhmistä on ilman tulosta — paina **Laske levykäyttö "
-                   "(Sparrow)**; jo lasketut ryhmät eivät laske uudelleen.")
+        st.warning("Yhteissumma sisältää vain lasketut ryhmät — paina **Laske "
+                   "levykäyttö (Sparrow)** laskeaksesi loput. Jo laskettuja ei "
+                   "lasketa uudelleen.")
     render_grand_total(grand_total, len(groups))
 
     ready = [p for p in products if is_ready(p)]
