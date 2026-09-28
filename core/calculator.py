@@ -3,16 +3,13 @@ core/calculator.py
 ==================
 Pure business logic — no Streamlit, no I/O.
 
-Build a price lookup from parsed data and run calculations on it.
-To add a new calculation type (e.g. weight-based, area-based):
-  - Add a new function below and call it from the relevant view.
+Build a price lookup from parsed data and derive materials, sizes and weights.
 """
 
 THICKNESS_KEY = "Paksuus (mm)"
 
 # Material densities in kg/mm³. A 1 mm sheet of 1 m² weighs density × 1e6 kg,
 # so the kg/m²·mm value equals the g/cm³ value.
-#STEEL_DENSITY_KG_PER_MM3 = 7.85e-6   # Steel / RST / HST — 7.85 g/cm³
 DENSITIES_KG_PER_MM3 = {
     "steel":    8.0e-6,
     "alumiini": 2.7e-6,
@@ -73,19 +70,6 @@ def thickness_sort_key(t: str) -> float:
         return 999
 
 
-def sorted_products(lookup: dict) -> list[str]:
-    return sorted(set(label for (_, label) in lookup))
-
-
-def sorted_thicknesses(lookup: dict, product: str | None = None) -> list[str]:
-    """Return thicknesses, optionally filtered to those available for a product."""
-    if product:
-        items = [t for (t, p) in lookup if p == product]
-    else:
-        items = [t for (t, _) in lookup]
-    return sorted(set(items), key=thickness_sort_key)
-
-
 # ── Material / size helpers ───────────────────────────────────────────────────
 
 def extract_material_and_size(product_label: str) -> tuple[str, str]:
@@ -110,12 +94,6 @@ def get_sizes_for_material(lookup: dict, material: str) -> list[str]:
     }
     sizes.discard("")
     return sorted(sizes)
-
-
-def get_thicknesses_for_material_size(lookup: dict, material: str, size: str) -> list[str]:
-    """Sorted thicknesses available for the given material + size combination."""
-    target = f"{material} | {size}" if size else material
-    return sorted({t for (t, lbl) in lookup if lbl == target}, key=thickness_sort_key)
 
 
 def get_thicknesses_for_material(lookup: dict, material: str) -> list[str]:
@@ -145,65 +123,3 @@ def piece_weight_kg(
 ) -> float:
     """Weight of a rectangular plate in kg, using the material's density."""
     return width_mm * height_mm * thickness_mm * density_for_material(material)
-
-
-# ── Price calculation ─────────────────────────────────────────────────────────
-
-def calculate(
-    base_price: float,
-    quantity_tn: float,
-    margin_pct: float = 0.0,
-    surcharge_per_tn: float = 0.0,
-    fx_rate: float = 1.0,
-) -> dict:
-    """
-    Calculate total cost with optional adjustments.
-
-    Returns a dict with every intermediate step so the UI can
-    display as much or as little detail as it wants.
-    """
-    after_margin    = base_price * (1 + margin_pct / 100)
-    after_surcharge = after_margin + surcharge_per_tn
-    after_fx        = after_surcharge * fx_rate
-    total           = after_fx * quantity_tn
-
-    return {
-        "base_price":       base_price,
-        "after_margin":     after_margin,
-        "after_surcharge":  after_surcharge,
-        "after_fx":         after_fx,
-        "total":            total,
-        "quantity_tn":      quantity_tn,
-        "margin_pct":       margin_pct,
-        "surcharge_per_tn": surcharge_per_tn,
-        "fx_rate":          fx_rate,
-    }
-
-
-def compare_thicknesses(
-    lookup: dict,
-    product: str,
-    quantity_tn: float,
-    margin_pct: float = 0.0,
-    surcharge_per_tn: float = 0.0,
-    fx_rate: float = 1.0,
-    selected_thickness: str | None = None,
-) -> list[dict]:
-    """
-    Return a comparison table of all thicknesses for one product.
-    Each row includes base price, adjusted price, and total cost.
-    """
-    rows = []
-    for t in sorted_thicknesses(lookup, product):
-        bp = lookup.get((t, product))
-        if bp is None:
-            continue
-        result = calculate(bp, quantity_tn, margin_pct, surcharge_per_tn, fx_rate)
-        rows.append({
-            "Thickness":         t,
-            "Base (€/tn)":       f"{result['base_price']:,.2f}",
-            "Adjusted (€/tn)":   f"{result['after_fx']:,.2f}",
-            f"Total ({quantity_tn} tn)": f"{result['total']:,.2f}",
-            "":                  "◀" if t == selected_thickness else "",
-        })
-    return rows

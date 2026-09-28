@@ -22,7 +22,6 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 
 from core.calculator import (
-    calculate,
     density_for_material,
     get_sizes_for_material,
     piece_weight_kg,
@@ -119,9 +118,8 @@ def compute_options_sparrow(
         sheet_weight_kg = sw * sh * thickness_mm * density_for_material(material)
         sheet_kg = sheet_weight_kg * sheets_needed
         billable_kg = sheet_kg
-        result = calculate(price_per_tonne, billable_kg / 1000, margin_pct=margin_pct)
-        adjusted_ppt = result["after_margin"]
-        total_eur = result["total"]
+        adjusted_ppt = price_per_tonne * (1 + margin_pct / 100)
+        total_eur = adjusted_ppt * (billable_kg / 1000)
         cost_per_pc = round(total_eur / n_pieces, 2) if n_pieces else ""
         bill_rate_ppt = (
             adjusted_ppt * (sheet_kg / pieces_kg) if pieces_kg else adjusted_ppt

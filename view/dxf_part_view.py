@@ -159,10 +159,6 @@ def render_part_config(
         det_w, det_h = round(geom.width, 1), round(geom.height, 1)
         width, height, qty = _render_size_inputs(fid, det_w, det_h, layers_key, main_only)
 
-    # If the user corrected the size, scale the outline to match so the drawing
-    # stays consistent with the numbers driving the nest.
-    polylines = _scaled_polylines(geom.polylines, det_w, det_h, width, height)
-
     return {
         "id":          fid,
         "name":        part.name,
@@ -172,7 +168,6 @@ def render_part_config(
         "height":      height,
         "qty":         qty,
         "_global_idx": idx,
-        "_polylines":  polylines,
     }
 
 
@@ -297,14 +292,3 @@ def _preview_svg(polylines, w_mm: float, h_mm: float, px: int = 260) -> str:
         f'fill-rule="evenodd" stroke="#2563eb" stroke-width="{max(0.5, w_mm/300):.2f}"/>'
         f'</svg>'
     )
-
-
-def _scaled_polylines(polylines, det_w, det_h, new_w, new_h):
-    """Scale outline points if the user overrode the detected size."""
-    if not polylines:
-        return polylines
-    sx = new_w / det_w if det_w else 1.0
-    sy = new_h / det_h if det_h else 1.0
-    if abs(sx - 1.0) < 1e-9 and abs(sy - 1.0) < 1e-9:
-        return polylines
-    return [[(x * sx, y * sy) for x, y in poly] for poly in polylines]

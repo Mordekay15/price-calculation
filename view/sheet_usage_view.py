@@ -5,11 +5,8 @@ Shared "sheet usage" UI: for one material+thickness group, compare every priced
 sheet size, let the user override the cheapest pick, show headline metrics, a
 per-product cost split, a nesting layout, and a price breakdown.
 
-Both the manual calculator (view/calculator.py) and the DXF nesting section
-(view/dxf_nesting.py) call render_group(), so pricing and layout look and behave
-identically no matter how the products were entered. The only difference is the
-drawing: a product that carries a real "_polylines" outline (a DXF part) is
-drawn as its true shape; a plain rectangle product is drawn as a rectangle.
+Used by the manual calculator (view/calculator.py); the DXF section reuses its
+price breakdown (view/dxf_sparrow_usage_view.py).
 
 The heavy costing lives in core/sheet_usage.py (pure, no Streamlit); this module
 is just the rendering around it.
@@ -356,13 +353,7 @@ def _sheet_svg(
     products: list[dict],
     rankavali_mm: int,
 ) -> str:
-    """Build an SVG string for one sheet, with each placement labelled.
-
-    A placement whose product carries a real "_polylines" outline is drawn as
-    that outline (holes rendered via even-odd fill); everything else is drawn as
-    a plain rectangle — so the manual calculator and the DXF section share this
-    exact renderer.
-    """
+    """Build an SVG string for one sheet, each piece a labelled rectangle."""
     parts = [
         f'<svg width="{px_w:.0f}" height="{px_h:.0f}" '
         f'viewBox="0 0 {sheet_w} {sheet_h}" '
@@ -399,18 +390,12 @@ def _sheet_svg(
         orig_w = prod["width"]
         orig_h = prod["height"]
 
-        polylines = prod.get("_polylines")
-        if polylines:
-            parts.append(
-                _shape_path(polylines, placement, orig_w, orig_h, color)
-            )
-        else:
-            parts.append(
-                f'<rect x="{placement.x}" y="{placement.y}" '
-                f'width="{dw}" height="{dh}" '
-                f'fill="{color}" fill-opacity="0.55" '
-                f'stroke="{color}" stroke-width="6"/>'
-            )
+        parts.append(
+            f'<rect x="{placement.x}" y="{placement.y}" '
+            f'width="{dw}" height="{dh}" '
+            f'fill="{color}" fill-opacity="0.55" '
+            f'stroke="{color}" stroke-width="6"/>'
+        )
 
         cx = placement.x + dw / 2
         cy = placement.y + dh / 2
@@ -431,43 +416,3 @@ def _sheet_svg(
 
     parts.append("</svg>")
     return "".join(parts)
-
-
-def _shape_path(
-    polylines: list[list[tuple[float, float]]],
-    placement,
-    part_w: float,
-    part_h: float,
-    color: str,
-) -> str:
-    """Draw a DXF part's real outline inside its placement box.
-
-    The part's polylines live in a 0..part_w / 0..part_h millimetre space with
-    the CAD convention of Y pointing up; SVG has Y pointing down, so we flip Y.
-    When the packer rotated the piece 90°, we rotate the outline to match.
-    """
-    ox, oy = placement.x, placement.y
-    rotated = placement.rotated
-
-    def tx(lx: float, ly: float) -> tuple[float, float]:
-        if not rotated:
-            return ox + lx, oy + (part_h - ly)
-        # 90° turn: the placement footprint is part_h wide by part_w tall.
-        return ox + ly, oy + lx
-
-    segments = []
-    for poly in polylines:
-        if len(poly) < 2:
-            continue
-        pts = [tx(lx, ly) for lx, ly in poly]
-        d = "M " + " L ".join(f"{x:.1f} {y:.1f}" for x, y in pts) + " Z"
-        segments.append(d)
-
-    if not segments:
-        return ""
-
-    return (
-        f'<path d="{" ".join(segments)}" '
-        f'fill="{color}" fill-opacity="0.55" fill-rule="evenodd" '
-        f'stroke="{color}" stroke-width="6" stroke-linejoin="round"/>'
-    )
