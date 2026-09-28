@@ -240,7 +240,7 @@ def _evict(fid: str) -> None:
     for key in [k for k in reports if k[0] == fid]:
         del reports[key]
     for key in (f"dxf_mat_{fid}", f"dxf_th_{fid}", f"dxf_th_{fid}_disabled",
-                f"dxf_q_{fid}", f"dxf_layers_{fid}"):
+                f"dxf_q_{fid}", f"dxf_layers_{fid}", f"dxf_unit_ok_{fid}"):
         st.session_state.pop(key, None)
 
 
@@ -260,7 +260,7 @@ def _render_part_config(
         # material choice, never nested.
         if dxf.texts:
             st.caption("Piirustuksen tekstit: " + " · ".join(dxf.texts))
-        if dxf.unit_note:
+        if dxf.unit_note and not dxf.unit_guessed:
             st.caption(f"Yksikkö {dxf.unit_note}: {dxf.unit_label}.")
 
         layers = _render_layer_picker(fid, dxf)
@@ -285,6 +285,20 @@ def _render_part_config(
 
         width = round(report.outline.width_mm, 1)
         height = round(report.outline.height_mm, 1)
+
+        # No unit in the file: show the size the guess gives and price only
+        # once the user confirms it.
+        if dxf.unit_guessed:
+            st.warning(
+                "Piirustuksesta puuttuu mittayksikkö. Oletimme yksiköksi "
+                f"**{report.unit_label}**, jolloin osan koko on "
+                f"**{width:g} × {height:g} mm**. Tarkista mitat piirustuksesta."
+            )
+            if not st.checkbox(f"Koko {width:g} × {height:g} mm on oikein",
+                               key=f"dxf_unit_ok_{fid}"):
+                hdr[1].markdown(":orange[vahvista yksikkö]")
+                return None
+
         hdr[1].markdown(f":gray[{width:g} × {height:g} mm · {report.unit_label}]")
 
         # Material + thickness — persisted per file and shared with the manual

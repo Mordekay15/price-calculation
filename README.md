@@ -108,7 +108,10 @@ the price all use the same result.
 
 - **Units** come from the `$INSUNITS` header. If that is missing, a
   `Un="mm"` text label is used. If that is missing too, a drawing that is
-  exactly an ISO A0–A4 sheet is taken to be in mm.
+  exactly an ISO A0–A4 sheet is taken to be in mm. Otherwise the unit is
+  guessed (mm, or inch if `$MEASUREMENT` says imperial): the card shows the
+  size this gives, and the part is priced only after the user ticks that the
+  size is right.
 - **Layers**: layers named like drawing furniture or reference geometry (frame,
   border, title, info, text, dim, bend, centre, …) are left out by default. The
   card's layer picker changes the choice.
@@ -119,7 +122,7 @@ the price all use the same result.
   threads drawn as circles inside a hole, and the ISO thread symbol (a thin
   ¾-circle around a hole).
 - **Not priced**, with the reason shown on the card: the file can't be read,
-  there is no unit anywhere, there is no closed outline, an open line sits
+  there is no closed outline, an open line sits
   inside the part, or an outline crosses itself.
 
 A frame drawn on the *same* layer as the part can't be told apart from a
