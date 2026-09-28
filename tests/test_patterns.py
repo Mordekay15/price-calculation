@@ -56,6 +56,13 @@ def test_cover_puts_the_leftover_on_a_cheaper_sheet():
         ("big", (4, 4), 1), ("small", (1, 0), 1)]
 
 
+def test_cover_breaks_a_price_tie_with_less_metal():
+    libs = {"wide": Library(5.0, (Pattern((2,)),), sheet_area=3.0),
+            "tight": Library(5.0, (Pattern((2,)),), sheet_area=2.0)}
+    cover = cheapest_cover((4,), libs, shares=(1.0,))
+    assert [(it.key, it.count) for it in cover] == [("tight", 2)]
+
+
 def test_cover_repeats_a_pattern_for_a_large_order():
     cover = cheapest_cover((400,), {"s": Library(1.0, (Pattern((26,)),))}, shares=(1.0,))
     assert [(it.mix, it.count) for it in cover] == [((26,), 15), ((10,), 1)]

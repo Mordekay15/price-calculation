@@ -33,10 +33,12 @@ class Pattern:
 
 @dataclass(frozen=True)
 class Library:
-    """The patterns found for one sheet size and the price of one sheet."""
+    """The patterns found for one sheet size, the price of one sheet and its
+    area (metal bought; breaks price ties)."""
 
     sheet_cost: float
     patterns: tuple[Pattern, ...]
+    sheet_area: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -135,16 +137,18 @@ def cheapest_cover(demand: Mix, libraries: dict, *, shares: tuple[float, ...]
     None when some part is in no pattern. ``shares`` are part areas (any unit).
 
     Large orders first take whole sheets of the pattern that places the most
-    part area per euro; the rest is solved exactly (fewest euros, then sheets).
+    part area per euro; the rest is solved exactly: fewest euros, then least
+    metal bought, then fewest sheets.
     """
-    options = [(key, lib.sheet_cost, p) for key, lib in libraries.items() for p in lib.patterns]
+    options = [(key, lib, p) for key, lib in libraries.items() for p in lib.patterns]
     if any(d and not any(p.mix[i] for _, _, p in options) for i, d in enumerate(demand)):
         return None
     items: list[CoverItem] = []
     remaining = demand
     while prod(r + 1 for r in remaining) > _EXACT_STATES:
         key, _, pat = max((o for o in options if _leq(o[2].mix, remaining)),
-                          key=lambda o: _share(o[2].mix, shares) / o[1], default=(None, 0, None))
+                          key=lambda o: _share(o[2].mix, shares) / o[1].sheet_cost,
+                          default=(None, None, None))
         if pat is None:
             break
         count = max(1, min(r // m for r, m in zip(remaining, pat.mix) if m) - 1)
@@ -160,14 +164,14 @@ def _exact_cover(demand: Mix, options: list) -> list[CoverItem]:
     @lru_cache(maxsize=None)
     def best(remaining: Mix):
         if not any(remaining):
-            return (0.0, 0), None
+            return (0.0, 0.0, 0), None
         result = None
-        for n, (_, cost, pat) in enumerate(options):
+        for n, (_, lib, pat) in enumerate(options):
             used = tuple(min(r, m) for r, m in zip(remaining, pat.mix))
             if not any(used):
                 continue
-            (rest_cost, rest_sheets), _ = best(tuple(r - u for r, u in zip(remaining, used)))
-            score = (rest_cost + cost, rest_sheets + 1)
+            (cost, area, sheets), _ = best(tuple(r - u for r, u in zip(remaining, used)))
+            score = (round(cost + lib.sheet_cost, 6), area + lib.sheet_area, sheets + 1)
             if result is None or score < result[0]:
                 result = (score, (n, used))
         return result
