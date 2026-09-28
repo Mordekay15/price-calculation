@@ -111,7 +111,7 @@ def _render_settings(margin_pct: float) -> _Settings:
     c1, c2, c3 = st.columns(3)
     rot_label = c1.selectbox("Sallitut kierrot", list(_ROTATIONS), key="dxf_rot")
     time_limit = c2.number_input("Sparrow-aikaraja / ajo (s)", min_value=1,
-                                 value=8, step=1, key="dxf_sparrow_t")
+                                 value=4, step=1, key="dxf_sparrow_t")
     seed = c3.number_input("Siemen (seed)", min_value=0, value=0, step=1,
                            key="dxf_sparrow_seed")
     return _Settings(nest_mode, rankavali_mm, clamp_mm, _ROTATIONS[rot_label],
