@@ -11,7 +11,7 @@ The nesting itself is injected as a ``pack(sheet_w, sheet_h) -> Packing``
 callable, so the same costing serves both packers:
 
   * ``core.nesting.rect_options``        — bounding-box packer (manual calculator)
-  * ``core.sparrow_pack.sparrow_options`` — Sparrow shape nesting (DXF tab)
+  * ``core.sparrow.sparrow_options``       — Sparrow shape nesting (DXF tab)
 """
 
 from __future__ import annotations

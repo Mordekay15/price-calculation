@@ -7,7 +7,7 @@ manual calculator.
 The user uploads DXF files (one product each) and configures each part on its
 card (view/dxf_part_view.py). Parts are grouped by material + thickness and,
 for each group, Sparrow nests the real shapes on every priced sheet size
-(core/sparrow_pack.py) to find the cheapest (view/sheet_usage.py).
+(core/sparrow.py) to find the cheapest (view/sheet_usage.py).
 
 Sparrow runs are slow, so they happen behind a button with a progress bar
 (view/sparrow_progress.py) and the results are cached per input signature
@@ -20,9 +20,7 @@ import streamlit as st
 
 from core.calculator import build_lookup, parse_thickness_mm
 from core.geometry import net_area
-from core.sparrow_input import part_from_report
-from core.sparrow_pack import sparrow_options
-from core.sparrow_runner import find_executable, run_sparrow
+from core.sparrow import find_executable, part_from_report, run_sparrow, sparrow_options
 from view.common import (
     group_products,
     is_ready,
