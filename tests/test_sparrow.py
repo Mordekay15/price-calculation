@@ -107,7 +107,7 @@ def test_answers_are_shared_across_sheet_sizes():
     assert len(whole_order) == 1
 
 
-def test_a_second_run_reuses_the_answers_even_with_a_new_quantity():
+def test_a_second_run_reuses_the_answers():
     runs = []
     counting = lambda inst, **kw: runs.append(inst) or fake_solver(inst, **kw)  # noqa: E731
     lookup = {("2", "S235 | 1000x2000"): 900.0}
@@ -122,8 +122,12 @@ def test_a_second_run_reuses_the_answers_even_with_a_new_quantity():
                             margin_pct=10.0, memories=memories)
     assert len(runs) == n                                        # new margin: no run
     assert again.options[0].sheets_needed == first.options[0].sheets_needed
+    before = len(runs)
     sparrow_options(lookup, "S235", "2", 2.0, parts(4), run_fn=counting, memories=memories)
-    assert len(runs) - n <= 1                     # new quantity: only its whole-order strip
+    reused = len(runs) - before
+    before = len(runs)
+    sparrow_options(lookup, "S235", "2", 2.0, parts(4), run_fn=counting, memories={})
+    assert reused <= len(runs) - before           # new quantity: never more than from scratch
 
 
 def test_a_mix_that_fits_by_bounding_boxes_needs_no_sparrow_run():

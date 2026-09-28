@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 from itertools import product
+import math
 from math import prod
 
 Mix = tuple[int, ...]
@@ -65,7 +66,8 @@ def search_patterns(demand: Mix, fits, *, shares: tuple[float, ...],
 
     Fitting is taken as monotone: a smaller mix than a fit also fits, a larger
     mix than a miss also misses, so each answer settles many mixes at once;
-    the search narrows the open mixes like a bisection (see ``_middle``).
+    the search narrows the open mixes like a bisection (see ``_middle``). It
+    stops early once no open mix could lower the number of sheets.
     """
     found = {p.mix: p for p in seeds if any(p.mix)}
     misses: list[Mix] = []
@@ -73,7 +75,7 @@ def search_patterns(demand: Mix, fits, *, shares: tuple[float, ...],
     for _ in range(budget):
         open_ = [c for c in candidates
                  if not any(within(c, f) for f in found) and not any(within(m, c) for m in misses)]
-        if not open_:
+        if not open_ or _settled(demand, list(found.values()), open_, shares):
             break
         mix = _middle(open_, demand, shares)
         fitted, layout = fits(mix)
@@ -83,6 +85,17 @@ def search_patterns(demand: Mix, fits, *, shares: tuple[float, ...],
             misses.append(mix)
     return [p for p in found.values()
             if not any(q != p.mix and within(p.mix, q) for q in found)]
+
+
+def _settled(demand: Mix, found: list[Pattern], open_: list[Mix],
+             shares: tuple[float, ...]) -> bool:
+    """True when the patterns found already need no more sheets than even the
+    biggest open mix could give (the order's area over that mix's area)."""
+    cover = cheapest_cover(demand, {0: Library(1.0, tuple(found))}, shares=shares)
+    if cover is None:
+        return False
+    biggest = max(_share(m, shares) for m in [*open_, *(p.mix for p in found)])
+    return sum(it.count for it in cover) <= math.ceil(_share(demand, shares) / biggest - 1e-9)
 
 
 def _candidates(demand: Mix, shares: tuple[float, ...]) -> list[Mix]:
@@ -97,10 +110,16 @@ def _candidates(demand: Mix, shares: tuple[float, ...]) -> list[Mix]:
 
 
 def _middle(open_: list[Mix], demand: Mix, shares: tuple[float, ...]) -> Mix:
-    """The open mix whose answer settles the most others either way — a fit
-    settles every mix below it, a miss every mix above it (a bisection that
-    also works for several part types). Ties go to the bigger, then the more
+    """The next mix to ask. First a bisection along the order's own proportions
+    (4 + 4 for an 8 + 8 order): such a sheet can be repeated. Then the open mix
+    whose answer settles the most others either way — a fit settles every mix
+    below it, a miss every mix above it; ties go to the bigger, then the more
     balanced mix. Large open sets are scored on an even sample."""
+    ladder = {proportional(demand, n) for n in range(1, sum(demand) + 1)}
+    on_ladder = sorted((m for m in open_ if m in ladder), key=sum)
+    if on_ladder:
+        return on_ladder[len(on_ladder) // 2]
+
     step = max(1, len(open_) // _SCORED)
 
     def score(c: Mix):

@@ -27,11 +27,19 @@ def interlock(mix):
     return big <= 5 and big + small <= 8 and (big < 5 or small <= 2)
 
 
-def test_search_finds_the_interlocking_mix_within_budget():
+def test_search_stops_once_the_sheet_count_cannot_drop():
     fits, calls = oracle(interlock)
-    found = {p.mix for p in search_patterns((5, 4), fits, shares=(0.18, 0.05), budget=8)}
-    assert (4, 4) in found and (5, 2) in found
-    assert len(calls) <= 8
+    found = search_patterns((5, 4), fits, shares=(0.18, 0.05), budget=8)
+    cover = cheapest_cover((5, 4), {0: Library(1.0, tuple(found))}, shares=(0.18, 0.05))
+    assert sum(it.count for it in cover) == 2          # 1.1 sheets of area → 2 is the minimum
+    assert len(calls) <= 3
+
+
+def test_search_finds_the_interlocking_mix_when_it_saves_a_sheet():
+    # 8 big + 8 small fit 2 sheets only as 4 + 4 twice
+    fits, calls = oracle(interlock)
+    found = {p.mix for p in search_patterns((8, 8), fits, shares=(0.12, 0.12), budget=8)}
+    assert (4, 4) in found and len(calls) <= 3
 
 
 def test_search_never_asks_a_mix_known_by_domination():

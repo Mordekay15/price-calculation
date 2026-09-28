@@ -267,7 +267,7 @@ def _error_message(stderr: str) -> str:
 _TOL = 0.5
 
 # Sparrow runs per sheet size after the seeding strip run.
-_PROBE_BUDGET = 8
+_PROBE_BUDGET = 4
 
 # Every part fits alone, yet nothing fits: usually the separation gap makes
 # even one part overflow.
@@ -391,6 +391,8 @@ class SheetNester:
         err, placed, strip_len = strip
         windows = [_window(placed, k * sheet_w, sheet_w, sheet_h)
                    for k in range(math.ceil((strip_len or 0) / sheet_w))]
+        if windows:   # the first window answers "does the whole order fit one sheet?"
+            self._remember(sheet_w, sheet_h, self.demand(), windows[0])
         return err, tuple(Pattern(_mix_of(w, len(self.parts)), w) for w in windows)
 
     def _fit(self, sheet_w: float, sheet_h: float, mix: Mix) -> tuple[Mix, list[Placed]]:
@@ -401,6 +403,10 @@ class SheetNester:
             return answer
         err, placed, _ = _strip(self.parts, mix, sheet_h, self.run_fn, self.settings)
         layout = [] if err else _window(placed, 0.0, sheet_w, sheet_h)
+        return self._remember(sheet_w, sheet_h, mix, layout), layout
+
+    def _remember(self, sheet_w: float, sheet_h: float, mix: Mix, layout: list[Placed]) -> Mix:
+        """Store what of ``mix`` Sparrow fitted on one sheet (``layout``); returns it."""
         fitted = _mix_of(layout, len(self.parts))
         mem = self.memory
         with mem.lock:
@@ -408,7 +414,7 @@ class SheetNester:
                 mem.fits.append((sheet_w, sheet_h, fitted, layout))
             if fitted != mix:
                 mem.misses.append((sheet_w, sheet_h, mix))
-        return fitted, layout
+        return fitted
 
     def _without_sparrow(self, sheet_w: float, sheet_h: float, mix: Mix):
         """``(fitted, layout)`` from an earlier answer or the bounding boxes
