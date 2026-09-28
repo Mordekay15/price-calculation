@@ -86,9 +86,20 @@ def render(data: dict) -> None:
     st.divider()
     st.markdown("**Levyn käyttö**")
     cache: dict = st.session_state.setdefault(_CACHE, {})
-    if st.button("Laske levykäyttö (Sparrow)", key="dxf_sparrow_run"):
+    b1, b2 = st.columns(2)
+    run = b1.button("Laske levykäyttö (Sparrow)", key="dxf_sparrow_run",
+                    help="Laskee vain ryhmät, joilla ei vielä ole tulosta. Jo "
+                         "lasketut osat (sama määrä, tasot ja asetukset) "
+                         "käyttävät aiempaa tulosta.")
+    rerun = b2.button("Laske kaikki uudelleen", key="dxf_sparrow_rerun",
+                      help="Hylkää aiemmat tulokset ja ajaa Sparrown jokaiselle ryhmälle.")
+    if rerun:
         cache.clear()
-        _run(groups, lookup, settings, exe, cache)
+    if run or rerun:
+        # Only groups without a result; a part already nested on its own
+        # (separate mode) keeps its result when others are added or changed.
+        todo = {k: p for k, p in groups.items() if _sig(k, p, settings) not in cache}
+        _run(todo, lookup, settings, exe, cache)
     _show(products, groups, settings, cache)
 
 
@@ -177,7 +188,8 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict) -> Non
         st.info("Paina **Laske levykäyttö (Sparrow)** laskeaksesi levytarpeen ja hinnan.")
         return
     if missing:
-        st.warning("Asetukset muuttuivat — laske uudelleen päivittääksesi kaikki ryhmät.")
+        st.warning("Osa ryhmistä on ilman tulosta — paina **Laske levykäyttö "
+                   "(Sparrow)**; jo lasketut ryhmät eivät laske uudelleen.")
     render_grand_total(grand_total, len(groups))
 
     ready = [p for p in products if is_ready(p)]
