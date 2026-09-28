@@ -156,7 +156,7 @@ def run_sparrow(
     instance: dict,
     *,
     executable: str,
-    time_limit_sec: int = 10,
+    time_limit_sec: int = 4,
     seed: int = 0,
     min_item_separation: float | None = None,
 ) -> SparrowResult:
@@ -303,7 +303,7 @@ def greedy_fixed_sheets(
     *,
     run_fn,
     seed: int = 0,
-    time_limit_sec: int = 8,
+    time_limit_sec: int = 4,
     separation: float | None = None,
     max_sheets: int = 400,
     on_sheet=None,
@@ -461,7 +461,7 @@ def sparrow_options(
     long_side_clamp_mm: int = 0,
     rankavali_mm: int = 0,
     seed: int = 0,
-    time_limit_sec: int = 8,
+    time_limit_sec: int = 4,
     on_progress=None,
 ) -> GroupCost | None:
     """``core.sheet_cost.compute_options`` with Sparrow shape nesting.
