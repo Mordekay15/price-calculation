@@ -109,11 +109,13 @@ def _table_rows(options: list[SheetOption], n_pieces: int, cheapest_idx: int | N
         row = {
             "Levykoko":          _size_label(o),
             "Hinta (€/tn)":      f"{o.adjusted_ppt:,.2f}",
-            "Tarvittavat levyt": "",
+            # None, not "": a number column with a text cell can't be sent
+            # to the browser as Arrow and Streamlit logs a traceback.
+            "Tarvittavat levyt": None,
             "Käyttöaste":        "",
-            "Levyn kg":          "",
-            "Yhteensä €":        "",
-            "€/kpl":             "",
+            "Levyn kg":          None,
+            "Yhteensä €":        None,
+            "€/kpl":             None,
             "Paras":             "🚫",
         }
         if o.ok:
