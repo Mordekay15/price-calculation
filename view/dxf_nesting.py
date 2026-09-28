@@ -131,8 +131,8 @@ def _render_settings(margin_pct: float) -> _Settings:
 
 
 def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
-    """Stable cache key: the group, its parts and quantities, and the settings."""
-    prod_sig = ",".join(f"{p['id']}:{p['qty']}" for p in products)
+    """Stable cache key: the group, its parts (quantity, layers) and the settings."""
+    prod_sig = ",".join(f"{p['id']}:{p['qty']}:{p['layers']}" for p in products)
     return f"{key}|{prod_sig}|{settings}"
 
 

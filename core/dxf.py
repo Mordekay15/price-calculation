@@ -1,34 +1,39 @@
 """
 core/dxf.py
 ===========
-The one DXF reader: turns an uploaded file into a measured part, or explains
-why it cannot be priced.
+The one DXF reader: turns an uploaded file into the part that is shown on the
+card, nested by Sparrow and priced — or explains why it cannot be priced.
 
-Both the part card and the Sparrow nesting use this result, so what the card
-shows is exactly what gets nested and priced.
+Two stages:
 
-How a file is read
-------------------
-* Units come from the $INSUNITS header; everything is converted to millimetres.
-* Lines, arcs, circles, polylines, splines and ellipses are flattened to
-  polylines. Pieces that only together form a loop (e.g. four LINEs) are
-  chained end-to-end; a chain that returns to its start is a closed outline.
-* A closed outline inside another is a hole. The outermost one is the part.
-* Geometry on bend / centre-mark / annotation layers, and dashed or dotted
-  geometry, is never a cut: it is kept aside (bend lines are drawn on the
-  layout) and never becomes an outline. Text and dimensions are ignored.
+``read_dxf(data, name) -> DxfFile``
+    Reads the file once. Blocks (INSERT) are exploded, curves flattened to polylines in
+    millimetres, and every piece of geometry is kept with its CAD layer. The
+    unit comes from the $INSUNITS header, or from a ``Un="mm"`` style text
+    label when the header has none.
 
-When a file is "messy"
-----------------------
-A file is only priced when it holds exactly one clean part. Otherwise
-``DxfReport.problems`` lists, in plain Finnish, why it cannot be priced yet:
-no unit, unreadable content (e.g. blocks), no outline, several outlines,
-an outline inside a hole, open lines, or a self-crossing / zero-area outline.
+``DxfFile.part(layers) -> DxfReport``
+    Builds the part from the chosen layers. By default that is every layer
+    whose name does not look like drawing furniture (frame, title, dimension,
+    text, bend, info, …) — see ``suggested_layers``; the card lets the user
+    change the choice.
+
+    * Pieces that only together form a loop (e.g. four LINEs) are chained.
+    * The main part is the largest closed outline; closed outlines inside it
+      are its holes. Anything outside it (detail views, sketches, stray lines)
+      is dropped.
+    * Lines inside the part from the other layers (bend lines, centre marks,
+      dashed lines) are kept as reference lines: drawn, never cut.
+
+A report with ``problems`` cannot be priced; each problem is a plain-Finnish
+reason (no unit, no closed outline, an outline inside a hole, open lines
+inside the part, a self-crossing outline, …).
 """
 
 from __future__ import annotations
 
 import io
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -47,6 +52,10 @@ _FLATTENING_DISTANCE = 0.2
 # whose ends meet within this distance is considered closed.
 _JOIN_TOL_MM = 0.05
 
+# How far (mm) a reference line may stick out of the part's bounding box and
+# still be drawn with the part (bend lines often end exactly on the outline).
+_REFERENCE_BBOX_TOL_MM = 0.5
+
 # Entity types that carry cut geometry.
 _GEOMETRY_TYPES = {"LWPOLYLINE", "POLYLINE", "LINE", "ARC", "CIRCLE", "SPLINE", "ELLIPSE"}
 
@@ -57,16 +66,21 @@ _ANNOTATION_TYPES = {
     "HATCH", "POINT", "VIEWPORT", "WIPEOUT",
 }
 
-# Layer-name fragments that mark a layer as *not a cut* — bend lines, tangent
-# lines, centre marks, dimensions, text, frames. Matched case-insensitively as
-# substrings (so "IV_BEND_DOWN", "IV_TANGENT", "IV_ARC_CENTERS" are excluded,
-# while "IV_OUTER_PROFILE" / "IV_INTERIOR_PROFILES" / "CONTOURS" stay).
-_CONSTRUCTION_LAYER_KEYWORDS = (
+# Layer-name fragments that mark a layer as drawing furniture or reference
+# geometry rather than the cut part — left out by default. Matched
+# case-insensitively as substrings (so "IV_BEND_DOWN" and "IV_ARC_CENTERS" are
+# left out, while "IV_OUTER_PROFILE" and "CONTOURS" stay).
+_NON_CUT_LAYER_KEYWORDS = (
+    # drawing furniture
+    "frame", "border", "title", "format", "info", "bom", "table", "note",
+    "text", "label", "balloon", "symbol", "detail", "section", "defpoint",
+    # dimensions and annotation
+    "dim", "annot", "leader", "gdt", "tol", "hatch", "mark", "weld", "thread",
+    "cosm",
+    # reference / construction geometry
     "bend", "tangent", "arc_center", "arccenter", "centers", "centermark",
     "center_mark", "centerline", "centreline", "construction", "reference",
-    "dim", "dimension", "text", "note", "annot", "format", "frame", "border",
-    "title", "hatch", "symbol", "axis", "axes", "sketch", "weld", "mark",
-    "label", "leader", "hidden",
+    "axis", "axes", "csys", "sketch", "draft", "hidden",
 )
 
 # Linetypes that are drawn solid. Anything else (DOT, DASHED, HIDDEN, CENTER,
@@ -92,8 +106,28 @@ _UNITS: dict[int, tuple[float, str]] = {
     14: (100.0, "dm"),
 }
 
+# A unit written in the drawing's text, e.g.  Un="mm"  or  Units=inch.
+_UNIT_TEXT_RE = re.compile(
+    r'\b(?:un|unit|units|yksikk[oö])\s*=\s*"?([a-z]+|")', re.IGNORECASE)
+_TEXT_UNIT_TO_CODE: dict[str, int] = {
+    "mm": 4, "millimeter": 4, "millimetre": 4, "millimeters": 4, "millimetres": 4,
+    "cm": 5, "centimeter": 5, "centimetre": 5,
+    "m": 6, "meter": 6, "metre": 6,
+    "in": 1, "inch": 1, "inches": 1, '"': 1,
+}
+
 
 # ── Data model ───────────────────────────────────────────────────────────────
+
+@dataclass
+class _Piece:
+    """One flattened entity, in millimetres."""
+
+    points: list[Point]
+    closed: bool
+    layer: str
+    solid: bool          # False for dashed / dotted (reference) linetypes
+
 
 @dataclass
 class Contour:
@@ -102,163 +136,222 @@ class Contour:
     points: list[Point]
     closed: bool
     area_mm2: float = 0.0
-    self_intersects: bool = False
-    depth: int = 0              # how many larger closed contours contain this one
-
-    @property
-    def is_hole(self) -> bool:
-        return self.closed and self.depth >= 1
-
-    @property
-    def bbox(self) -> tuple[float, float, float, float]:
-        return bbox(self.points)
+    depth: int = 0       # how many larger closed contours contain this one
 
     @property
     def width_mm(self) -> float:
-        x0, _, x1, _ = self.bbox
+        x0, _, x1, _ = bbox(self.points)
         return x1 - x0
 
     @property
     def height_mm(self) -> float:
-        _, y0, _, y1 = self.bbox
+        _, y0, _, y1 = bbox(self.points)
         return y1 - y0
 
 
 @dataclass
 class DxfReport:
-    """Everything read from one DXF file."""
+    """The part built from one file and a choice of layers."""
+
+    name: str
+    unit_label: str
+    outline: Contour | None = None
+    holes: list[Contour] = field(default_factory=list)
+    # Lines inside the part from the other layers (bend lines, centre marks):
+    # drawn on the card and the layout, never cut.
+    reference_lines: list[list[Point]] = field(default_factory=list)
+    open_lines: list[list[Point]] = field(default_factory=list)   # inside the part
+    dropped: list[list[Point]] = field(default_factory=list)      # outside the part
+    # Why this part cannot be priced (empty = it can).
+    problems: list[str] = field(default_factory=list)
+
+
+@dataclass
+class DxfFile:
+    """Everything read from one DXF file, grouped by layer."""
 
     name: str
     unit_label: str = ""
-    contours: list[Contour] = field(default_factory=list)
-    # Bend / tangent / centre-mark polylines (mm): drawn, never cut.
-    construction_lines: list[list[Point]] = field(default_factory=list)
+    unit_from_text: bool = False
+    pieces: list[_Piece] = field(default_factory=list)
     texts: list[str] = field(default_factory=list)
-    # Why this file cannot be priced (empty = clean, exactly one part).
-    problems: list[str] = field(default_factory=list)
+    problems: list[str] = field(default_factory=list)          # file-level
+    unreadable: dict[str, dict[str, int]] = field(default_factory=dict)  # layer -> type -> n
 
-    @property
-    def parts(self) -> list[Contour]:
-        """Closed contours that are not holes — the real cut parts."""
-        return [c for c in self.contours if c.closed and not c.is_hole]
+    def available_layers(self) -> list[str]:
+        """Layers that carry geometry, sorted."""
+        return sorted({p.layer for p in self.pieces} | set(self.unreadable))
 
-    @property
-    def holes(self) -> list[Contour]:
-        return [c for c in self.contours if c.is_hole]
+    def suggested_layers(self) -> list[str]:
+        """The layers cut by default: all but frame / text / bend / … layers.
 
-    @property
-    def part(self) -> Contour | None:
-        """The one part of a clean file."""
-        return None if self.problems else self.parts[0]
+        Falls back to every layer when the names can't tell them apart.
+        """
+        avail = self.available_layers()
+        return [n for n in avail if not _is_non_cut_layer(n)] or avail
+
+    def layer_sizes(self) -> dict[str, tuple[int, float, float]]:
+        """Per-layer (piece count, bbox width mm, bbox height mm)."""
+        by_layer: dict[str, list[_Piece]] = defaultdict(list)
+        for p in self.pieces:
+            by_layer[p.layer].append(p)
+        out = {}
+        for name, pieces in by_layer.items():
+            x0, y0, x1, y1 = bbox([pt for p in pieces for pt in p.points])
+            out[name] = (len(pieces), x1 - x0, y1 - y0)
+        return out
+
+    def part(self, layers: set[str] | None = None) -> DxfReport:
+        """Build the main part from ``layers`` (default: ``suggested_layers``)."""
+        chosen = set(self.suggested_layers() if layers is None else layers)
+        report = DxfReport(name=self.name, unit_label=self.unit_label,
+                           problems=list(self.problems))
+
+        unreadable: dict[str, int] = defaultdict(int)
+        for layer in chosen:
+            for etype, n in self.unreadable.get(layer, {}).items():
+                unreadable[etype] += n
+        if unreadable:
+            listed = ", ".join(f"{t} ×{n}" for t, n in sorted(unreadable.items()))
+            report.problems.append(
+                f"Valituilla tasoilla on elementtejä, joita ei vielä osata lukea: {listed}."
+            )
+
+        cut = [p for p in self.pieces if p.layer in chosen and p.solid]
+        reference = [p for p in self.pieces if not (p.layer in chosen and p.solid)]
+        contours = [Contour(p.points, True) for p in cut if p.closed]
+        contours += _chain_open_segments([p.points for p in cut if not p.closed], _JOIN_TOL_MM)
+        for c in contours:
+            c.area_mm2 = area(c.points)
+        _mark_depths(contours)
+
+        top = [c for c in contours if c.closed and c.depth == 0 and len(c.points) >= 3]
+        if not top:
+            report.problems.append("Valituilta tasoilta ei löytynyt suljettua ääriviivaa.")
+            report.dropped = [c.points for c in contours]
+            return report
+
+        # The main part is the largest outline; everything inside it belongs to
+        # it, everything outside is dropped (detail views, sketches, stray lines).
+        main = max(top, key=lambda c: c.width_mm * c.height_mm)
+        report.outline = main
+
+        for c in contours:
+            if c is main:
+                continue
+            pt = representative_point(c.points) if c.closed else c.points[len(c.points) // 2]
+            if not point_in_polygon(pt, main.points):
+                report.dropped.append(c.points)
+            elif c.closed:
+                report.holes.append(c)
+            else:
+                report.open_lines.append(c.points)
+        report.reference_lines = _lines_inside(main, [p.points for p in reference])
+
+        report.problems += _part_problems(report)
+        return report
 
 
-# ── Public entry point ───────────────────────────────────────────────────────
+# ── Reading ──────────────────────────────────────────────────────────────────
 
-def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfReport:
+def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
     """Read one DXF file's bytes. Never raises: a bad file comes back with problems."""
-    report = DxfReport(name=name)
+    f = DxfFile(name=name)
     try:
         doc, _auditor = recover.read(io.BytesIO(data))
     except Exception as exc:  # noqa: BLE001 — never let a bad file crash the app
-        report.problems.append(f"Tiedostoa ei voitu lukea DXF-muodossa ({exc}).")
-        return report
+        f.problems.append(f"Tiedostoa ei voitu lukea DXF-muodossa ({exc}).")
+        return f
+
+    entities = list(_explode_blocks(doc.modelspace()))
+    f.texts = [t for t in (_text_of(e) for e in entities
+                           if e.dxftype() in ("TEXT", "MTEXT", "ATTRIB")) if t]
 
     unit_code = int(getattr(doc, "units", 0) or 0)
-    factor, report.unit_label = _UNITS.get(unit_code, (1.0, f"koodi {unit_code}"))
+    if unit_code not in _UNITS:
+        unit_code = _unit_from_texts(f.texts)
+        f.unit_from_text = unit_code is not None
+    if unit_code is None:
+        f.problems.append(
+            "Piirustuksesta puuttuu mittayksikkö ($INSUNITS tai Un=-teksti), joten "
+            "mittoja ei voi tulkita varmasti. Tallenna DXF uudelleen yksikkö (mm) asetettuna."
+        )
+        factor, f.unit_label = 1.0, "ei yksikköä"
+    else:
+        factor, f.unit_label = _UNITS[unit_code]
 
-    closed_direct: list[Contour] = []
-    open_segments: list[list[Point]] = []
-    unreadable: dict[str, int] = defaultdict(int)
-
-    for entity in doc.modelspace():
+    for entity in entities:
         etype = entity.dxftype()
-        if etype in ("TEXT", "MTEXT"):
-            text = _text_of(entity)
-            if text:
-                report.texts.append(text)
-            continue
         if etype in _ANNOTATION_TYPES:
-            continue
-        # Dotted / dashed / hidden geometry is reference, not a cut.
-        if _is_non_cut_linetype(entity, doc):
             continue
         layer = getattr(entity.dxf, "layer", "0") or "0"
         if etype not in _GEOMETRY_TYPES:
-            if not _is_construction_layer(layer):
-                unreadable[etype] += 1
+            counts = f.unreadable.setdefault(layer, {})
+            counts[etype] = counts.get(etype, 0) + 1
             continue
         extracted = _entity_polyline(entity, factor)
-        if extracted is None:
-            continue
-        pts, closed = extracted
-        if _is_construction_layer(layer):
-            report.construction_lines.append(pts)
-        elif closed:
-            closed_direct.append(Contour(points=pts, closed=True))
-        else:
-            open_segments.append(pts)
-
-    report.contours = closed_direct + _chain_open_segments(open_segments, _JOIN_TOL_MM)
-    for c in report.contours:
-        c.area_mm2 = area(c.points)
-        if c.closed and len(c.points) <= _SELF_INTERSECT_EDGE_CAP:
-            c.self_intersects = _self_intersects(c.points)
-    _mark_depths(report.contours)
-
-    report.problems = _problems(report, unit_code, unreadable)
-    return report
+        if extracted is not None:
+            pts, closed = extracted
+            f.pieces.append(_Piece(pts, closed, layer, not _is_dashed(entity, doc)))
+    return f
 
 
-def _problems(report: DxfReport, unit_code: int, unreadable: dict[str, int]) -> list[str]:
-    """Why a file cannot be priced — each reason in plain Finnish."""
+def _part_problems(report: DxfReport) -> list[str]:
+    """Why a built part cannot be priced — each reason in plain Finnish."""
     out = []
-    if unit_code not in _UNITS:
-        out.append(
-            "Piirustuksesta puuttuu mittayksikkö ($INSUNITS), joten mittoja ei "
-            "voi tulkita varmasti. Tallenna DXF uudelleen yksikkö (mm) asetettuna."
-        )
-    if unreadable:
-        listed = ", ".join(f"{t} ×{n}" for t, n in sorted(unreadable.items()))
-        out.append(
-            f"Tiedostossa on elementtejä, joita ei vielä osata lukea: {listed}. "
-            "(INSERT = lohko; pura lohkot CAD-ohjelmassa ennen tallennusta.)"
-        )
-    parts = report.parts
-    if not parts:
-        out.append("Tiedostosta ei löytynyt yhtään suljettua ääriviivaa.")
-    elif len(parts) > 1:
-        out.append(
-            f"Tiedostossa on {len(parts)} erillistä ääriviivaa — esim. kehys, "
-            "lisäkuva tai useampi osa. Yhdessä tiedostossa saa olla vain yksi osa."
-        )
-    if any(c.closed and c.depth >= 2 for c in report.contours):
+    rings = [report.outline, *report.holes]
+    if any(h.depth >= 2 for h in report.holes):
         out.append(
             "Reiän sisällä on toinen ääriviiva — todennäköisesti kehys osan "
-            "ympärillä tai osa piirretty toisen osan sisään."
+            "ympärillä samalla tasolla, tai osa piirretty toisen osan sisään."
         )
-    n_open = sum(1 for c in report.contours if not c.closed)
-    if n_open:
-        lines = "1 viiva ei" if n_open == 1 else f"{n_open} viivaa ei"
-        out.append(
-            f"{lines} sulkeudu ääriviivaksi — ääriviivassa on aukko tai "
-            "piirustuksessa on irrallisia viivoja."
-        )
-    if any(c.self_intersects for c in report.contours):
+    if report.open_lines:
+        n = len(report.open_lines)
+        lines = "1 viiva osan sisällä ei" if n == 1 else f"{n} viivaa osan sisällä ei"
+        out.append(f"{lines} sulkeudu ääriviivaksi — reiän ääriviivassa on aukko?")
+    if any(len(c.points) <= _SELF_INTERSECT_EDGE_CAP and _self_intersects(c.points)
+           for c in rings):
         out.append("Ääriviiva leikkaa itseään.")
-    if any(c.closed and c.area_mm2 < 1e-6 for c in report.contours):
+    if report.outline.area_mm2 < 1e-6:
         out.append("Ääriviivan pinta-ala on nolla (viallinen geometria).")
+    return out
+
+
+def _lines_inside(main: Contour, lines: list[list[Point]]) -> list[list[Point]]:
+    """The lines within the part's bounding box whose centre is inside it."""
+    x0, y0, x1, y1 = bbox(main.points)
+    tol = _REFERENCE_BBOX_TOL_MM
+    out = []
+    for line in lines:
+        if any(x < x0 - tol or x > x1 + tol or y < y0 - tol or y > y1 + tol
+               for x, y in line):
+            continue
+        cx = sum(x for x, _ in line) / len(line)
+        cy = sum(y for _, y in line) / len(line)
+        if point_in_polygon((cx, cy), main.points):
+            out.append(line)
     return out
 
 
 # ── Entity helpers ───────────────────────────────────────────────────────────
 
-def _is_construction_layer(name: str) -> bool:
-    """True for bend / tangent / centre-mark / annotation layers (never cuts)."""
+def _explode_blocks(entities):
+    """Yield the entities with every block reference (INSERT) replaced by its
+    content, recursively. Dimensions stay whole (they are annotation)."""
+    for e in entities:
+        if e.dxftype() == "INSERT":
+            yield from _explode_blocks(e.virtual_entities())
+            yield from e.attribs
+        else:
+            yield e
+
+
+def _is_non_cut_layer(name: str) -> bool:
     low = (name or "").lower()
-    return any(kw in low for kw in _CONSTRUCTION_LAYER_KEYWORDS)
+    return any(kw in low for kw in _NON_CUT_LAYER_KEYWORDS)
 
 
-def _is_non_cut_linetype(entity, doc) -> bool:
+def _is_dashed(entity, doc) -> bool:
     """True when the entity's effective linetype is not solid (e.g. dotted)."""
     ltype = (getattr(entity.dxf, "linetype", "") or "BYLAYER").upper()
     if ltype == "BYLAYER":
@@ -272,10 +365,18 @@ def _is_non_cut_linetype(entity, doc) -> bool:
 
 def _text_of(entity) -> str:
     try:
-        text = entity.dxf.text if entity.dxftype() == "TEXT" else entity.plain_text()
+        text = entity.plain_text() if entity.dxftype() == "MTEXT" else entity.dxf.text
     except Exception:  # noqa: BLE001
         return ""
     return (text or "").strip()
+
+
+def _unit_from_texts(texts: list[str]) -> int | None:
+    for text in texts:
+        m = _UNIT_TEXT_RE.search(text)
+        if m and m.group(1).lower() in _TEXT_UNIT_TO_CODE:
+            return _TEXT_UNIT_TO_CODE[m.group(1).lower()]
+    return None
 
 
 def _entity_polyline(entity, factor: float) -> tuple[list[Point], bool] | None:
@@ -339,11 +440,7 @@ def _chain_open_segments(segments: list[list[Point]], tol: float) -> list[Contou
 
 
 def _mark_depths(contours: list[Contour]) -> None:
-    """Set ``depth``: how many larger closed contours contain each closed one.
-
-    A part is a top-level outline (depth 0); anything inside a part is a hole.
-    Something inside a hole (depth ≥ 2) is reported as a problem.
-    """
+    """Set ``depth``: how many larger closed contours contain each closed one."""
     closed = [c for c in contours if c.closed and len(c.points) >= 3]
     reps = {id(c): representative_point(c.points) for c in closed}
     for c in closed:
