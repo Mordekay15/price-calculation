@@ -10,14 +10,15 @@ before any supplier PDF has been uploaded.
 """
 
 import streamlit as st
+
 from core import price_store
-from core.price_store import SUPPLIERS, Supplier
 from core.price_parser.detect import detect_supplier, is_empty
-from core.copper import (
-    build_copper_section,
-    COPPER_PRICE_MIN,
+from core.price_store import SUPPLIERS, Supplier
+from core.pricing import (
     COPPER_PRICE_MAX,
+    COPPER_PRICE_MIN,
     COPPER_PRICE_STEP,
+    build_copper_section,
 )
 
 _PLACEHOLDER_SUPPLIER = "— Valitse toimittaja —"

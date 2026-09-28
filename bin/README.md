@@ -1,7 +1,7 @@
 # `bin/` — Sparrow executable
 
-The Python runner (`core/sparrow_runner.py`) looks for the Sparrow nesting
-solver here automatically, resolved relative to the project root:
+The app (`core/sparrow.py`) looks for the Sparrow nesting solver here
+automatically, resolved relative to the project root:
 
 - `bin/sparrow`      (Linux / macOS)
 - `bin/sparrow.exe`  (Windows)
@@ -10,12 +10,11 @@ Drop the executable in this folder and the app finds it with no configuration.
 
 ## Discovery order
 
-The runner resolves the binary in this order:
+`find_executable()` resolves the binary in this order:
 
-1. an explicit path passed to `run_sparrow(..., executable=...)`
-2. the `SPARROW_BIN` environment variable
-3. **this folder** — `bin/sparrow` / `bin/sparrow.exe`
-4. `sparrow` / `sparrow.exe` on the system `PATH`
+1. the `SPARROW_BIN` environment variable
+2. **this folder** — `bin/sparrow` / `bin/sparrow.exe`
+3. `sparrow` / `sparrow.exe` on the system `PATH`
 
 ## Note on committing the binary
 

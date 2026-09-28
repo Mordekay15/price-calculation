@@ -14,7 +14,6 @@ import pathlib
 from dataclasses import dataclass
 from typing import Callable
 
-import streamlit as st
 from core.price_parser import parse_tatasteel_pdf, parse_tibnor_pdf
 
 
@@ -42,18 +41,22 @@ SUPPLIERS: list[Supplier] = [
 ]
 
 
-@st.cache_resource
-def _load_cached(path_str: str, mtime: float) -> dict | None:
-    """Load JSON keyed by (path, mtime) so the cache auto-invalidates on save."""
-    with open(path_str, "r", encoding="utf-8") as f:
-        return json.load(f)
+# {path: (mtime, payload)} — the page reruns on every click, so a file is only
+# re-read when it changes on disk.
+_cache: dict[pathlib.Path, tuple[float, dict]] = {}
 
 
 def load(supplier: Supplier) -> dict | None:
     """Return the stored payload for a supplier, or None if nothing saved yet."""
     if not supplier.path.exists():
         return None
-    return _load_cached(str(supplier.path), supplier.path.stat().st_mtime)
+    mtime = supplier.path.stat().st_mtime
+    cached = _cache.get(supplier.path)
+    if cached is None or cached[0] != mtime:
+        with open(supplier.path, "r", encoding="utf-8") as f:
+            cached = (mtime, json.load(f))
+        _cache[supplier.path] = cached
+    return cached[1]
 
 
 def save(supplier: Supplier, data: dict, filename: str) -> dict:
@@ -73,8 +76,3 @@ def by_key(key: str) -> Supplier:
         if supplier.key == key:
             return supplier
     raise KeyError(f"Unknown supplier key: {key!r}")
-
-
-def delete(supplier: Supplier) -> None:
-    """Remove a supplier's stored data. Used when correcting a misrouted upload."""
-    supplier.path.unlink(missing_ok=True)

@@ -4,6 +4,7 @@ view/common.py
 Page pieces shared by the manual calculator tab and the DXF tab.
 
   * ``materials_with_copper`` — the material list, copper always included
+  * ``render_material_thickness`` — the material + thickness pickers on a card
   * ``render_margin`` / ``render_nesting_settings`` — the shared inputs
   * ``group_products`` — group ready products by material + thickness
   * ``render_groups`` / ``render_grand_total`` — the per-group sheet-usage loop
@@ -15,13 +16,15 @@ key (prefix) from the caller to keep the two tabs' state apart.
 
 import streamlit as st
 
-from core.calculator import (
+from core.pricing import (
+    COPPER_MATERIAL,
+    COPPER_THICKNESSES,
     density_for_material,
     get_materials,
+    get_thicknesses_for_material,
     parse_thickness_mm,
     piece_weight_kg,
 )
-from core.copper import COPPER_MATERIAL
 
 
 def materials_with_copper(lookup: dict) -> list[str]:
@@ -33,6 +36,70 @@ def materials_with_copper(lookup: dict) -> list[str]:
 
 
 # ── Shared inputs ─────────────────────────────────────────────────────────────
+
+_PLACEHOLDER_MAT   = "— Valitse materiaali —"
+_PLACEHOLDER_THICK = "— Valitse paksuus —"
+
+
+def _thicknesses_for(lookup: dict, material: str | None) -> list[str]:
+    """Thicknesses available for ``material`` (empty if none is picked)."""
+    if material == COPPER_MATERIAL:
+        # Copper's thicknesses are fixed and available even with no price.
+        return COPPER_THICKNESSES
+    if material is not None:
+        return get_thicknesses_for_material(lookup, material)
+    return []
+
+
+def render_material_thickness(
+    materials: list[str],
+    lookup: dict,
+    *,
+    mat_key: str,
+    thick_key: str,
+    mat_default: str | None = None,
+    thick_default: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Render the shared material + thickness selectboxes.
+
+    Used by both the manual calculator product cards and the DXF part cards so
+    the two pages pick material/thickness identically (copper always
+    selectable, the thickness box disabled until a material is chosen).
+    ``mat_default`` / ``thick_default`` seed the initial selection — pass a
+    card's stored values to keep its choice across reruns, or leave them None
+    to start on the placeholder. Returns ``(material, thickness)``, each None
+    when unset.
+    """
+    mat_opts = [_PLACEHOLDER_MAT] + materials
+    mat_default = mat_default if mat_default in materials else _PLACEHOLDER_MAT
+    mat_raw = st.selectbox(
+        "Materiaali",
+        mat_opts,
+        index=mat_opts.index(mat_default),
+        key=mat_key,
+    )
+    material = mat_raw if mat_raw != _PLACEHOLDER_MAT else None
+
+    thicknesses = _thicknesses_for(lookup, material)
+    if thicknesses:
+        th_opts = [_PLACEHOLDER_THICK] + thicknesses
+        th_default = thick_default if thick_default in thicknesses else _PLACEHOLDER_THICK
+        th_raw = st.selectbox(
+            "Paksuus (mm)",
+            th_opts,
+            index=th_opts.index(th_default),
+            key=thick_key,
+        )
+        thickness = th_raw if th_raw != _PLACEHOLDER_THICK else None
+    else:
+        st.selectbox(
+            "Paksuus (mm)", [_PLACEHOLDER_THICK], index=0,
+            disabled=True, key=f"{thick_key}_disabled",
+        )
+        thickness = None
+
+    return material, thickness
+
 
 def render_margin(key: str) -> float:
     """The material margin ("Materiaalin kate") input, as a percentage."""

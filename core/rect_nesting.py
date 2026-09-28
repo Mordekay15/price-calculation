@@ -1,7 +1,8 @@
 """
-core/nesting.py
-===============
-2D bin-packing for sheet-metal nesting.
+core/rect_nesting.py
+====================
+Bounding-box nesting for the manual calculator (the DXF tab nests real shapes
+with Sparrow, core/sparrow.py).
 
 Given an order (list of rectangular products with quantities) and the inner
 dimensions of a metal sheet, work out how many sheets are needed and how the

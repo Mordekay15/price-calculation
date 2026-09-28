@@ -1,9 +1,13 @@
 """
-core/calculator.py
-==================
-Pure business logic — no Streamlit, no I/O.
+core/pricing.py
+===============
+Price data and material facts — pure, no Streamlit, no I/O.
 
-Build a price lookup from parsed data and derive materials, sizes and weights.
+* ``build_lookup`` flattens the parsed price lists into
+  ``(thickness, "Material | Size") -> €/tn``.
+* Materials, sizes and thicknesses available in that lookup.
+* Densities and piece weights.
+* Copper: always selectable, priced per kilo by the user (sidebar).
 """
 
 THICKNESS_KEY = "Paksuus (mm)"
@@ -123,3 +127,52 @@ def piece_weight_kg(
 ) -> float:
     """Weight of a rectangular plate in kg, using the material's density."""
     return width_mm * height_mm * thickness_mm * density_for_material(material)
+
+
+# ── Copper ────────────────────────────────────────────────────────────────────
+#
+# Copper is always available, independent of any uploaded price list. It has
+# no list price: the user sets €/kg (15.0–15.9) in the sidebar, and until then
+# copper is selectable but unpriced. It is stocked in one sheet size across a
+# fixed set of thicknesses (the supplier's "KUPARI" list, e.g. "0,5x1000x2000").
+
+# Material / product identity — mirrors the "Material | Size" label scheme the
+# PDF parsers emit so copper flows through the exact same calculator pipeline.
+COPPER_MATERIAL = "KUPARI"
+COPPER_SIZE = "1000x2000"
+COPPER_LABEL = f"{COPPER_MATERIAL} | {COPPER_SIZE}"
+
+# Thicknesses (mm) copper is stocked in, in Finnish decimal-comma format to
+# match the rest of the app (parse_thickness_mm / thickness_sort_key handle it).
+COPPER_THICKNESSES = sorted(
+    ["0,5", "0,8", "1", "1,5", "2", "3", "4", "5", "6"],
+    key=thickness_sort_key,
+)
+
+# Price-scaler bounds for the per-kilo copper price (€/kg).
+COPPER_PRICE_MIN = 15.0
+COPPER_PRICE_MAX = 15.9
+COPPER_PRICE_STEP = 0.1
+
+# Section key used inside the merged price-data dict.
+COPPER_SECTION_KEY = "kupari"
+
+
+def build_copper_section(price_per_kg: float | None) -> dict:
+    """Return a data section (same shape as the parsers') for copper.
+
+    One row per thickness, keyed by the 'Material | Size' label. When no price
+    has been set yet the price is None, so copper still appears as a selectable
+    material but carries no per-sheet pricing — build_lookup skips None values.
+    The per-kilo price is converted to €/tn (× 1000) so it shares the calculator
+    pipeline with the PDF-sourced materials, which are all normalised to €/tn.
+    """
+    price_per_tn = price_per_kg * 1000 if price_per_kg else None
+    rows = [
+        {
+            "Paksuus (mm)": t,
+            COPPER_LABEL: price_per_tn,
+        }
+        for t in COPPER_THICKNESSES
+    ]
+    return {COPPER_SECTION_KEY: rows}

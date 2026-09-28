@@ -16,8 +16,7 @@ Only the layout drawing differs per tab, so the caller passes it in:
 
 import streamlit as st
 
-from core.calculator import density_for_material, piece_weight_kg
-from core.copper import COPPER_MATERIAL
+from core.pricing import COPPER_MATERIAL, density_for_material, piece_weight_kg
 from core.sheet_cost import cheapest_index, fmt_m, utilization
 
 

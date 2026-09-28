@@ -10,7 +10,7 @@ utilisation, and the total cost after margin.
 The nesting itself is injected as a ``pack(sheet_w, sheet_h) -> Packing``
 callable, so the same costing serves both packers:
 
-  * ``core.nesting.rect_options``        — bounding-box packer (manual calculator)
+  * ``core.rect_nesting.rect_options``   — bounding-box packer (manual calculator)
   * ``core.sparrow.sparrow_options``       — Sparrow shape nesting (DXF tab)
 """
 
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.calculator import density_for_material, get_sizes_for_material
+from core.pricing import density_for_material, get_sizes_for_material
 
 
 @dataclass
