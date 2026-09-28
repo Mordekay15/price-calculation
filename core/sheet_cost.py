@@ -4,6 +4,7 @@ a material and thickness, price every sheet size. The nesting is passed in as
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from core.pricing import get_sizes_for_material, parse_thickness_mm, weight_kg
@@ -33,13 +34,14 @@ class Packing:
 @dataclass
 class SheetOption:
     """One priced sheet size. When ``failed`` > 0 the pieces did not fit and
-    only the size, prices, packing and reason are set."""
+    only the size, prices, packing and reason are set; a ``skipped`` size was
+    not nested at all (it could not be the cheapest) and has no packing."""
 
     sw: int
     sh: int
     base_ppt: float                 # list price, €/tn
     adjusted_ppt: float             # with the margin, €/tn
-    packing: Packing
+    packing: Packing | None
     sheet_weight_kg: float = 0.0    # one sheet
     sheets_needed: int = 0
     total_eur: float = 0.0
@@ -47,10 +49,11 @@ class SheetOption:
     utilization: float = 0.0
     failed: int = 0
     reason: str = ""
+    skipped: bool = False
 
     @property
     def ok(self) -> bool:
-        return self.failed == 0
+        return self.failed == 0 and not self.skipped
 
     @property
     def sheet_kg(self) -> float:
@@ -116,9 +119,15 @@ def compute_options(
     pack,
     margin_pct: float = 0.0,
     on_progress=None,
+    skip_dearer: bool = False,
 ) -> GroupCost | None:
     """Price every sheet size of one material + thickness; None when there are
     no pieces or no priced size.
+
+    With ``skip_dearer`` (for a slow packer) sizes are packed cheapest-looking
+    first, and a size whose cost at a perfect fill (``⌈part area / sheet
+    area⌉`` sheets) is already dearer than a size priced before is not packed
+    at all but marked ``skipped``.
 
     ``part_area_mm2`` is the total real part area of the group (see
     ``utilization``); the piece weight the sheet cost is spread over is derived
@@ -137,12 +146,31 @@ def compute_options(
         return None
 
     pieces_kg = weight_kg(part_area_mm2, thickness_mm, material)
-    options = []
-    for index, (sw, sh, price_per_tonne) in enumerate(candidates):
+    with_margin = 1 + margin_pct / 100
+
+    def sheet_eur(sw: int, sh: int, price_per_tonne: float) -> float:
+        return price_per_tonne * with_margin * weight_kg(sw * sh, thickness_mm, material) / 1000
+
+    def lower_bound(i: int) -> float:
+        sw, sh, price_per_tonne = candidates[i]
+        return math.ceil(part_area_mm2 / (sw * sh)) * sheet_eur(sw, sh, price_per_tonne)
+
+    order = list(range(len(candidates)))
+    if skip_dearer:
+        order.sort(key=lower_bound)
+    best_eur = math.inf
+    options: list[SheetOption | None] = [None] * len(candidates)
+    for step, i in enumerate(order):
+        sw, sh, price_per_tonne = candidates[i]
+        if skip_dearer and lower_bound(i) > best_eur:
+            options[i] = SheetOption(
+                sw, sh, price_per_tonne, price_per_tonne * with_margin, None,
+                reason="ei laskettu: ei voi olla edullisin", skipped=True)
+            continue
         if on_progress is not None:
-            on_progress("size", index=index, count=len(candidates), w=sw, h=sh)
+            on_progress("size", index=step, count=len(candidates), w=sw, h=sh)
         packing = pack(sw, sh)
-        option = SheetOption(sw, sh, price_per_tonne, price_per_tonne * (1 + margin_pct / 100),
+        option = SheetOption(sw, sh, price_per_tonne, price_per_tonne * with_margin,
                              packing, failed=packing.failed, reason=packing.reason)
         if option.ok:
             option.sheet_weight_kg = weight_kg(sw * sh, thickness_mm, material)
@@ -153,7 +181,8 @@ def compute_options(
             # up to the sheet total.
             option.bill_rate_ppt = (option.adjusted_ppt * (option.sheet_kg / pieces_kg)
                                     if pieces_kg else option.adjusted_ppt)
-        options.append(option)
+            best_eur = min(best_eur, option.total_eur)
+        options[i] = option
     return GroupCost(options, n_pieces, pieces_kg)
 
 

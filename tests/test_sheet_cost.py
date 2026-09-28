@@ -86,6 +86,23 @@ def test_compute_options_uses_the_packer_it_is_given():
     assert math.isclose(option.utilization, 0.125)         # 0.5 m² of 4 m²
 
 
+def test_skip_dearer_never_packs_a_size_that_cannot_win():
+    seen = []
+
+    def pack(sw, sh):
+        seen.append((sw, sh))
+        return Packing(sheets=["layout"], sheets_needed=1, eff_w=sw, eff_h=sh,
+                       draw_w=sw, draw_h=sh)
+
+    lookup = {("2", "S235 | 1000x2000"): 1000.0, ("2", "S235 | 1500x3000"): 1000.0}
+    result = compute_options(lookup, "S235", "2", 2.0, n_pieces=1, part_area_mm2=10_000,
+                             pack=pack, skip_dearer=True)
+    small, big = result.options                      # table keeps the price-list order
+    assert seen == [(1000, 2000)]                    # one small sheet beats any big one
+    assert small.ok and big.skipped and not big.ok and big.packing is None
+    assert cheapest_index(result.options) == 0
+
+
 def test_grouping_and_piece_costs():
     products = [
         {"id": "a", "material": "S235", "thickness": "2", "width": 100, "height": 100, "qty": 3},

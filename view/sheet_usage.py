@@ -64,6 +64,11 @@ def render_group(
         idx = sel[0]
         if 0 <= idx < len(options) and options[idx].ok:
             selected_idx = idx
+        elif options[idx].skipped:
+            st.info(
+                f"**{_size_label(options[idx])}** jätettiin laskematta — se ei voi olla "
+                "edullisin. Käytetään edullisinta levykokoa."
+            )
         else:
             st.warning(
                 f"**{_size_label(options[idx])}** on liian pieni — osat eivät mahdu. "
@@ -103,7 +108,8 @@ def _size_label(o: SheetOption) -> str:
 
 
 def _table_rows(options: list[SheetOption], n_pieces: int, cheapest_idx: int | None) -> list[dict]:
-    """The sheet-size table; a size the pieces don't fit keeps only its price."""
+    """The sheet-size table; a size the pieces don't fit, or that was not
+    nested, keeps only its price."""
     rows = []
     for i, o in enumerate(options):
         row = {
@@ -114,7 +120,7 @@ def _table_rows(options: list[SheetOption], n_pieces: int, cheapest_idx: int | N
             "Levyn kg":          "",
             "Yhteensä €":        "",
             "€/kpl":             "",
-            "Paras":             "🚫",
+            "Paras":             "ei laskettu" if o.skipped else "🚫",
         }
         if o.ok:
             row.update({

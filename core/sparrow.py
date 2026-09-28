@@ -547,7 +547,7 @@ def sparrow_options(
     return compute_options(
         lookup, material, thickness, thickness_mm,
         n_pieces=n_pieces, part_area_mm2=part_area_mm2, pack=pack_fn,
-        margin_pct=margin_pct, on_progress=on_progress,
+        margin_pct=margin_pct, on_progress=on_progress, skip_dearer=True,
     )
 
 
