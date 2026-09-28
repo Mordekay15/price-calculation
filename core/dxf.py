@@ -143,6 +143,9 @@ class DxfFile:
     name: str
     unit_label: str = ""
     unit_note: str = ""          # how the unit was found, when not from the header
+    # No unit anywhere: unit_label is only a guess, which the user must confirm
+    # before the part is priced.
+    unit_guessed: bool = False
     pieces: list[_Piece] = field(default_factory=list)
     texts: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)          # file-level
@@ -275,11 +278,15 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
         if sheet:
             f.unit_label, f.unit_note = "mm", f"päätelty piirustusarkin koosta ({sheet})"
         else:
-            f.problems.append(
-                "Piirustuksesta puuttuu mittayksikkö ($INSUNITS tai Un=-teksti), "
-                "eikä piirustusarkin koosta voi päätellä sitä, joten mittoja ei voi "
-                "tulkita varmasti. Tallenna DXF uudelleen yksikkö (mm) asetettuna."
-            )
+            # Guess: mm, unless the header says the drawing is imperial.
+            f.unit_guessed = True
+            f.unit_note = "arvattu — piirustuksessa ei ole mittayksikköä"
+            if doc.header.get("$MEASUREMENT", 1) == 0:
+                factor, f.unit_label = _UNITS[1]
+                for p in f.pieces:
+                    p.points = [(x * factor, y * factor) for x, y in p.points]
+            else:
+                f.unit_label = "mm"
     return f
 
 

@@ -141,6 +141,23 @@ def test_unit_from_an_iso_sheet_size(drawing):
     assert round(dxf.part().outline.width_mm) == 300
 
 
+def test_no_unit_anywhere_is_guessed_as_mm(drawing):
+    doc, msp = drawing(units=0)
+    rect(msp, 0, 0, 300, 200)
+    dxf = read_dxf(dxf_bytes(doc), "part.dxf")
+    assert dxf.unit_guessed and dxf.unit_label == "mm" and dxf.problems == []
+    assert round(dxf.part().outline.width_mm) == 300
+
+
+def test_no_unit_in_an_imperial_drawing_is_guessed_as_inch(drawing):
+    doc, msp = drawing(units=0)
+    doc.header["$MEASUREMENT"] = 0
+    rect(msp, 0, 0, 10, 5)
+    dxf = read_dxf(dxf_bytes(doc), "part.dxf")
+    assert dxf.unit_guessed and dxf.unit_label == "tuuma"
+    assert math.isclose(dxf.part().outline.width_mm, 254)
+
+
 # ── Refused, with a reason ────────────────────────────────────────────────────
 
 def refused(doc) -> str:
@@ -149,10 +166,6 @@ def refused(doc) -> str:
     return " ".join(report.problems)
 
 
-def test_no_unit_anywhere(drawing):
-    doc, msp = drawing(units=0)
-    rect(msp, 0, 0, 300, 200)
-    assert "mittayksikkö" in refused(doc)
 
 
 def test_gap_in_the_outline(drawing):
