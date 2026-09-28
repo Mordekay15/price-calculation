@@ -1,0 +1,416 @@
+"""
+view/dxf_tab.py
+===============
+DXF tab — Sparrow shape nesting with the same sheet-usage design as the
+manual calculator.
+
+The user uploads DXF files (one product each) and configures each part on its
+card (bottom of this module). Parts are grouped by material + thickness and,
+for each group, Sparrow nests the real shapes on every priced sheet size
+(core/sparrow.py) to find the cheapest (view/sheet_usage.py).
+
+Sparrow runs are slow, so they happen behind a button with a progress bar
+(view/sparrow_progress.py) and the results are cached per input signature
+until something changes.
+"""
+
+from dataclasses import dataclass
+
+import streamlit as st
+
+from core.pricing import build_lookup, parse_thickness_mm
+from core.dxf import DxfFile, DxfReport, read_dxf
+from core.geometry import net_area
+from core.sparrow import find_executable, part_from_report, run_sparrow, sparrow_options
+from view.common import (
+    group_products,
+    is_ready,
+    materials_with_copper,
+    render_grand_total,
+    render_groups,
+    render_margin,
+    render_nesting_settings,
+    render_material_thickness,
+    render_pieces_summary,
+)
+from view.sheet_usage import draw_sparrow_layout, render_group
+from view.sparrow_progress import SparrowProgress, run_with_progress
+
+_ROTATIONS: dict[str, tuple[float, ...]] = {
+    "0° / 90° / 180° / 270°": (0.0, 90.0, 180.0, 270.0),
+    "0° / 90°": (0.0, 90.0),
+}
+_CACHE = "dxf_sparrow_cache"  # {signature: computed group}
+
+
+@dataclass(frozen=True)
+class _Settings:
+    """Every input besides the parts that changes a Sparrow result."""
+
+    nest_mode: str
+    rankavali_mm: int
+    clamp_mm: int
+    rotations: tuple[float, ...]
+    time_limit: int
+    seed: int
+    margin_pct: float
+
+
+def render(data: dict) -> None:
+    lookup = build_lookup(data)
+    st.subheader("DXF-nestaus")
+    st.caption(
+        "Lataa osat DXF-tiedostoina. Ohjelma lukee kunkin osan todellisen "
+        "muodon ja mitat, sijoittelee ne Sparrow-moottorilla ja vertaa, mille "
+        "levykoolle osat mahtuvat edullisimmin."
+    )
+    margin_pct = render_margin("dxf_margin_pct")
+
+    uploaded = st.file_uploader(
+        "Lataa DXF-tiedostot",
+        type="dxf",
+        accept_multiple_files=True,
+        key="dxf_uploader",
+        help="Voit ladata useita tiedostoja kerralla. Jokainen tiedosto on yksi tuote.",
+    )
+    parts = _sync_store(uploaded)
+    if not parts:
+        st.info("Lataa vähintään yksi DXF-tiedosto aloittaaksesi.")
+        return
+
+    products = _render_part_cards(parts, materials_with_copper(lookup), lookup)
+    settings = _render_settings(margin_pct)
+    groups = group_products(products, settings.nest_mode)
+    if not groups:
+        st.info("Valitse materiaali ja paksuus vähintään yhdelle osalle.")
+        return
+
+    exe = find_executable()
+    if exe is None:
+        st.error(
+            "Sparrow-suoritustiedostoa ei löytynyt — levylaskenta vaatii sen. "
+            "Aseta polku `SPARROW_BIN`-ympäristömuuttujaan tai lisää binääri "
+            "`bin/sparrow`-tiedostoksi."
+        )
+        return
+
+    st.divider()
+    st.markdown("**Levyn käyttö**")
+    cache: dict = st.session_state.setdefault(_CACHE, {})
+    if st.button("Laske levykäyttö (Sparrow)", key="dxf_sparrow_run"):
+        cache.clear()
+        _run(groups, lookup, settings, exe, cache)
+    _show(products, groups, settings, cache)
+
+
+def _render_part_cards(parts, materials: list[str], lookup: dict) -> list[dict]:
+    """One card per uploaded part; returns the configured product dicts."""
+    st.markdown("**Osat**")
+    products = []
+    for idx, (fid, part) in enumerate(parts):
+        product = _render_part_config(fid, part, idx, materials, lookup)
+        if product is not None:
+            products.append(product)
+    return products
+
+
+def _render_settings(margin_pct: float) -> _Settings:
+    nest_mode, rankavali_mm, clamp_mm = render_nesting_settings(
+        key_prefix="dxf",
+        separate_label="Laske jokainen osa erikseen",
+    )
+    c1, c2, c3 = st.columns(3)
+    rot_label = c1.selectbox("Sallitut kierrot", list(_ROTATIONS), key="dxf_rot")
+    time_limit = c2.number_input("Sparrow-aikaraja / ajo (s)", min_value=1,
+                                 value=8, step=1, key="dxf_sparrow_t")
+    seed = c3.number_input("Siemen (seed)", min_value=0, value=0, step=1,
+                           key="dxf_sparrow_seed")
+    return _Settings(nest_mode, rankavali_mm, clamp_mm, _ROTATIONS[rot_label],
+                     int(time_limit), int(seed), margin_pct)
+
+
+def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
+    """Stable cache key: the group, its parts (quantity, layers) and the settings."""
+    prod_sig = ",".join(f"{p['id']}:{p['qty']}:{p['layers']}" for p in products)
+    return f"{key}|{prod_sig}|{settings}"
+
+
+def _run(groups, lookup: dict, settings: _Settings, exe, cache: dict) -> None:
+    """Nest every group with Sparrow (behind a progress bar) into ``cache``."""
+    progress = SparrowProgress()
+
+    def run_fn(instance, *, seed, time_limit_sec, separation):
+        progress.run_started()
+        return run_sparrow(
+            instance, executable=exe, time_limit_sec=int(time_limit_sec),
+            seed=int(seed), min_item_separation=separation,
+        )
+
+    for key, prods in groups.items():
+        material, thickness = key[0], key[1]
+        thickness_mm = parse_thickness_mm(thickness)
+        if thickness_mm is None:
+            continue
+        parts, areas = _parts_for_group(prods, settings.rotations)
+        result = run_with_progress(
+            progress, f"{material} · {thickness} mm",
+            sparrow_options,
+            lookup, material, thickness, thickness_mm, parts,
+            run_fn=run_fn, margin_pct=settings.margin_pct,
+            long_side_clamp_mm=settings.clamp_mm,
+            rankavali_mm=settings.rankavali_mm, seed=settings.seed,
+            time_limit_sec=settings.time_limit,
+        )
+        cache[_sig(key, prods, settings)] = {
+            "result": result, "parts": parts, "areas": areas,
+            "thickness_mm": thickness_mm,
+        }
+
+
+def _show(products: list[dict], groups, settings: _Settings, cache: dict) -> None:
+    """Render the cached result of every group, then the parts summary."""
+    areas: dict[str, float] = {}
+
+    def render_one(key, prods):
+        sig = _sig(key, prods, settings)
+        entry = cache.get(sig)
+        if entry is None:
+            return None
+        areas.update(entry["areas"])
+        return render_group(
+            key[0], key[1], entry["thickness_mm"], entry["result"],
+            margin_pct=settings.margin_pct, key=f"dxf_su_select::{sig}",
+            draw_layout=lambda active: draw_sparrow_layout(active, entry["parts"], sig),
+        )
+
+    prices, grand_total, missing = render_groups(groups, render_one)
+    if missing and grand_total is None:
+        st.info("Paina **Laske levykäyttö (Sparrow)** laskeaksesi levytarpeen ja hinnan.")
+        return
+    if missing:
+        st.warning("Asetukset muuttuivat — laske uudelleen päivittääksesi kaikki ryhmät.")
+    render_grand_total(grand_total, len(groups))
+
+    ready = [p for p in products if is_ready(p)]
+    render_pieces_summary(ready, prices, from_dxf=True, areas_mm2=areas)
+
+
+def _parts_for_group(
+    products: list[dict], rotations: tuple
+) -> tuple[list, dict[str, float]]:
+    """Sparrow parts for a group, plus each product's real area (mm²/piece).
+
+    The parts come from the same read result the card showed; the area is the
+    outline minus its holes.
+    """
+    parts = [
+        part_from_report(p["report"], int(p["qty"]), allowed_orientations=rotations)
+        for p in products
+    ]
+    areas = {p["id"]: net_area(sp.outer, sp.holes) for p, sp in zip(products, parts)}
+    return parts, areas
+
+
+# ── Part cards ────────────────────────────────────────────────────────────────
+#
+# _sync_store() reads each uploaded file once with core.dxf.read_dxf (cached in
+# session state, pruned when a file is removed). _render_part_config() draws a
+# card — layer picker, preview, measured size, material / thickness / quantity —
+# and returns the product dict the pricing uses, or None (with the reasons
+# shown) when the part cannot be priced. The card and the pricing share the
+# same DxfReport, so what the card shows is exactly what Sparrow nests.
+
+_STORE   = "dxf_store"         # {file_id: DxfFile}
+_REPORTS = "dxf_part_reports"  # {(file_id, layers): DxfReport}
+_CONFIG  = "dxf_part_config"   # {file_id: {"material", "thickness"}}
+
+
+def _sync_store(uploaded) -> list[tuple[str, DxfFile]]:
+    """Read newly uploaded files once, drop removed ones, keep upload order."""
+    store: dict = st.session_state.setdefault(_STORE, {})
+    uploaded = uploaded or []
+    current_ids = {u.file_id for u in uploaded}
+    for fid in [f for f in store if f not in current_ids]:
+        _evict(fid)
+
+    files = []
+    for up in uploaded:
+        if up.file_id not in store:
+            store[up.file_id] = read_dxf(up.getvalue(), up.name)
+        files.append((up.file_id, store[up.file_id]))
+    return files
+
+
+def _evict(fid: str) -> None:
+    """Drop everything kept for a removed file, including its widget state."""
+    st.session_state.get(_STORE, {}).pop(fid, None)
+    st.session_state.get(_CONFIG, {}).pop(fid, None)
+    reports: dict = st.session_state.get(_REPORTS, {})
+    for key in [k for k in reports if k[0] == fid]:
+        del reports[key]
+    for key in (f"dxf_mat_{fid}", f"dxf_th_{fid}", f"dxf_th_{fid}_disabled",
+                f"dxf_q_{fid}", f"dxf_layers_{fid}"):
+        st.session_state.pop(key, None)
+
+
+def _render_part_config(
+    fid: str,
+    dxf: DxfFile,
+    idx: int,
+    materials: list[str],
+    lookup: dict,
+) -> dict | None:
+    """Draw one part's card; return its product dict, or None if not priceable."""
+    with st.container(border=True):
+        hdr = st.columns([6, 2])
+        hdr[0].markdown(f"**#{idx + 1}** · {dxf.name}")
+
+        # Text found in the drawing (Mat=…, Thk=…) — shown to cross-check the
+        # material choice, never nested.
+        if dxf.texts:
+            st.caption("Piirustuksen tekstit: " + " · ".join(dxf.texts))
+        if dxf.unit_note:
+            st.caption(f"Yksikkö {dxf.unit_note}: {dxf.unit_label}.")
+
+        layers = _render_layer_picker(fid, dxf)
+        report = _part(fid, dxf, layers)
+
+        preview = _preview_svg(report)
+        if preview:
+            st.markdown(preview, unsafe_allow_html=True)
+        if report.dropped:
+            st.caption(
+                f"Osan ulkopuolelta ohitettiin {len(report.dropped)} kuviota "
+                "(esim. lisäkuvat tai irralliset viivat) — harmaalla esikatselussa."
+            )
+
+        if report.problems:
+            hdr[1].markdown(":red[ei hinnoiteltavissa]")
+            st.error(
+                "**Tätä osaa ei voi vielä hinnoitella:**\n\n"
+                + "\n".join(f"- {p}" for p in report.problems)
+            )
+            return None
+
+        width = round(report.outline.width_mm, 1)
+        height = round(report.outline.height_mm, 1)
+        hdr[1].markdown(f":gray[{width:g} × {height:g} mm · {report.unit_label}]")
+
+        # Material + thickness — persisted per file and shared with the manual
+        # calculator cards. Seed the selectboxes from the stored choice, then
+        # write the current choice back into it.
+        cfg = st.session_state.setdefault(_CONFIG, {}).setdefault(
+            fid, {"material": None, "thickness": None})
+        material, thickness = render_material_thickness(
+            materials, lookup,
+            mat_key=f"dxf_mat_{fid}", thick_key=f"dxf_th_{fid}",
+            mat_default=cfg["material"], thick_default=cfg["thickness"],
+        )
+        cfg["material"] = material
+        cfg["thickness"] = thickness
+        qty = int(st.number_input("Määrä (kpl)", min_value=1, value=1, step=1,
+                                  key=f"dxf_q_{fid}"))
+
+    return {
+        "id":        fid,
+        "name":      dxf.name,
+        "material":  material,
+        "thickness": thickness,
+        "width":     width,
+        "height":    height,
+        "qty":       qty,
+        "layers":    None if layers is None else tuple(sorted(layers)),
+        "report":    report,
+    }
+
+
+def _part(fid: str, dxf: DxfFile, layers: set[str] | None) -> DxfReport:
+    """The part for this layer choice, memoised (building it scans every point)."""
+    cache: dict = st.session_state.setdefault(_REPORTS, {})
+    key = (fid, None if layers is None else tuple(sorted(layers)))
+    if key not in cache:
+        cache[key] = dxf.part(layers)
+    return cache[key]
+
+
+def _render_layer_picker(fid: str, dxf: DxfFile) -> set[str] | None:
+    """Layer multiselect, shown when a drawing has more than one layer.
+
+    Frame / title / text / dimension / bend / info layers are left out by
+    default. Returns the chosen layers, or None for the default choice.
+    """
+    avail = dxf.available_layers()
+    if len(avail) <= 1:
+        return None
+    suggested = dxf.suggested_layers()
+    sizes = dxf.layer_sizes()
+
+    def label(name: str) -> str:
+        n, w, h = sizes.get(name, (0, 0, 0))
+        return f"{name}  ·  {n} obj  ·  {w:.0f}×{h:.0f} mm"
+
+    chosen = set(st.multiselect(
+        "Leikattavat tasot (layers)",
+        options=avail,
+        default=suggested,
+        format_func=label,
+        key=f"dxf_layers_{fid}",
+        help="Vain osan leikattavat tasot. Kehys, otsikko, mitat, tekstit, "
+             "taivutusviivat ja info-tasot jätetään oletuksena pois — lisää tai "
+             "poista tasoja ja katso esikatselusta, että vain osa jää.",
+    ))
+    hidden = [n for n in avail if n not in suggested]
+    if hidden:
+        st.caption("Jätetty oletuksena pois: " + ", ".join(hidden))
+    return chosen
+
+
+def _preview_svg(report: DxfReport, px: int = 260) -> str:
+    """Small preview of the part (drawing Y flipped).
+
+    The part is filled (holes cut out), reference lines are dashed, open lines
+    inside the part are red, and geometry dropped outside the part is grey.
+    """
+    rings = ([report.outline.points] if report.outline else []) + [h.points for h in report.holes]
+    groups = (rings, report.reference_lines, report.open_lines, report.dropped)
+    pts = [p for group in groups for ring in group for p in ring]
+    if not pts:
+        return ""
+    min_x = min(x for x, _ in pts)
+    min_y = min(y for _, y in pts)
+    w = max(x for x, _ in pts) - min_x
+    h = max(y for _, y in pts) - min_y
+    if w <= 0 or h <= 0:
+        return ""
+    stroke = max(0.5, max(w, h) / 300)
+
+    def d(lines, close):
+        return " ".join(
+            "M " + " L ".join(f"{x - min_x:.1f} {h - (y - min_y):.1f}" for x, y in line)
+            + (" Z" if close else "")
+            for line in lines if len(line) >= 2
+        )
+
+    scale = px / max(w, h)
+    out = [
+        f'<svg width="{w * scale:.0f}" height="{h * scale:.0f}" '
+        f'viewBox="{-stroke} {-stroke} {w + 2 * stroke:.1f} {h + 2 * stroke:.1f}" '
+        f'preserveAspectRatio="xMidYMid meet" '
+        f'style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:4px;'
+        f'max-width:100%;height:auto;margin:4px 0 2px;">'
+    ]
+    if report.dropped:
+        out.append(f'<path d="{d(report.dropped, False)}" fill="none" stroke="#cbd5e1" '
+                   f'stroke-width="{stroke:.2f}"/>')
+    if rings:
+        out.append(f'<path d="{d(rings, True)}" fill="#3b82f6" fill-opacity="0.12" '
+                   f'fill-rule="evenodd" stroke="#2563eb" stroke-width="{stroke:.2f}"/>')
+    if report.reference_lines:
+        out.append(f'<path d="{d(report.reference_lines, False)}" fill="none" '
+                   f'stroke="#475569" stroke-width="{stroke * 0.7:.2f}" '
+                   f'stroke-dasharray="{stroke * 4:.1f} {stroke * 3:.1f}"/>')
+    if report.open_lines:
+        out.append(f'<path d="{d(report.open_lines, False)}" fill="none" stroke="#dc2626" '
+                   f'stroke-width="{stroke * 1.5:.2f}"/>')
+    out.append("</svg>")
+    return "".join(out)

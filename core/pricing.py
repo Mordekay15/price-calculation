@@ -1,18 +1,19 @@
 """
-core/calculator.py
-==================
-Pure business logic — no Streamlit, no I/O.
+core/pricing.py
+===============
+Price data and material facts — pure, no Streamlit, no I/O.
 
-Build a price lookup from parsed data and run calculations on it.
-To add a new calculation type (e.g. weight-based, area-based):
-  - Add a new function below and call it from the relevant view.
+* ``build_lookup`` flattens the parsed price lists into
+  ``(thickness, "Material | Size") -> €/tn``.
+* Materials, sizes and thicknesses available in that lookup.
+* Densities and piece weights.
+* Copper: always selectable, priced per kilo by the user (sidebar).
 """
 
 THICKNESS_KEY = "Paksuus (mm)"
 
 # Material densities in kg/mm³. A 1 mm sheet of 1 m² weighs density × 1e6 kg,
 # so the kg/m²·mm value equals the g/cm³ value.
-#STEEL_DENSITY_KG_PER_MM3 = 7.85e-6   # Steel / RST / HST — 7.85 g/cm³
 DENSITIES_KG_PER_MM3 = {
     "steel":    8.0e-6,
     "alumiini": 2.7e-6,
@@ -73,19 +74,6 @@ def thickness_sort_key(t: str) -> float:
         return 999
 
 
-def sorted_products(lookup: dict) -> list[str]:
-    return sorted(set(label for (_, label) in lookup))
-
-
-def sorted_thicknesses(lookup: dict, product: str | None = None) -> list[str]:
-    """Return thicknesses, optionally filtered to those available for a product."""
-    if product:
-        items = [t for (t, p) in lookup if p == product]
-    else:
-        items = [t for (t, _) in lookup]
-    return sorted(set(items), key=thickness_sort_key)
-
-
 # ── Material / size helpers ───────────────────────────────────────────────────
 
 def extract_material_and_size(product_label: str) -> tuple[str, str]:
@@ -110,12 +98,6 @@ def get_sizes_for_material(lookup: dict, material: str) -> list[str]:
     }
     sizes.discard("")
     return sorted(sizes)
-
-
-def get_thicknesses_for_material_size(lookup: dict, material: str, size: str) -> list[str]:
-    """Sorted thicknesses available for the given material + size combination."""
-    target = f"{material} | {size}" if size else material
-    return sorted({t for (t, lbl) in lookup if lbl == target}, key=thickness_sort_key)
 
 
 def get_thicknesses_for_material(lookup: dict, material: str) -> list[str]:
@@ -147,63 +129,50 @@ def piece_weight_kg(
     return width_mm * height_mm * thickness_mm * density_for_material(material)
 
 
-# ── Price calculation ─────────────────────────────────────────────────────────
+# ── Copper ────────────────────────────────────────────────────────────────────
+#
+# Copper is always available, independent of any uploaded price list. It has
+# no list price: the user sets €/kg (15.0–15.9) in the sidebar, and until then
+# copper is selectable but unpriced. It is stocked in one sheet size across a
+# fixed set of thicknesses (the supplier's "KUPARI" list, e.g. "0,5x1000x2000").
 
-def calculate(
-    base_price: float,
-    quantity_tn: float,
-    margin_pct: float = 0.0,
-    surcharge_per_tn: float = 0.0,
-    fx_rate: float = 1.0,
-) -> dict:
+# Material / product identity — mirrors the "Material | Size" label scheme the
+# PDF parsers emit so copper flows through the exact same calculator pipeline.
+COPPER_MATERIAL = "KUPARI"
+COPPER_SIZE = "1000x2000"
+COPPER_LABEL = f"{COPPER_MATERIAL} | {COPPER_SIZE}"
+
+# Thicknesses (mm) copper is stocked in, in Finnish decimal-comma format to
+# match the rest of the app (parse_thickness_mm / thickness_sort_key handle it).
+COPPER_THICKNESSES = sorted(
+    ["0,5", "0,8", "1", "1,5", "2", "3", "4", "5", "6"],
+    key=thickness_sort_key,
+)
+
+# Price-scaler bounds for the per-kilo copper price (€/kg).
+COPPER_PRICE_MIN = 15.0
+COPPER_PRICE_MAX = 15.9
+COPPER_PRICE_STEP = 0.1
+
+# Section key used inside the merged price-data dict.
+COPPER_SECTION_KEY = "kupari"
+
+
+def build_copper_section(price_per_kg: float | None) -> dict:
+    """Return a data section (same shape as the parsers') for copper.
+
+    One row per thickness, keyed by the 'Material | Size' label. When no price
+    has been set yet the price is None, so copper still appears as a selectable
+    material but carries no per-sheet pricing — build_lookup skips None values.
+    The per-kilo price is converted to €/tn (× 1000) so it shares the calculator
+    pipeline with the PDF-sourced materials, which are all normalised to €/tn.
     """
-    Calculate total cost with optional adjustments.
-
-    Returns a dict with every intermediate step so the UI can
-    display as much or as little detail as it wants.
-    """
-    after_margin    = base_price * (1 + margin_pct / 100)
-    after_surcharge = after_margin + surcharge_per_tn
-    after_fx        = after_surcharge * fx_rate
-    total           = after_fx * quantity_tn
-
-    return {
-        "base_price":       base_price,
-        "after_margin":     after_margin,
-        "after_surcharge":  after_surcharge,
-        "after_fx":         after_fx,
-        "total":            total,
-        "quantity_tn":      quantity_tn,
-        "margin_pct":       margin_pct,
-        "surcharge_per_tn": surcharge_per_tn,
-        "fx_rate":          fx_rate,
-    }
-
-
-def compare_thicknesses(
-    lookup: dict,
-    product: str,
-    quantity_tn: float,
-    margin_pct: float = 0.0,
-    surcharge_per_tn: float = 0.0,
-    fx_rate: float = 1.0,
-    selected_thickness: str | None = None,
-) -> list[dict]:
-    """
-    Return a comparison table of all thicknesses for one product.
-    Each row includes base price, adjusted price, and total cost.
-    """
-    rows = []
-    for t in sorted_thicknesses(lookup, product):
-        bp = lookup.get((t, product))
-        if bp is None:
-            continue
-        result = calculate(bp, quantity_tn, margin_pct, surcharge_per_tn, fx_rate)
-        rows.append({
-            "Thickness":         t,
-            "Base (€/tn)":       f"{result['base_price']:,.2f}",
-            "Adjusted (€/tn)":   f"{result['after_fx']:,.2f}",
-            f"Total ({quantity_tn} tn)": f"{result['total']:,.2f}",
-            "":                  "◀" if t == selected_thickness else "",
-        })
-    return rows
+    price_per_tn = price_per_kg * 1000 if price_per_kg else None
+    rows = [
+        {
+            "Paksuus (mm)": t,
+            COPPER_LABEL: price_per_tn,
+        }
+        for t in COPPER_THICKNESSES
+    ]
+    return {COPPER_SECTION_KEY: rows}
