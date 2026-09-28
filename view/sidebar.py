@@ -1,19 +1,11 @@
-"""
-view/sidebar.py
-===============
-The sidebar: a single PDF upload slot that auto-routes to the right supplier,
-a status line per supplier, and the manual copper price.
-
-`render()` draws the whole sidebar and returns the merged price data that the
-calculator consumes. Copper is always merged in, so the calculator works even
-before any supplier PDF has been uploaded.
-"""
+"""The sidebar: one PDF upload slot routed to the right supplier, a status line
+per saved price list, and the manual copper price. ``render`` returns the
+merged price data (copper always included)."""
 
 import streamlit as st
 
-from core import price_store
-from core.price_parser.detect import detect_supplier, is_empty
-from core.price_store import SUPPLIERS, Supplier
+from core import suppliers
+from core.suppliers import SUPPLIERS, Supplier
 from core.pricing import (
     COPPER_PRICE_MAX,
     COPPER_PRICE_MIN,
@@ -46,15 +38,15 @@ def render() -> dict:
         _render_uploader()
 
         stored_by_supplier = [
-            (supplier, price_store.load(supplier)) for supplier in SUPPLIERS
+            (supplier, suppliers.load(supplier)) for supplier in SUPPLIERS
         ]
         # Only draw the status section (and its divider) when at least one
         # supplier has an uploaded price list — no empty "ei hinnastoa" rows.
         if any(stored for _, stored in stored_by_supplier):
             st.divider()
             for supplier, stored in stored_by_supplier:
-                _render_status(supplier, stored)
                 if stored:
+                    _render_status(supplier, stored)
                     merged.update(stored["data"])
 
         st.divider()
@@ -87,7 +79,7 @@ def _render_uploader() -> None:
 
     with st.spinner("Tunnistetaan toimittajaa..."):
         try:
-            key = detect_supplier(file_bytes)
+            key = suppliers.detect_supplier(file_bytes)
         except Exception:
             st.error(_UNREADABLE_PDF_MSG)
             return
@@ -100,7 +92,7 @@ def _render_uploader() -> None:
         if key is None:
             return
 
-    _parse_and_save(price_store.by_key(key), file_bytes, uploaded.name, uploaded.file_id)
+    _parse_and_save(suppliers.by_key(key), file_bytes, uploaded.name, uploaded.file_id)
 
 
 def _parse_and_save(
@@ -117,7 +109,7 @@ def _parse_and_save(
             st.error(_UNREADABLE_PDF_MSG)
             return
 
-    if is_empty(parsed):
+    if suppliers.is_empty(parsed):
         st.error(
             f"**{supplier.label}**-jäsennys ei löytänyt yhtään riviä. "
             "PDF saattaa olla toiselta toimittajalta tai sen rakenne on "
@@ -125,7 +117,7 @@ def _parse_and_save(
         )
         return
 
-    price_store.save(supplier, parsed, filename)
+    suppliers.save(supplier, parsed, filename)
     st.session_state[_SEEN] = file_id
     st.session_state[_RESULT] = {
         "file_id":      file_id,
@@ -141,27 +133,22 @@ def _render_correction(uploaded) -> None:
     if result.get("file_id") != uploaded.file_id:
         return
 
-    saved = price_store.by_key(result["supplier_key"])
+    saved = suppliers.by_key(result["supplier_key"])
     st.success(f"Tunnistettu **{saved.label}** — hinnat tallennettu.")
 
 
-def _ask_supplier(widget_key: str, exclude: str | None = None) -> str | None:
+def _ask_supplier(widget_key: str) -> str | None:
     """Selectbox of supplier labels. Returns a supplier key, or None if unpicked."""
-    options = [s for s in SUPPLIERS if s.key != exclude]
-    labels  = [_PLACEHOLDER_SUPPLIER] + [s.label for s in options]
-    picked  = st.selectbox("Toimittaja", labels, index=0, key=widget_key)
+    labels = [_PLACEHOLDER_SUPPLIER] + [s.label for s in SUPPLIERS]
+    picked = st.selectbox("Toimittaja", labels, index=0, key=widget_key)
     if picked == _PLACEHOLDER_SUPPLIER:
         return None
-    return next(s.key for s in options if s.label == picked)
+    return next(s.key for s in SUPPLIERS if s.label == picked)
 
 
 # ── Status ────────────────────────────────────────────────────────────────────
 
-def _render_status(supplier: Supplier, stored: dict | None) -> None:
-    # Only show a line once a price list has been uploaded for this supplier;
-    # suppliers with nothing stored render nothing.
-    if not stored:
-        return
+def _render_status(supplier: Supplier, stored: dict) -> None:
     st.markdown(
         f"**{supplier.label}** · {stored['source_file']}  \n"
         f"<span style='color:#64748b;font-size:12px;'>"
