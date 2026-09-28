@@ -43,9 +43,8 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
-from core.calculator import piece_weight_kg
 from core.geometry import bbox, bbox_wh, net_area, rotate_translate
-from core.sheet_cost import Packing, compute_options, effective_sheet
+from core.sheet_cost import Packing, compute_options, effective_sheet, utilization
 
 Point = tuple[float, float]
 
@@ -80,11 +79,6 @@ class PackedSheet:
     sheet_h: float
     used_area: float                # summed true part area (holes subtracted)
     count: int = 1
-
-    @property
-    def utilization(self) -> float:
-        total = self.sheet_w * self.sheet_h
-        return (self.used_area / total) if total else 0.0
 
 
 @dataclass
@@ -346,28 +340,21 @@ def sparrow_options(
     rankavali_mm: int = 0,
     seed: int = 0,
     time_limit_sec: int = 8,
-    pieces_kg_override: float | None = None,
     on_progress=None,
 ) -> dict:
     """``core.sheet_cost.compute_options`` with Sparrow shape nesting.
 
-    ``parts`` are ``SparrowPart``-like objects. ``pieces_kg_override`` sets the
-    total piece weight the sheet cost is spread over — pass the net-area weight
-    the per-part summary uses so the two totals reconcile exactly.
+    ``parts`` are ``SparrowPart``-like objects; their real area is the outline
+    minus its holes.
 
     ``on_progress``, if given, receives ``("size", index=, count=, w=, h=)``
     before each sheet size and ``("sheet", w=, h=, placed=, total=)`` each time
     a sheet layout is settled in one orientation.
     """
     n_pieces = sum(int(getattr(p, "quantity", 1)) for p in parts)
-    if pieces_kg_override is not None:
-        pieces_kg = float(pieces_kg_override)
-    else:
-        pieces_kg = sum(
-            piece_weight_kg(p.width_mm, p.height_mm, thickness_mm, material)
-            * int(getattr(p, "quantity", 1))
-            for p in parts
-        )
+    part_area_mm2 = sum(
+        net_area(p.outer, p.holes) * int(getattr(p, "quantity", 1)) for p in parts
+    )
     separation = float(rankavali_mm) if rankavali_mm else None
 
     def pack_fn(sw: int, sh: int) -> Packing:
@@ -381,27 +368,21 @@ def sparrow_options(
         )
         pack, eff_w, eff_h, draw_w, draw_h = best
         if not pack.ok:
-            return Packing(sheets=[], sheets_needed=0, utilization=0.0,
+            return Packing(sheets=[], sheets_needed=0,
                            eff_w=eff_w, eff_h=eff_h, draw_w=sw, draw_h=sh,
                            failed=1, reason=pack.reason)
         return Packing(
             sheets=pack.sheets,
             sheets_needed=pack.sheets_needed,
-            utilization=_utilization(pack, eff_w, eff_h),
             eff_w=eff_w, eff_h=eff_h, draw_w=draw_w, draw_h=draw_h,
             alt=_alt_layout(alt),
         )
 
     return compute_options(
         lookup, material, thickness, thickness_mm,
-        n_pieces=n_pieces if parts else 0, pieces_kg=pieces_kg, pack=pack_fn,
+        n_pieces=n_pieces if parts else 0, part_area_mm2=part_area_mm2, pack=pack_fn,
         margin_pct=margin_pct, on_progress=on_progress,
     )
-
-
-def _utilization(pack: PackResult, eff_w: int, eff_h: int) -> float:
-    cap = pack.sheets_needed * eff_w * eff_h
-    return (pack.used_area / cap) if cap else 0.0
 
 
 def _pack_best_orientation(
@@ -412,8 +393,8 @@ def _pack_best_orientation(
 
     Each attempt is ``(pack, eff_w, eff_h, draw_w, draw_h)`` where
     ``draw_w × draw_h`` is that orientation's sheet layout and ``eff_w × eff_h``
-    its usable area after the clamp. ``best`` is the tighter fit (fewest sheets,
-    tie-broken by utilisation) and drives the price; ``alt`` is the *other*
+    its usable area after the clamp. ``best`` is the tighter fit (fewest sheets;
+    on a tie the long-side strip) and drives the price; ``alt`` is the *other*
     orientation's real re-nest (or None when the sheet is square, the other
     orientation didn't fit, or it was skipped) — used for the "turn the sheet"
     view. When neither orientation fits, ``(first_attempt, None)`` is returned
@@ -452,7 +433,7 @@ def _pack_best_orientation(
     ok = [o for o in options if o[0].ok]
     if not ok:
         return options[0], None
-    best = min(ok, key=lambda o: (o[0].sheets_needed, -_utilization(o[0], o[1], o[2])))
+    best = min(ok, key=lambda o: o[0].sheets_needed)
     alt = next((o for o in ok if o is not best), None)
     return best, alt
 
@@ -485,5 +466,5 @@ def _alt_layout(alt) -> dict | None:
         "_sw": dw,
         "_sh": dh,
         "sheets_needed": pack.sheets_needed,
-        "utilization": _utilization(pack, ew, eh),
+        "utilization": utilization(pack.used_area, dw, dh, pack.sheets_needed),
     }

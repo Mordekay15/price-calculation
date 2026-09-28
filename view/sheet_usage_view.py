@@ -21,7 +21,7 @@ from core.calculator import (
 )
 from core.copper import COPPER_MATERIAL
 from core.nesting import rect_options
-from core.sheet_cost import cheapest_index, fmt_m
+from core.sheet_cost import cheapest_index, fmt_m, utilization
 
 
 def render_group(
@@ -331,10 +331,14 @@ def _render_nesting(
         cols = st.columns(cols_per_row)
         for col_idx, sheet in enumerate(row):
             sheet_no = row_start + col_idx + 1
+            part_area = sum(
+                products[p.product_idx]["width"] * products[p.product_idx]["height"]
+                for p in sheet.placements
+            )
             with cols[col_idx]:
                 st.markdown(
                     f"**Levy {sheet_no}** · käyttöaste "
-                    f"{sheet.utilization * 100:.1f} %"
+                    f"{utilization(part_area, sheet_w, sheet_h) * 100:.1f} %"
                 )
                 st.markdown(
                     _sheet_svg(sheet, sheet_w, sheet_h, eff_w, eff_h,

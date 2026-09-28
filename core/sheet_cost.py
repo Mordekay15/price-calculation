@@ -33,7 +33,6 @@ class Packing:
 
     sheets: list
     sheets_needed: int
-    utilization: float
     eff_w: int
     eff_h: int
     draw_w: int
@@ -67,6 +66,17 @@ def effective_sheet(sw: int, sh: int, long_side_clamp_mm: int) -> tuple[int, int
     return max(0, sw - long_side_clamp_mm), sh
 
 
+def utilization(part_area_mm2: float, sheet_w: float, sheet_h: float, n_sheets: int = 1) -> float:
+    """Share of the bought sheet area that ends up as parts (Käyttöaste).
+
+    ``part_area_mm2`` is the real part area — without the cut gap, and with the
+    holes removed for DXF parts. The clamp strip counts as sheet area, because
+    it is paid for. Every utilisation figure in the app uses this one formula.
+    """
+    total = sheet_w * sheet_h * n_sheets
+    return part_area_mm2 / total if total else 0.0
+
+
 def fmt_m(mm: int) -> str:
     """Format a mm value as metres: 1000 -> '1.0', 1250 -> '1.25', 1500 -> '1.5'."""
     s = f"{mm / 1000:.2f}".rstrip("0")
@@ -80,15 +90,16 @@ def compute_options(
     thickness_mm: float,
     *,
     n_pieces: int,
-    pieces_kg: float,
+    part_area_mm2: float,
     pack,
     margin_pct: float = 0.0,
     on_progress=None,
 ) -> dict:
     """Compare every priced sheet size for one material+thickness group.
 
-    ``pieces_kg`` is the total piece weight the sheet cost is spread over (the
-    per-piece summary uses the same figure, so the two totals reconcile).
+    ``part_area_mm2`` is the total real part area of the group (see
+    ``utilization``); the piece weight the sheet cost is spread over is derived
+    from it, as the per-piece summary does, so the two totals reconcile.
     ``on_progress``, if given, is called as ``on_progress("size", index=i,
     count=n, w=sw, h=sh)`` before each sheet size is packed.
 
@@ -113,6 +124,9 @@ def compute_options(
         return {"rows": [], "n_pieces": n_pieces, "pieces_kg": 0.0,
                 "has_pieces": True, "has_candidates": False}
 
+    density = density_for_material(material)
+    pieces_kg = part_area_mm2 * thickness_mm * density
+
     rows = []
     for index, (sw, sh, price_per_tonne) in enumerate(candidates):
         if on_progress is not None:
@@ -124,7 +138,8 @@ def compute_options(
             continue
 
         sheets_needed = packing.sheets_needed
-        sheet_weight_kg = sw * sh * thickness_mm * density_for_material(material)
+        sheet_weight_kg = sw * sh * thickness_mm * density
+        util = utilization(part_area_mm2, sw, sh, sheets_needed)
         sheet_kg = sheet_weight_kg * sheets_needed
         billable_kg = sheet_kg
         total_eur = adjusted_ppt * (billable_kg / 1000)
@@ -139,7 +154,7 @@ def compute_options(
             "Levykoko":          f"{fmt_m(sw)} × {fmt_m(sh)} m",
             "Hinta (€/tn)":      f"{adjusted_ppt:,.2f}",
             "Tarvittavat levyt": sheets_needed,
-            "Käyttöaste":        f"{packing.utilization * 100:.1f} %",
+            "Käyttöaste":        f"{util * 100:.1f} %",
             "Levyn kg":          round(sheet_kg, 2),
             "Laskutettava kg":   round(billable_kg, 2),
             "Yhteensä €":        round(total_eur, 2),
@@ -147,7 +162,7 @@ def compute_options(
             "_total":         total_eur,
             "_ppt":           bill_rate_ppt,
             "_failed":        0,
-            "_utilization":   packing.utilization,
+            "_utilization":   util,
             "_sheets":        packing.sheets,
             "_eff_w":         packing.eff_w,
             "_eff_h":         packing.eff_h,

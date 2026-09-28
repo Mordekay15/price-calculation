@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from core.sheet_cost import cheapest_index
+from core.sheet_cost import cheapest_index, utilization
 from view.sheet_usage_view import _render_breakdown
 
 # Distinct, accessible colours per part index. Cycles for many parts.
@@ -222,7 +222,7 @@ def _render_layout(active: dict, parts: list, key_suffix: str = "") -> None:
             with cols[col_idx]:
                 st.markdown(
                     f"**{labels[row_start + col_idx]}** · käyttöaste "
-                    f"{sheet.utilization * 100:.1f} %"
+                    f"{utilization(sheet.used_area, sw, sh) * 100:.1f} %"
                 )
                 st.markdown(
                     _sheet_svg(sheet, sw, sh, eff_w, eff_h, scale, svg_rotate),

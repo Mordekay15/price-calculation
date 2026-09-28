@@ -21,7 +21,6 @@ gives good results for typical sheet-metal orders.
 
 from dataclasses import dataclass, field
 
-from core.calculator import piece_weight_kg
 from core.sheet_cost import Packing, compute_options, effective_sheet
 
 
@@ -51,11 +50,6 @@ class Sheet:
     @property
     def used_area(self) -> int:
         return sum(p.w * p.h for p in self.placements)
-
-    @property
-    def utilization(self) -> float:
-        total = self.w * self.h
-        return self.used_area / total if total else 0.0
 
 
 def _try_place(sheet: Sheet, rw: int, rh: int, product_idx: int,
@@ -159,25 +153,6 @@ def expand_products(products: list[dict]) -> list[tuple[int, int, int, int]]:
     return pieces
 
 
-def summarise(
-    sheet_w: int,
-    sheet_h: int,
-    sheets: list[Sheet],
-    failed_count: int,
-) -> dict:
-    total_sheet_area = sheet_w * sheet_h * len(sheets)
-    used_area = sum(s.used_area for s in sheets)
-    return {
-        "sheet_w":          sheet_w,
-        "sheet_h":          sheet_h,
-        "sheets_needed":    len(sheets),
-        "failed_pieces":    failed_count,
-        "utilization":      (used_area / total_sheet_area) if total_sheet_area else 0.0,
-        "used_area_mm2":    used_area,
-        "sheet_area_mm2":   total_sheet_area,
-    }
-
-
 # ── Costing with this packer ──────────────────────────────────────────────────
 
 def rect_options(
@@ -199,25 +174,20 @@ def rect_options(
         (p_idx, c_idx, w + rankavali_mm, h + rankavali_mm)
         for p_idx, c_idx, w, h in expand_products(products)
     ]
-    pieces_kg = sum(
-        piece_weight_kg(p["width"], p["height"], thickness_mm, material) * p["qty"]
-        for p in products
-    )
+    part_area_mm2 = sum(p["width"] * p["height"] * p["qty"] for p in products)
 
     def pack_fn(sw: int, sh: int) -> Packing:
         eff_w, eff_h = effective_sheet(sw, sh, long_side_clamp_mm)
         sheets, failed = pack(pieces, eff_w, eff_h, allow_rotation=True)
-        summary = summarise(sw, sh, sheets, len(failed))
         return Packing(
             sheets=sheets,
-            sheets_needed=summary["sheets_needed"],
-            utilization=summary["utilization"],
+            sheets_needed=len(sheets),
             eff_w=eff_w, eff_h=eff_h, draw_w=sw, draw_h=sh,
             failed=len(failed),
         )
 
     return compute_options(
         lookup, material, thickness, thickness_mm,
-        n_pieces=len(pieces), pieces_kg=pieces_kg, pack=pack_fn,
+        n_pieces=len(pieces), part_area_mm2=part_area_mm2, pack=pack_fn,
         margin_pct=margin_pct,
     )

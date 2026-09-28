@@ -22,7 +22,6 @@ import streamlit as st
 
 from core.calculator import (
     build_lookup,
-    density_for_material,
     get_materials,
     parse_thickness_mm,
 )
@@ -144,16 +143,6 @@ def render(data: dict) -> None:
             if thickness_mm is None:
                 continue
             gparts, net_area_by_fid = _parts_for_group(gprods, uploaded_by_id, rotations)
-            # Weigh each part by its real *net cut area* (holes removed), not the
-            # bounding box — otherwise interlocked parts + holes overstate the
-            # weight (a plate could weigh more than its sheet). The sheet cost is
-            # then spread over that same weight so the per-part summary total
-            # matches the headline total.
-            density = density_for_material(material)
-            pieces_kg = sum(
-                net_area_by_fid.get(p["id"], 0.0) * thickness_mm * density * int(p["qty"])
-                for p in gprods
-            )
             result = run_with_progress(
                 progress, f"{material} · {thickness} mm",
                 sparrow_options,
@@ -161,7 +150,6 @@ def render(data: dict) -> None:
                 run_fn=run_fn, margin_pct=margin_pct,
                 long_side_clamp_mm=long_side_clamp_mm,
                 rankavali_mm=rankavali_mm, seed=seed, time_limit_sec=time_limit,
-                pieces_kg_override=pieces_kg,
             )
             cache[_sig(gkey, gprods, long_side_clamp_mm, rankavali_mm, rotations,
                        time_limit, seed, margin_pct)] = {
