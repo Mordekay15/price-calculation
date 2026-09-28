@@ -20,7 +20,7 @@ import streamlit as st
 
 from core.calculator import build_lookup, parse_thickness_mm
 from core.geometry import net_area
-from core.sparrow_input import parts_from_dxf
+from core.sparrow_input import part_from_report
 from core.sparrow_pack import sparrow_options
 from core.sparrow_runner import find_executable, run_sparrow
 from view.common import (
@@ -100,7 +100,7 @@ def render(data: dict) -> None:
     cache: dict = st.session_state.setdefault(_CACHE, {})
     if st.button("Laske levykäyttö (Sparrow)", key="dxf_sparrow_run"):
         cache.clear()
-        _run(groups, {u.file_id: u for u in uploaded}, lookup, settings, exe, cache)
+        _run(groups, lookup, settings, exe, cache)
     _show(products, groups, settings, cache)
 
 
@@ -136,8 +136,7 @@ def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
     return f"{key}|{prod_sig}|{settings}"
 
 
-def _run(groups, uploaded_by_id: dict, lookup: dict, settings: _Settings,
-         exe, cache: dict) -> None:
+def _run(groups, lookup: dict, settings: _Settings, exe, cache: dict) -> None:
     """Nest every group with Sparrow (behind a progress bar) into ``cache``."""
     progress = SparrowProgress()
 
@@ -153,7 +152,7 @@ def _run(groups, uploaded_by_id: dict, lookup: dict, settings: _Settings,
         thickness_mm = parse_thickness_mm(thickness)
         if thickness_mm is None:
             continue
-        parts, areas = _parts_for_group(prods, uploaded_by_id, settings.rotations)
+        parts, areas = _parts_for_group(prods, settings.rotations)
         result = run_with_progress(
             progress, f"{material} · {thickness} mm",
             sparrow_options,
@@ -198,22 +197,16 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict) -> Non
 
 
 def _parts_for_group(
-    products: list[dict], uploaded_by_id: dict, rotations: tuple
+    products: list[dict], rotations: tuple
 ) -> tuple[list, dict[str, float]]:
     """Sparrow parts for a group, plus each product's real area (mm²/piece).
 
-    The area is one piece's outline minus its holes, summed over its contours.
+    The parts come from the same read result the card showed; the area is the
+    outline minus its holes.
     """
-    out: list = []
-    areas: dict[str, float] = {}
-    for prod in products:
-        up = uploaded_by_id.get(prod["id"])
-        if up is None:
-            continue
-        gparts, _report = parts_from_dxf(
-            up.getvalue(), prod.get("name") or up.name, int(prod["qty"]),
-            allowed_orientations=rotations,
-        )
-        out.extend(gparts)
-        areas[prod["id"]] = sum(net_area(p.outer, p.holes) for p in gparts)
-    return out, areas
+    parts = [
+        part_from_report(p["report"], int(p["qty"]), allowed_orientations=rotations)
+        for p in products
+    ]
+    areas = {p["id"]: net_area(sp.outer, sp.holes) for p, sp in zip(products, parts)}
+    return parts, areas

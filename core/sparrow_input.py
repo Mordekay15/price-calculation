@@ -1,64 +1,22 @@
 """
 core/sparrow_input.py
 =====================
-Sparrow — DXF → Sparrow instance conversion (Phase 7).
+DXF part → Sparrow item.
 
-Turns the parts found by the DXF inspector (``core/dxf_inspect.py``) into a
-Sparrow strip-packing instance:
-
-    original DXF geometry
-      ↓                          (core/dxf_inspect.py — the true outline)
-    polygon approximation        (this module — flattened, cleaned rings)
-      ↓
-    Sparrow instance JSON        (jagua-rs external format)
-
-For every part the converter records:
-
-  * a stable part id (kept as metadata; jagua-rs also needs an integer id),
-  * the requested quantity (``demand``),
-  * an outer polygon,
-  * inner polygons for its holes,
-  * the allowed rotations,
-  * the original DXF file name (metadata).
-
-The polygon is only an *approximation used for placement*. The original DXF is
-kept separately (the converter never discards it, and the JSON only references it
-by name) so the manufacturing geometry is never replaced by Sparrow's polygon.
-
-Schema
-------
-The output matches the current Sparrow / jagua-rs strip-packing input
-(``ExtSPInstance`` → ``ExtItem`` → ``ExtShape``), verified against
-``jagua-rs/src/io/ext_repr.rs`` and Sparrow's own ``data/input`` examples:
-
-    {
-      "name": "...",
-      "strip_height": <float>,
-      "items": [
-        {
-          "id": <int>,                       # unique, 0-based
-          "demand": <int>,                   # quantity
-          "dxf": "<original file name>",     # metadata (ignored by the solver)
-          "part_id": "<stable id>",          # metadata (ignored by the solver)
-          "allowed_orientations": [<deg>, ...],
-          "shape": { "type": "simple_polygon", "data": [[x, y], ...] }
-            # or, when the part has holes:
-            # { "type": "polygon", "data": { "outer": [...], "inner": [[...], ...] } }
-        }
-      ]
-    }
-
-jagua-rs currently ignores holes on *item* shapes (it nests by the outer
-boundary and logs a warning) — which is exactly what we want here: the holes are
-recorded for our own downstream use without changing how the part is placed.
+``part_from_report`` turns the one part of a clean DXF (``core/dxf.py``) into a
+``SparrowPart``: the outline as a cleaned counter-clockwise ring, its holes as
+clockwise rings, the allowed rotations, and the bend lines to draw on it.
+``SparrowPart.shape_dict()`` is the jagua-rs ``shape`` object Sparrow nests
+(core/sparrow_pack.py builds the instance). Sparrow places a part by its outer
+boundary; the holes are kept for the drawing and the real part area.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from core.dxf_inspect import Contour, InspectionReport, inspect_dxf
-from core.geometry import point_in_polygon, representative_point, signed_area
+from core.dxf import Contour, DxfReport
+from core.geometry import point_in_polygon, signed_area
 
 # Default rotations offered to the packer (degrees). Four quadrant orientations
 # suit rectangular-ish sheet-metal parts; override per call when a part may only
@@ -159,40 +117,32 @@ def _as_cw(points: list[Point]) -> list[Point]:
 
 # ── Building parts from an inspection report ─────────────────────────────────
 
-def parts_from_report(
-    report: InspectionReport,
+def part_from_report(
+    report: DxfReport,
     quantity: int = 1,
     *,
     allowed_orientations: tuple[float, ...] = DEFAULT_ORIENTATIONS,
-    part_id_prefix: str | None = None,
-) -> list[SparrowPart]:
-    """Build one SparrowPart per part contour in a report, attaching its holes.
+) -> SparrowPart:
+    """The SparrowPart for a clean report's one part, with its holes attached.
 
-    Holes are assigned to the smallest part that contains them (even–odd depth +
-    a point-in-polygon test), so a hole is never attached to the wrong part.
     Outer rings come out counter-clockwise and holes clockwise (standard
     convention; the solver re-derives winding, but this keeps the JSON tidy).
     """
-    stem = part_id_prefix or _stem(report.name)
-    outer_parts = report.parts
-    parts: list[SparrowPart] = []
-    for k, part in enumerate(outer_parts):
-        holes = _holes_of(part, report)
-        parts.append(SparrowPart(
-            part_id=f"{stem}#{k}" if len(outer_parts) > 1 else stem,
-            quantity=int(quantity),
-            outer=_as_ccw(part.points),
-            holes=[_as_cw(h.points) for h in holes],
-            allowed_orientations=tuple(float(a) for a in allowed_orientations),
-            dxf=report.name,
-            width_mm=part.width_mm,
-            height_mm=part.height_mm,
-            construction=_construction_of(part, report),
-        ))
-    return parts
+    part = report.part
+    return SparrowPart(
+        part_id=_stem(report.name),
+        quantity=int(quantity),
+        outer=_as_ccw(part.points),
+        holes=[_as_cw(h.points) for h in report.holes],
+        allowed_orientations=tuple(float(a) for a in allowed_orientations),
+        dxf=report.name,
+        width_mm=part.width_mm,
+        height_mm=part.height_mm,
+        construction=_construction_of(part, report),
+    )
 
 
-def _construction_of(part: Contour, report: InspectionReport) -> list[list[Point]]:
+def _construction_of(part: Contour, report: DxfReport) -> list[list[Point]]:
     """Bend/tangent/centre-mark lines that belong to this part.
 
     A line belongs to the part when it lies within the part's bounding box and
@@ -216,37 +166,8 @@ def _construction_of(part: Contour, report: InspectionReport) -> list[list[Point
     return out
 
 
-def _holes_of(part: Contour, report: InspectionReport) -> list[Contour]:
-    """Every hole whose interior point lies inside this part's outline.
-
-    Parts are top-level (non-nested) outlines, so a hole falls inside at most one
-    part. Depth is not used here: a deeply nested interior feature (e.g. a hole
-    inside a big central cut-out) is still kept as this part's hole.
-    """
-    result = []
-    for h in report.holes:
-        if point_in_polygon(representative_point(h.points), part.points):
-            result.append(h)
-    return result
-
-
 def _stem(name: str) -> str:
     base = name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
     if base.lower().endswith(".dxf"):
         base = base[:-4]
     return base or "part"
-
-
-def parts_from_dxf(
-    data: bytes,
-    name: str,
-    quantity: int = 1,
-    *,
-    allowed_orientations: tuple[float, ...] = DEFAULT_ORIENTATIONS,
-) -> tuple[list[SparrowPart], InspectionReport]:
-    """Inspect one DXF's bytes and build its SparrowParts. Returns (parts, report)."""
-    report = inspect_dxf(data, name)
-    parts = parts_from_report(
-        report, quantity, allowed_orientations=allowed_orientations
-    )
-    return parts, report
