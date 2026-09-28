@@ -72,7 +72,7 @@ def search_patterns(demand: Mix, fits, *, shares: tuple[float, ...],
     candidates = _candidates(demand, shares)
     for _ in range(budget):
         open_ = [c for c in candidates
-                 if not any(_leq(c, f) for f in found) and not any(_leq(m, c) for m in misses)]
+                 if not any(within(c, f) for f in found) and not any(within(m, c) for m in misses)]
         if not open_:
             break
         mix = _middle(open_, demand, shares)
@@ -82,7 +82,7 @@ def search_patterns(demand: Mix, fits, *, shares: tuple[float, ...],
         if fitted != mix:
             misses.append(mix)
     return [p for p in found.values()
-            if not any(q != p.mix and _leq(p.mix, q) for q in found)]
+            if not any(q != p.mix and within(p.mix, q) for q in found)]
 
 
 def _candidates(demand: Mix, shares: tuple[float, ...]) -> list[Mix]:
@@ -104,8 +104,8 @@ def _middle(open_: list[Mix], demand: Mix, shares: tuple[float, ...]) -> Mix:
     step = max(1, len(open_) // _SCORED)
 
     def score(c: Mix):
-        below = sum(_leq(o, c) for o in open_)
-        above = sum(_leq(c, o) for o in open_)
+        below = sum(within(o, c) for o in open_)
+        above = sum(within(c, o) for o in open_)
         return min(below, above), _share(c, shares), -_imbalance(c, demand)
 
     return max(open_[::step], key=score)
@@ -146,7 +146,7 @@ def cheapest_cover(demand: Mix, libraries: dict, *, shares: tuple[float, ...]
     items: list[CoverItem] = []
     remaining = demand
     while prod(r + 1 for r in remaining) > _EXACT_STATES:
-        key, _, pat = max((o for o in options if _leq(o[2].mix, remaining)),
+        key, _, pat = max((o for o in options if within(o[2].mix, remaining)),
                           key=lambda o: _share(o[2].mix, shares) / o[1].sheet_cost,
                           default=(None, None, None))
         if pat is None:
@@ -197,7 +197,8 @@ def _merged(items: list[CoverItem]) -> list[CoverItem]:
 
 # ── Mix helpers ───────────────────────────────────────────────────────────────
 
-def _leq(a: Mix, b: Mix) -> bool:
+def within(a: Mix, b: Mix) -> bool:
+    """True if mix ``a`` needs no more of any part than mix ``b``."""
     return all(x <= y for x, y in zip(a, b))
 
 

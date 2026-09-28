@@ -15,7 +15,7 @@ from core.sparrow import (
     _error_message,
     _result,
     find_executable,
-    pack_fixed_sheets,
+    SheetNester,
     part_from_report,
     run_sparrow,
     sparrow_options,
@@ -74,7 +74,7 @@ def test_error_message_skips_the_backtrace():
 
 def test_fills_a_sheet_then_repeats_the_layout():
     # 100 mm squares on a 250 × 250 sheet: two columns of two fit → 4 per sheet
-    sheets, reason = pack_fixed_sheets([square(quantity=10)], 250, 250, run_fn=fake_solver)
+    sheets, reason = SheetNester([square(quantity=10)], fake_solver).pack(250, 250)
     assert reason == ""
     assert [(len(s.placements), s.count) for s in sheets] == [(4, 2), (2, 1)]
     assert math.isclose(sum(s.used_area * s.count for s in sheets), 10 * 100 * 100)
@@ -84,7 +84,7 @@ def test_mixed_parts_are_all_placed_on_the_fewest_sheets():
     runs = []
     counting = lambda inst, **kw: runs.append(inst) or fake_solver(inst, **kw)  # noqa: E731
     parts = [square(200, quantity=5, name="big"), square(100, quantity=4, name="small")]
-    sheets, reason = pack_fixed_sheets(parts, 400, 400, run_fn=counting)
+    sheets, reason = SheetNester(parts, counting).pack(400, 400)
     assert reason == ""
     assert sum(s.count for s in sheets) == 2                 # 5·4 + 4·1 dm² on 16 dm² sheets
     placed = Counter(pl.part_id for s in sheets for pl in s.placements for _ in range(s.count))
@@ -93,11 +93,24 @@ def test_mixed_parts_are_all_placed_on_the_fewest_sheets():
     assert len(runs) <= 1 + 8                                # seed strip + probe budget
 
 
+def test_answers_are_shared_across_sheet_sizes():
+    runs = []
+    counting = lambda inst, **kw: runs.append(inst) or fake_solver(inst, **kw)  # noqa: E731
+    nester = SheetNester([square(200, quantity=5, name="big"),
+                          square(100, quantity=4, name="small")], counting)
+    first = nester.pack(400, 400)
+    n = len(runs)
+    assert nester.pack(400, 400) == first and len(runs) == n      # same size: nothing new
+    nester.pack(500, 400)                                          # same height: same strip
+    whole_order = [r for r in runs if [i["demand"] for i in r["items"]] == [5, 4]]
+    assert len(whole_order) == 1
+
+
 def test_a_mix_that_fits_by_bounding_boxes_needs_no_sparrow_run():
     runs = []
     counting = lambda inst, **kw: runs.append(inst) or fake_solver(inst, **kw)  # noqa: E731
     bar = SparrowPart(part_id="bar", quantity=2, outer=[(0, 0), (300, 0), (300, 100), (0, 100)])
-    sheets, reason = pack_fixed_sheets([bar], 250, 350, run_fn=counting)   # needs a 90° turn
+    sheets, reason = SheetNester([bar], counting).pack(250, 350)   # needs a 90° turn
     assert reason == "" and runs == []
     assert [(len(s.placements), s.count) for s in sheets] == [(2, 1)]
     assert all(-1e-6 <= x <= 250 and -1e-6 <= y <= 350
@@ -105,8 +118,7 @@ def test_a_mix_that_fits_by_bounding_boxes_needs_no_sparrow_run():
 
 
 def test_reports_a_part_too_big_for_the_sheet():
-    sheets, reason = pack_fixed_sheets([square(size=300, name="big")], 250, 250,
-                                       run_fn=fake_solver)
+    sheets, reason = SheetNester([square(size=300, name="big")], fake_solver).pack(250, 250)
     assert not sheets and "big" in reason
 
 

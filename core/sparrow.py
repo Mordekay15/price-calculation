@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -18,7 +19,7 @@ from pathlib import Path
 
 from core.dxf import DxfReport
 from core.geometry import bbox, bbox_wh, net_area, rotate_translate, signed_area
-from core.patterns import CoverItem, Library, Pattern, cheapest_cover, search_patterns
+from core.patterns import CoverItem, Library, Mix, Pattern, cheapest_cover, search_patterns, within
 from core.rect_nesting import pack as box_pack
 from core.sheet_cost import GroupCost, Packing, compute_options, effective_sheet
 
@@ -249,6 +250,9 @@ def _error_message(stderr: str) -> str:
 #      4 big + 4 small), each answer settling many other mixes;
 #   3. core.patterns.cheapest_cover repeats the best layouts until the order
 #      is covered (100 parts at 25 per sheet → one layout ×4).
+#
+# SheetNester keeps every answer for the whole group, so the next sheet size
+# or orientation reuses it instead of running Sparrow again.
 
 # Tolerance (mm) for the "inside the sheet" test — absorbs solver float round-off
 # and the tiny overhang a separation gap can introduce.
@@ -256,6 +260,10 @@ _TOL = 0.5
 
 # Sparrow runs per sheet size after the seeding strip run.
 _PROBE_BUDGET = 8
+
+# Every part fits alone, yet nothing fits: usually the separation gap makes
+# even one part overflow.
+_NO_FIT = "osat eivät mahtuneet levylle annetulla rankavälillä"
 
 
 @dataclass(frozen=True)
@@ -292,65 +300,108 @@ class PackedSheet:
     count: int = 1
 
 
-def pack_fixed_sheets(
-    parts: list[SparrowPart],
-    sheet_w: float,
-    sheet_h: float,
-    *,
-    run_fn,
-    settings: NestSettings = NestSettings(),
-) -> tuple[list[PackedSheet], str]:
-    """Nest every part's ``quantity`` onto fixed ``sheet_w`` × ``sheet_h`` sheets.
+class SheetNester:
+    """Nests one group's parts onto sheets of any size.
 
-    Returns ``(sheets, reason)``; ``reason`` is empty on success, else why the
-    parts could not be nested (a part too large, a solver error…).
+    Every answer is remembered and reused for the other sheet sizes and
+    orientations: a mix that fit a W×H sheet fits any sheet at least as wide
+    and high, a mix that missed misses on any sheet no larger, and sheets as
+    high share one strip run of the whole order.
     """
-    patterns, reason = pattern_library(parts, sheet_w, sheet_h, run_fn=run_fn, settings=settings)
-    if reason:
-        return [], reason
-    demand = tuple(int(p.quantity) for p in parts)
-    cover = cheapest_cover(demand, {"sheet": Library(1.0, patterns)}, shares=_areas(parts))
-    if cover is None:
-        return [], "osat eivät mahtuneet levylle annetulla rankavälillä"
-    return [_packed_sheet(item, sheet_w, sheet_h) for item in cover], ""
 
+    def __init__(self, parts: list[SparrowPart], run_fn, settings: NestSettings = NestSettings()):
+        self.parts = parts
+        self.run_fn = run_fn
+        self.settings = settings
+        self._lock = threading.Lock()
+        self._fits: list[tuple[float, float, Mix, list[Placed]]] = []
+        self._misses: list[tuple[float, float, Mix]] = []
+        self._strips: dict[float, tuple] = {}
 
-def pattern_library(parts, sheet_w: float, sheet_h: float, *, run_fn,
-                    settings: NestSettings) -> tuple[tuple[Pattern, ...], str]:
-    """The largest part mixes found to fit one sheet, each with its layout;
-    ``(patterns, reason)`` with a reason instead when nothing can be nested."""
-    for p in parts:
-        w, h = bbox_wh(p.outer)
-        if p.quantity > 0 and not _fits(w, h, sheet_w, sheet_h, p.allowed_orientations):
-            return (), f"osa {p.part_id} ei mahdu levylle ({w:.0f}×{h:.0f} mm)"
+    def pack(self, sheet_w: float, sheet_h: float) -> tuple[list[PackedSheet], str]:
+        """Every part's ``quantity`` on ``sheet_w`` × ``sheet_h`` sheets:
+        ``(sheets, reason)``, the reason empty on success, else why not
+        (a part too large, a solver error…)."""
+        patterns, reason = self.library(sheet_w, sheet_h)
+        if reason:
+            return [], reason
+        cover = cheapest_cover(self._demand(), {"sheet": Library(1.0, patterns)},
+                               shares=_areas(self.parts))
+        if cover is None:
+            return [], _NO_FIT
+        return [_packed_sheet(item, sheet_w, sheet_h) for item in cover], ""
 
-    gap = settings.separation or 0.0
+    def library(self, sheet_w: float, sheet_h: float) -> tuple[tuple[Pattern, ...], str]:
+        """The largest part mixes found to fit one sheet, each with its layout;
+        ``(patterns, reason)`` with a reason instead when nothing can be nested."""
+        for p in self.parts:
+            w, h = bbox_wh(p.outer)
+            if p.quantity > 0 and not _fits(w, h, sheet_w, sheet_h, p.allowed_orientations):
+                return (), f"osa {p.part_id} ei mahdu levylle ({w:.0f}×{h:.0f} mm)"
+        demand = self._demand()
+        fitted, layout = self._without_sparrow(sheet_w, sheet_h, demand) or (None, None)
+        if fitted == demand:
+            return (Pattern(demand, layout),), ""
+        err, seeds = self._seeds(sheet_w, sheet_h)
+        if err:
+            return (), err
+        shares = tuple(a / (sheet_w * sheet_h) for a in _areas(self.parts))
+        patterns = search_patterns(demand, lambda mix: self._fit(sheet_w, sheet_h, mix),
+                                   shares=shares, budget=_PROBE_BUDGET, seeds=seeds)
+        return (tuple(patterns), "") if patterns else ((), _NO_FIT)
 
-    def fits(mix):
-        boxed = _box_layout(parts, mix, sheet_w, sheet_h, gap)
-        if boxed is not None:
-            return mix, boxed
-        err, placed, _ = _strip(parts, mix, sheet_h, run_fn, settings)
-        kept = [] if err else _window(placed, 0.0, sheet_w, sheet_h)
-        return _mix_of(kept, len(parts)), kept
+    def _demand(self) -> Mix:
+        return tuple(int(p.quantity) for p in self.parts)
 
-    demand = tuple(int(p.quantity) for p in parts)
-    boxed = _box_layout(parts, demand, sheet_w, sheet_h, gap)
-    if boxed is not None:
-        return (Pattern(demand, boxed),), ""
-    err, placed, strip_len = _strip(parts, demand, sheet_h, run_fn, settings)
-    if err:
-        return (), err
-    windows = [_window(placed, k * sheet_w, sheet_w, sheet_h)
-               for k in range(math.ceil((strip_len or 0) / sheet_w))]
-    seeds = tuple(Pattern(_mix_of(w, len(parts)), w) for w in windows)
-    shares = tuple(a / (sheet_w * sheet_h) for a in _areas(parts))
-    patterns = search_patterns(demand, fits, shares=shares, budget=_PROBE_BUDGET, seeds=seeds)
-    if not patterns:
-        # Each part fits in isolation, so usually the separation gap makes even
-        # one part overflow.
-        return (), "osat eivät mahtuneet levylle annetulla rankavälillä"
-    return tuple(patterns), ""
+    def _seeds(self, sheet_w: float, sheet_h: float):
+        """``(error, patterns)`` from one strip run of the whole order, shared by
+        every sheet as high: each ``sheet_w`` window of the strip fits one sheet."""
+        with self._lock:
+            strip = self._strips.get(sheet_h)
+        if strip is None:
+            strip = _strip(self.parts, self._demand(), sheet_h, self.run_fn, self.settings)
+            with self._lock:
+                self._strips[sheet_h] = strip
+        err, placed, strip_len = strip
+        windows = [_window(placed, k * sheet_w, sheet_w, sheet_h)
+                   for k in range(math.ceil((strip_len or 0) / sheet_w))]
+        return err, tuple(Pattern(_mix_of(w, len(self.parts)), w) for w in windows)
+
+    def _fit(self, sheet_w: float, sheet_h: float, mix: Mix) -> tuple[Mix, list[Placed]]:
+        """The oracle of ``search_patterns``: what of ``mix`` fits one sheet.
+        Sparrow runs only when ``_without_sparrow`` cannot tell."""
+        answer = self._without_sparrow(sheet_w, sheet_h, mix)
+        if answer is not None:
+            return answer
+        err, placed, _ = _strip(self.parts, mix, sheet_h, self.run_fn, self.settings)
+        layout = [] if err else _window(placed, 0.0, sheet_w, sheet_h)
+        fitted = _mix_of(layout, len(self.parts))
+        with self._lock:
+            if any(fitted):
+                self._fits.append((sheet_w, sheet_h, fitted, layout))
+            if fitted != mix:
+                self._misses.append((sheet_w, sheet_h, mix))
+        return fitted, layout
+
+    def _without_sparrow(self, sheet_w: float, sheet_h: float, mix: Mix):
+        """``(fitted, layout)`` from an earlier answer or the bounding boxes
+        alone; None when only Sparrow can tell."""
+        known = self._known(sheet_w, sheet_h, mix)
+        if known is not None:
+            return known
+        layout = _box_layout(self.parts, mix, sheet_w, sheet_h, self.settings.separation or 0.0)
+        return None if layout is None else (mix, layout)
+
+    def _known(self, sheet_w: float, sheet_h: float, mix: Mix):
+        """``(fitted, layout)`` when an earlier answer settles ``mix``, else None."""
+        with self._lock:
+            for w, h, fitted, layout in self._fits:
+                if w <= sheet_w + _TOL and h <= sheet_h + _TOL and within(mix, fitted):
+                    return mix, _cut(layout, mix)
+            for w, h, missed in self._misses:
+                if w >= sheet_w - _TOL and h >= sheet_h - _TOL and within(missed, mix):
+                    return (0,) * len(mix), []
+        return None
 
 
 def _strip(parts, mix, strip_h: float, run_fn, settings: NestSettings):
@@ -411,6 +462,18 @@ def _shifted(pl: Placed, dx: float) -> Placed:
                   [move(h) for h in pl.holes], [move(c) for c in pl.construction])
 
 
+def _cut(layout: list[Placed], mix: Mix) -> list[Placed]:
+    """The first ``mix[i]`` parts of each type in ``layout`` (dropping parts
+    from a valid layout keeps it valid)."""
+    left = list(mix)
+    kept = []
+    for pl in layout:
+        if left[pl.part_index] > 0:
+            left[pl.part_index] -= 1
+            kept.append(pl)
+    return kept
+
+
 def _mix_of(placed: list[Placed], n_parts: int) -> tuple[int, ...]:
     counts = Counter(pl.part_index for pl in placed)
     return tuple(counts[i] for i in range(n_parts))
@@ -422,12 +485,7 @@ def _areas(parts) -> tuple[float, ...]:
 
 def _packed_sheet(item: CoverItem, sheet_w: float, sheet_h: float) -> PackedSheet:
     """A cover item as a sheet: the pattern's layout cut down to the mix used."""
-    left = list(item.mix)
-    placements = []
-    for pl in item.pattern.layout:
-        if left[pl.part_index] > 0:
-            left[pl.part_index] -= 1
-            placements.append(pl)
+    placements = _cut(item.pattern.layout, item.mix)
     used = sum(net_area(pl.outer, pl.holes) for pl in placements)
     return PackedSheet(placements, sheet_w, sheet_h, used, item.count)
 
@@ -479,9 +537,10 @@ def sparrow_options(
     part_area_mm2 = sum(net_area(p.outer, p.holes) * p.quantity for p in parts)
     settings = NestSettings(seed, time_limit_sec, float(rankavali_mm) if rankavali_mm else None)
 
+    nester = SheetNester(parts, run_fn, settings)
+
     def pack_fn(sw: int, sh: int) -> Packing:
-        best, alt = _pack_best_orientation(parts, sw, sh, long_side_clamp_mm, run_fn=run_fn,
-                                           settings=settings, on_progress=on_progress)
+        best, alt = _pack_best_orientation(nester, sw, sh, long_side_clamp_mm, on_progress)
         best.alt = alt
         return best
 
@@ -492,8 +551,7 @@ def sparrow_options(
     )
 
 
-def _pack_best_orientation(parts, sw, sh, clamp, *, run_fn, settings: NestSettings,
-                           on_progress=None) -> tuple[Packing, Packing | None]:
+def _pack_best_orientation(nester: SheetNester, sw, sh, clamp, on_progress=None) -> tuple[Packing, Packing | None]:
     """Pack the sheet both ways round (portrait / landscape); return ``(best, alt)``.
 
     ``best`` has the fewest sheets (on a tie the long-side strip) and drives
@@ -507,9 +565,9 @@ def _pack_best_orientation(parts, sw, sh, clamp, *, run_fn, settings: NestSettin
     """
     def attempt(cw, ch) -> Packing:
         ew, eh = effective_sheet(cw, ch, clamp)
-        sheets, reason = pack_fixed_sheets(parts, ew, eh, run_fn=run_fn, settings=settings)
+        sheets, reason = nester.pack(ew, eh)
         if on_progress is not None:
-            total = sum(p.quantity for p in parts)
+            total = sum(p.quantity for p in nester.parts)
             on_progress("sheet", w=cw, h=ch, placed=0 if reason else total, total=total)
         return Packing(sheets=sheets, sheets_needed=sum(s.count for s in sheets),
                        eff_w=ew, eff_h=eh, draw_w=cw, draw_h=ch,
@@ -518,7 +576,7 @@ def _pack_best_orientation(parts, sw, sh, clamp, *, run_fn, settings: NestSettin
     # Sparrow's fixed strip height is the sheet's short side; the strip runs
     # along the long side (listed first, so it also wins a tie).
     long_side, short_side = max(sw, sh), min(sw, sh)
-    if sw == sh or _quarter_turn_free(parts):
+    if sw == sh or _quarter_turn_free(nester.parts):
         options = [attempt(long_side, short_side)]
     else:
         with ThreadPoolExecutor(max_workers=2) as pool:
