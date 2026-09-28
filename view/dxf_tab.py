@@ -30,6 +30,7 @@ _ROTATIONS: dict[str, tuple[float, ...]] = {
     "0° / 90°": (0.0, 90.0),
 }
 _CACHE = "dxf_sparrow_cache"  # {signature: computed group}
+_MEMORY = "dxf_fit_memory"    # {core.sparrow.memory_key: FitMemory} — Sparrow answers
 
 
 @dataclass(frozen=True)
@@ -149,6 +150,7 @@ def _run(groups, lookup: dict, settings: _Settings, exe, cache: dict) -> None:
             long_side_clamp_mm=settings.clamp_mm,
             rankavali_mm=settings.rankavali_mm, seed=settings.seed,
             time_limit_sec=settings.time_limit,
+            memories=st.session_state.setdefault(_MEMORY, {}),
         )
         cache[_sig(key, prods, settings)] = {
             "result": result, "parts": parts, "areas": areas,

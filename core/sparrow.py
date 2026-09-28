@@ -5,6 +5,7 @@ in as ``run_fn``, so tests need no binary."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -307,23 +308,40 @@ class PackedSheet:
     count: int = 1
 
 
+@dataclass
+class FitMemory:
+    """Every Sparrow answer for one set of part shapes and settings. A mix is a
+    count per part, so the answers stay true when the quantities change."""
+
+    fits: list[tuple[float, float, Mix, list[Placed]]] = field(default_factory=list)
+    misses: list[tuple[float, float, Mix]] = field(default_factory=list)
+    strips: dict[tuple[Mix, float], tuple] = field(default_factory=dict)  # (order, height)
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+
+def memory_key(parts: list[SparrowPart], settings: NestSettings) -> str:
+    """What a ``FitMemory`` is valid for: the part shapes in order, their
+    rotations and the Sparrow settings — not the quantities."""
+    shapes = [(p.shape_dict(), p.allowed_orientations) for p in parts]
+    return hashlib.sha1(json.dumps([shapes, repr(settings)]).encode()).hexdigest()
+
+
 class SheetNester:
     """Nests one group's parts onto sheets of any size.
 
     Every answer is remembered and reused for the other sheet sizes and
     orientations: a mix that fit a W×H sheet fits any sheet at least as wide
     and high, a mix that missed misses on any sheet no larger, and sheets as
-    high share one strip run of the whole order.
+    high share one strip run of the whole order. Pass a ``memory`` kept from
+    an earlier run to reuse its answers too.
     """
 
-    def __init__(self, parts: list[SparrowPart], run_fn, settings: NestSettings = NestSettings()):
+    def __init__(self, parts: list[SparrowPart], run_fn, settings: NestSettings = NestSettings(),
+                 memory: FitMemory | None = None):
         self.parts = parts
         self.run_fn = run_fn
         self.settings = settings
-        self._lock = threading.Lock()
-        self._fits: list[tuple[float, float, Mix, list[Placed]]] = []
-        self._misses: list[tuple[float, float, Mix]] = []
-        self._strips: dict[float, tuple] = {}
+        self.memory = memory if memory is not None else FitMemory()
 
     def pack(self, sheet_w: float, sheet_h: float) -> tuple[list[PackedSheet], str]:
         """Every part's ``quantity`` on ``sheet_w`` × ``sheet_h`` sheets:
@@ -363,12 +381,13 @@ class SheetNester:
     def _seeds(self, sheet_w: float, sheet_h: float):
         """``(error, patterns)`` from one strip run of the whole order, shared by
         every sheet as high: each ``sheet_w`` window of the strip fits one sheet."""
-        with self._lock:
-            strip = self._strips.get(sheet_h)
+        mem, key = self.memory, (self.demand(), sheet_h)
+        with mem.lock:
+            strip = mem.strips.get(key)
         if strip is None:
             strip = _strip(self.parts, self.demand(), sheet_h, self.run_fn, self.settings)
-            with self._lock:
-                self._strips[sheet_h] = strip
+            with mem.lock:
+                mem.strips[key] = strip
         err, placed, strip_len = strip
         windows = [_window(placed, k * sheet_w, sheet_w, sheet_h)
                    for k in range(math.ceil((strip_len or 0) / sheet_w))]
@@ -383,11 +402,12 @@ class SheetNester:
         err, placed, _ = _strip(self.parts, mix, sheet_h, self.run_fn, self.settings)
         layout = [] if err else _window(placed, 0.0, sheet_w, sheet_h)
         fitted = _mix_of(layout, len(self.parts))
-        with self._lock:
+        mem = self.memory
+        with mem.lock:
             if any(fitted):
-                self._fits.append((sheet_w, sheet_h, fitted, layout))
+                mem.fits.append((sheet_w, sheet_h, fitted, layout))
             if fitted != mix:
-                self._misses.append((sheet_w, sheet_h, mix))
+                mem.misses.append((sheet_w, sheet_h, mix))
         return fitted, layout
 
     def _without_sparrow(self, sheet_w: float, sheet_h: float, mix: Mix):
@@ -401,11 +421,12 @@ class SheetNester:
 
     def _known(self, sheet_w: float, sheet_h: float, mix: Mix):
         """``(fitted, layout)`` when an earlier answer settles ``mix``, else None."""
-        with self._lock:
-            smaller = [(fitted, layout) for w, h, fitted, layout in self._fits
+        mem = self.memory
+        with mem.lock:
+            smaller = [(fitted, layout) for w, h, fitted, layout in mem.fits
                        if w <= sheet_w + _TOL and h <= sheet_h + _TOL]
             missed = any(w >= sheet_w - _TOL and h >= sheet_h - _TOL and within(m, mix)
-                         for w, h, m in self._misses)
+                         for w, h, m in mem.misses)
         for fitted, layout in smaller:
             if within(mix, fitted):
                 return mix, _cut(layout, mix)
@@ -539,8 +560,12 @@ def sparrow_options(
     seed: int = 0,
     time_limit_sec: int = 8,
     on_progress=None,
+    memories: dict | None = None,
 ) -> GroupCost | None:
     """``core.sheet_cost.compute_options`` with Sparrow shape nesting.
+
+    ``memories``, if given, keeps a ``FitMemory`` per ``memory_key`` between
+    calls, so a new margin, price or quantity reuses earlier Sparrow answers.
 
     ``on_progress``, if given, receives ``("size", index=, count=, w=, h=)``
     before each sheet size and ``("sheet", w=, h=, placed=, total=)`` once a
@@ -550,7 +575,9 @@ def sparrow_options(
     part_area_mm2 = sum(net_area(p.outer, p.holes) * p.quantity for p in parts)
     settings = NestSettings(seed, time_limit_sec, float(rankavali_mm) if rankavali_mm else None)
 
-    nester = SheetNester(parts, run_fn, settings)
+    memory = None if memories is None else memories.setdefault(memory_key(parts, settings),
+                                                                FitMemory())
+    nester = SheetNester(parts, run_fn, settings, memory)
 
     def pack_fn(sw: int, sh: int) -> Packing:
         best, alt = _pack_best_orientation(nester, sw, sh, long_side_clamp_mm, on_progress)
