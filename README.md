@@ -44,8 +44,9 @@ pytest
 
 The tests take a few seconds. They cover pricing and copper, sheet costing and
 utilisation, the DXF reader rules (on drawings generated in the test), the
-Sparrow fixed-sheet search (with a small fake solver), the supplier store, and a
-smoke test of the whole page. `tests/test_sparrow.py::test_real_sparrow_binary`
+pattern search and sheet cover, the Sparrow fixed-sheet search and how few
+Sparrow runs it makes (with a small fake solver), the supplier store, and smoke
+tests of the page. `tests/test_sparrow.py::test_real_sparrow_binary`
 also runs the real Sparrow executable and is skipped when it is not installed.
 
 ## Deploy (Streamlit Community Cloud)
@@ -65,6 +66,7 @@ core/                   pure logic, no Streamlit
   sheet_cost.py         price every sheet size (SheetOption), grouping, per-piece cost
   rect_nesting.py       bounding-box packer (manual tab)
   sparrow.py            Sparrow: DXF part → solver run → fixed sheets → cost
+  patterns.py           which part mixes fit one sheet, cheapest set of sheets
   dxf.py                the DXF reader: the part that is shown, nested and priced
   geometry.py           polygon helpers (area, bbox, rotate, point-in-polygon)
   suppliers/            supplier list, detection, saved price lists, PDF parsers
@@ -96,6 +98,22 @@ For each group of parts that share a material and thickness,
 2. Charge whole sheets: sheets × sheet weight × price per tonne × (1 + margin).
 3. Spread that cost over the parts by their real weight, which is the
    per-part summary at the bottom.
+
+In the DXF tab, step 1 works with *patterns* (how many of each part fit one
+sheet, e.g. 4 big + 4 small), found by `core/patterns.py` with Sparrow as the
+"does this fit?" check:
+
+- A mix whose bounding boxes already fit needs no Sparrow run; a mix known to
+  fit a smaller sheet, or to miss a larger one, needs none either. Answers are
+  kept between button presses, so a new margin or price reuses them.
+- The cheapest set of sheets that holds the order is picked from those
+  patterns. On a price tie the one with less metal wins; within one material
+  and thickness the cheapest is the least metal unless the sizes have
+  different €/tn.
+- A size that cannot be the cheapest, alone or with other sizes, is not nested
+  at all ("ei laskettu").
+- If sheets of two or more sizes together are cheaper (e.g. the leftover part
+  on a smaller sheet), that combination is added as its own row.
 
 **Käyttöaste** (utilisation) is the real part area divided by the area of the
 sheets paid for. The real part area excludes the gap and, for DXF parts, has
@@ -134,5 +152,6 @@ ring-shaped part, so keep frames on their own layer.
 | How a sheet size is priced | `core/sheet_cost.py` |
 | Which DXF layers are left out, or which drawing marks are recognised | `core/dxf.py` |
 | Sparrow settings or the fixed-sheet search | `core/sparrow.py` |
+| How part mixes are searched and sheets chosen | `core/patterns.py` |
 | Inputs shared by both tabs | `view/common.py` |
 | Colours and layout drawings | `view/drawing.py` |
