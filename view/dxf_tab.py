@@ -13,13 +13,16 @@ from core.geometry import net_area
 from core.sheet_cost import group_products, is_ready
 from core.sparrow import find_executable, part_from_report, run_sparrow, sparrow_options
 from view.common import (
+    ADVANCED_LABEL,
+    NESTING_LABELS,
     materials_with_copper,
     render_grand_total,
     render_groups,
-    render_margin,
-    render_nesting_settings,
+    render_main_settings,
     render_material_thickness,
+    render_nesting_inputs,
     render_pieces_summary,
+    settings_summary,
 )
 from view.drawing import draw_sparrow_layout, preview_svg
 from view.sheet_usage import render_group
@@ -55,8 +58,7 @@ class _Settings:
 
 
 _NESTING_LABELS = {
-    "rankavali_mm": lambda v: f"rankaväli {v} mm",
-    "clamp_mm":     lambda v: f"kynsiraina {v} mm",
+    **NESTING_LABELS,
     "rotations":    lambda v: "kierrot " + next(
         (k for k, r in _ROTATIONS.items() if r == v), str(v)),
     "time_limit":   lambda v: f"aikaraja {v} s",
@@ -74,7 +76,6 @@ def _nesting_diff(saved: dict, current: dict) -> str:
 
 def render(data: dict) -> None:
     lookup = build_lookup(data)
-    margin_pct = render_margin("dxf_margin_pct")
 
     uploaded = st.file_uploader(
         "Lataa DXF-tiedostot",
@@ -89,7 +90,7 @@ def render(data: dict) -> None:
         return
 
     products = _render_part_cards(parts, materials_with_copper(lookup), lookup)
-    settings = _render_settings(margin_pct)
+    settings = _render_settings()
     groups = group_products(products, settings.nest_mode)
     if not groups:
         st.info("Valitse materiaali ja paksuus vähintään yhdelle osalle.")
@@ -167,19 +168,25 @@ def _render_part_cards(parts, materials: list[str], lookup: dict) -> list[dict]:
     return products
 
 
-def _render_settings(margin_pct: float) -> _Settings:
-    nest_mode, rankavali_mm, clamp_mm = render_nesting_settings(
+def _render_settings() -> _Settings:
+    st.divider()
+    margin_pct, nest_mode = render_main_settings(
+        margin_key="dxf_margin_pct",
         key_prefix="dxf",
         separate_label="Laske jokainen osa erikseen",
     )
-    c1, c2, c3 = st.columns(3)
-    rot_label = c1.selectbox("Sallitut kierrot", list(_ROTATIONS), key="dxf_rot")
-    time_limit = c2.number_input("Sparrow-aikaraja / ajo (s)", min_value=1,
-                                 value=4, step=1, key="dxf_sparrow_t")
-    seed = c3.number_input("Siemen (seed)", min_value=0, value=0, step=1,
-                           key="dxf_sparrow_seed")
-    return _Settings(nest_mode, rankavali_mm, clamp_mm, _ROTATIONS[rot_label],
-                     int(time_limit), int(seed), margin_pct)
+    with st.expander(ADVANCED_LABEL):
+        rankavali_mm, clamp_mm = render_nesting_inputs(key_prefix="dxf")
+        c1, c2, c3 = st.columns(3)
+        rot_label = c1.selectbox("Sallitut kierrot", list(_ROTATIONS), key="dxf_rot")
+        time_limit = c2.number_input("Sparrow-aikaraja / ajo (s)", min_value=1,
+                                     value=4, step=1, key="dxf_sparrow_t")
+        seed = c3.number_input("Siemen (seed)", min_value=0, value=0, step=1,
+                               key="dxf_sparrow_seed")
+    settings = _Settings(nest_mode, rankavali_mm, clamp_mm, _ROTATIONS[rot_label],
+                         int(time_limit), int(seed), margin_pct)
+    st.caption(settings_summary(settings.nesting(), _NESTING_LABELS))
+    return settings
 
 
 def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:

@@ -10,13 +10,16 @@ from core.pricing import build_lookup, parse_thickness_mm
 from core.rect_nesting import rect_options
 from core.sheet_cost import group_products
 from view.common import (
+    ADVANCED_LABEL,
+    NESTING_LABELS,
     materials_with_copper,
     render_grand_total,
     render_groups,
-    render_margin,
-    render_nesting_settings,
+    render_main_settings,
     render_material_thickness,
+    render_nesting_inputs,
     render_pieces_summary,
+    settings_summary,
 )
 from view.drawing import draw_rect_layout
 from view.sheet_usage import render_group
@@ -25,9 +28,14 @@ from view.sheet_usage import render_group
 def render(data: dict) -> None:
     lookup = build_lookup(data)
 
-    margin_pct = render_margin("calc_margin_pct")
     products = _render_products(materials_with_copper(lookup), lookup)
-    nest_mode, rankavali_mm, long_side_clamp_mm = render_nesting_settings()
+
+    st.divider()
+    margin_pct, nest_mode = render_main_settings(margin_key="calc_margin_pct")
+    with st.expander(ADVANCED_LABEL):
+        rankavali_mm, long_side_clamp_mm = render_nesting_inputs()
+    st.caption(settings_summary(
+        {"rankavali_mm": rankavali_mm, "clamp_mm": long_side_clamp_mm}, NESTING_LABELS))
 
     def render_one(key, prods):
         material, thickness = key[0], key[1]

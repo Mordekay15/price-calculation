@@ -88,15 +88,18 @@ def render_material_thickness(
     return material, thickness
 
 
-def render_margin(key: str) -> float:
-    """The material margin ("Materiaalin kate") input, as a percentage."""
-    return st.number_input(
-        "Materiaalin kate (%)",
-        min_value=0.0,
-        value=15.0,
-        step=0.5,
-        key=key,
-    )
+ADVANCED_LABEL = "Lisäasetukset"
+
+# How each nesting setting reads in a one-line summary, e.g. "rankaväli 2 mm".
+NESTING_LABELS = {
+    "rankavali_mm": lambda v: f"rankaväli {v} mm",
+    "clamp_mm":     lambda v: f"kynsiraina {v} mm",
+}
+
+
+def settings_summary(values: dict, labels: dict) -> str:
+    """The folded settings as one line, so a changed value is never hidden."""
+    return " · ".join(label(values[k]) for k, label in labels.items())
 
 
 _NEST_HELP = (
@@ -117,17 +120,22 @@ _CLAMP_HELP = (
 )
 
 
-def render_nesting_settings(
+def render_main_settings(
     *,
+    margin_key: str,
     key_prefix: str = "calc",
     separate_label: str = "Laske jokainen tuote erikseen",
-) -> tuple[str, int, int]:
-    """The "Sijoittelutapa" toggle, rankaväli and the long-side clamp strip.
+) -> tuple[float, str]:
+    """The settings every quote touches, in one row: margin and "Sijoittelutapa".
 
-    Returns ``(nest_mode, rankavali_mm, long_side_clamp_mm)``; ``nest_mode`` is
-    "combined" or "separate".
+    Returns ``(margin_pct, nest_mode)``; ``nest_mode`` is "combined" or
+    "separate".
     """
-    nest_mode = st.radio(
+    c1, c2 = st.columns([1, 3])
+    margin_pct = c1.number_input(
+        "Materiaalin kate (%)", min_value=0.0, value=15.0, step=0.5, key=margin_key,
+    )
+    nest_mode = c2.radio(
         "Sijoittelutapa",
         options=("combined", "separate"),
         format_func=lambda v: {
@@ -138,15 +146,25 @@ def render_nesting_settings(
         key=f"{key_prefix}_nest_mode",
         help=_NEST_HELP,
     )
-    rankavali_mm = int(st.number_input(
+    return margin_pct, nest_mode
+
+
+def render_nesting_inputs(*, key_prefix: str = "calc") -> tuple[int, int]:
+    """Rankaväli and the long-side clamp strip, side by side. The caller puts
+    them in its ``ADVANCED_LABEL`` expander.
+
+    Returns ``(rankavali_mm, long_side_clamp_mm)``.
+    """
+    c1, c2 = st.columns(2)
+    rankavali_mm = int(c1.number_input(
         "Rankaväli (mm)", min_value=0, value=0, step=1,
         key=f"{key_prefix}_rankavali_mm", help=_RANKAVALI_HELP,
     ))
-    long_side_clamp_mm = int(st.number_input(
+    long_side_clamp_mm = int(c2.number_input(
         "Pitkän sivun kynsirainan leveys (mm)", min_value=0, value=0, step=1,
         key=f"{key_prefix}_long_side_clamp_mm", help=_CLAMP_HELP,
     ))
-    return nest_mode, rankavali_mm, long_side_clamp_mm
+    return rankavali_mm, long_side_clamp_mm
 
 
 # ── The per-group loop ────────────────────────────────────────────────────────
