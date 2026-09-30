@@ -25,13 +25,13 @@ def test_margin_and_quantity_change_the_cache_key():
 
 def test_nesting_diff_names_only_the_changed_settings():
     old, new = settings().nesting(), settings(time_limit=10).nesting()
-    assert _nesting_diff(old, new) == "aikaraja 4 s (nyt 10 s)"
+    assert _nesting_diff(old, new) == "hakuaika 4 s (nyt 10 s)"
     assert _nesting_diff(new, new) == ""
 
 
 def test_run_label_counts_only_new_groups():
-    assert _run_label(3, 0, 3) == "Laske levykäyttö (Sparrow)"
-    assert _run_label(2, 0, 3) == "Laske levykäyttö (Sparrow) — 2 uutta"
-    assert _run_label(1, 2, 4) == "Laske levykäyttö (Sparrow) — 1 uusi"
-    assert _run_label(0, 1, 2) == "Laske levykäyttö (Sparrow) — ei uusia osia"
-    assert _run_label(0, 0, 2) == "Laske levykäyttö (Sparrow) — kaikki laskettu"
+    assert _run_label(3, 0, 3) == "Laske levykäyttö"
+    assert _run_label(2, 0, 3) == "Laske levykäyttö — 2 uutta"
+    assert _run_label(1, 2, 4) == "Laske levykäyttö — 1 uusi"
+    assert _run_label(0, 1, 2) == "Laske levykäyttö — ei uusia osia"
+    assert _run_label(0, 0, 2) == "Laske levykäyttö — kaikki laskettu"

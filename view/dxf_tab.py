@@ -51,12 +51,12 @@ class _Settings:
 
 _NESTING_LABELS = {
     **NESTING_LABELS,
-    "time_limit":   lambda v: f"aikaraja {v} s",
+    "time_limit":   lambda v: f"hakuaika {v} s",
 }
 
 
 def _nesting_diff(saved: dict, current: dict) -> str:
-    """Each setting that differs, as e.g. ``aikaraja 4 s (nyt 10 s)``."""
+    """Each setting that differs, as e.g. ``hakuaika 4 s (nyt 10 s)``."""
     return ", ".join(
         f"{label(saved[k])} (nyt {label(current[k]).split(' ', 1)[1]})"
         for k, label in _NESTING_LABELS.items() if saved[k] != current[k]
@@ -140,7 +140,7 @@ def _request_renest(sig: str) -> None:
 
 def _run_label(n_new: int, n_stale: int, n_groups: int) -> str:
     """The run button's label: how many new groups a click would nest."""
-    base = "Laske levykäyttö (Sparrow)"
+    base = "Laske levykäyttö"
     if n_new == 0:
         return f"{base} — " + ("ei uusia osia" if n_stale else "kaikki laskettu")
     if n_new == n_groups:
@@ -168,8 +168,11 @@ def _render_settings() -> _Settings:
     )
     with st.expander(ADVANCED_LABEL):
         rankavali_mm, clamp_mm = render_nesting_inputs(key_prefix="dxf")
-        time_limit = st.number_input("Sparrow-aikaraja / ajo (s)", min_value=1,
-                                     value=4, step=1, key="dxf_sparrow_t")
+        time_limit = st.number_input(
+            "Sijoittelun hakuaika (s)", min_value=1, value=4, step=1, key="dxf_sparrow_t",
+            help="Aikaraja yhdelle sijoitteluyritykselle (levyä kohden tehdään "
+                 "yksi tai useampi). Pidempi aika voi löytää tiiviimmän sijoittelun, "
+                 "mutta laskenta kestää kauemmin.")
     settings = _Settings(nest_mode, rankavali_mm, clamp_mm, int(time_limit), margin_pct)
     st.caption(settings_summary(settings.nesting(), _NESTING_LABELS))
     return settings
@@ -271,11 +274,11 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest,
 
     prices, grand_total, missing = render_groups(groups, render_one)
     if missing and grand_total is None:
-        st.info("Paina **Laske levykäyttö (Sparrow)** laskeaksesi levytarpeen ja hinnan.")
+        st.info("Paina **Laske levykäyttö** laskeaksesi levytarpeen ja hinnan.")
         return
     if missing:
         st.warning("Yhteissumma sisältää vain lasketut ryhmät — paina **Laske "
-                   "levykäyttö (Sparrow)** laskeaksesi loput. Jo laskettuja ei "
+                   "levykäyttö** laskeaksesi loput. Jo laskettuja ei "
                    "lasketa uudelleen.")
 
     ready = [p for p in products if is_ready(p)]
