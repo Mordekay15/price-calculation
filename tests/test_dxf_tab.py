@@ -19,6 +19,13 @@ def test_sparrow_settings_do_not_change_the_cache_key():
         time_limit=10, sheet=SheetSettings(rankavali_mm=5, edges_mm=(10, 0, 0, 0))))
 
 
+def test_a_single_part_keeps_its_result_when_the_nesting_mode_changes():
+    combined, separate = ("S235", "2"), ("S235", "2", "a")
+    assert _sig(combined, PRODS, settings()) == _sig(separate, PRODS, settings())
+    two = PRODS + [{"id": "b", "qty": 1}]
+    assert _sig(combined, two, settings()) != _sig(separate, PRODS, settings())
+
+
 def test_margin_and_quantity_change_the_cache_key():
     assert _sig(KEY, PRODS, settings()) != _sig(KEY, PRODS, settings(margin_pct=20.0))
     assert _sig(KEY, PRODS, settings()) != _sig(KEY, [{**PRODS[0], "qty": 3}], settings())

@@ -178,13 +178,18 @@ def _render_settings() -> _Settings:
 
 
 def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
-    """Stable cache key: the group, its parts (quantity) and the margin.
+    """Stable cache key: material + thickness, the parts (quantity) and the
+    margin — what decides the nesting and its price.
 
-    The Sparrow settings are left out on purpose: they are saved with the
-    result (``entry["nesting"]``), so changing one doesn't drop every result.
+    The nesting mode is left out: a part nested alone is the same nesting in
+    either mode, so switching to "separate" keeps a group of one part, and
+    back again keeps each single-part group. The Sparrow settings are left
+    out too: they are saved with the result (``entry["nesting"]``), so
+    changing one doesn't drop every result.
     """
+    material, thickness = key[0], key[1]
     prod_sig = ",".join(f"{p['id']}:{p['qty']}" for p in products)
-    return f"{key}|{prod_sig}|{settings.margin_pct}"
+    return f"{material}|{thickness}|{prod_sig}|{settings.margin_pct}"
 
 
 def _group_label(key: tuple, prods: list[dict]) -> str:
