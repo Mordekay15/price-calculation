@@ -72,10 +72,10 @@ def _usable_group(packing) -> str:
     return f'<g transform="translate({packing.x0} {packing.y0})">'
 
 
-def edge_gaps_svg(edges_mm: tuple[int, int, int, int], clamp_mm: int) -> str:
-    """A small schematic sheet (long side horizontal) with its edge gaps and
-    the clamp strip shaded and labelled, so the user can see which input is
-    which edge. Not to scale: a band shows only whether a gap is set."""
+def edge_gaps_svg(edges_mm: tuple[int, int, int, int]) -> str:
+    """A small schematic sheet (long side horizontal) with its edge gaps
+    shaded and labelled, so the user can see which input is which edge. Not
+    to scale: a band shows only whether a gap is set."""
     top, bottom, left, right = edges_mm
     x, y, w, h = 44, 22, 190, 96          # the sheet inside a 278 × 150 box
 
@@ -84,27 +84,23 @@ def edge_gaps_svg(edges_mm: tuple[int, int, int, int], clamp_mm: int) -> str:
                 f'fill="currentColor" fill-opacity="{opacity}"/>')
 
     t = 10                                # drawn band thickness
-    clamp_t = t if clamp_mm else 0
     out = ['<svg viewBox="0 0 278 150" width="100%" style="max-width:300px;'
            'color:inherit;font-family:sans-serif;font-size:11px;">']
     if top:
         out.append(band(x, y, w, t, 0.25))
     if bottom:
-        out.append(band(x, y + h - clamp_t - t, w, t, 0.25))
-    if clamp_mm:
-        out.append(band(x, y + h - clamp_t, w, clamp_t, 0.5))
+        out.append(band(x, y + h - t, w, t, 0.25))
     if left:
         out.append(band(x, y, t, h, 0.25))
     if right:
         out.append(band(x + w - t, y, t, h, 0.25))
     out.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="none" '
                f'stroke="currentColor" stroke-width="1.5"/>')
-    bottom_label = f"Ala {bottom}" + (f" + kynsiraina {clamp_mm}" if clamp_mm else "")
     cy = y + h / 2
     out += [
         f'<text x="{x + w / 2}" y="{y - 7}" text-anchor="middle" fill="currentColor">Ylä {top}</text>',
         f'<text x="{x + w / 2}" y="{y + h + 16}" text-anchor="middle" fill="currentColor">'
-        f'{bottom_label}</text>',
+        f'Ala {bottom}</text>',
         f'<text x="{x - 8}" y="{cy}" text-anchor="middle" fill="currentColor" '
         f'transform="rotate(-90 {x - 8} {cy})">Vasen {left}</text>',
         f'<text x="{x + w + 14}" y="{cy}" text-anchor="middle" fill="currentColor" '

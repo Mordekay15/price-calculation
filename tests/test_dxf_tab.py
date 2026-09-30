@@ -39,9 +39,9 @@ def test_edge_gaps_read_as_one_value_or_per_edge():
         "reunavara 0 mm (nyt ylä 10, ala 0, vasen 5, oikea 5 mm)")
 
 
-def test_the_clamp_strip_adds_to_the_bottom_edge_gap():
-    gaps = SheetSettings(edges_mm=(1, 2, 3, 4), clamp_mm=40).gaps()
-    assert (gaps.top, gaps.bottom, gaps.left, gaps.right) == (1, 42, 3, 4)
+def test_edges_map_to_the_packers_gaps_in_order():
+    gaps = SheetSettings(edges_mm=(1, 2, 3, 4)).gaps()
+    assert (gaps.top, gaps.bottom, gaps.left, gaps.right) == (1, 2, 3, 4)
 
 
 def test_run_label_counts_only_new_groups():

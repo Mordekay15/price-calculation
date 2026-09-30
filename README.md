@@ -92,9 +92,9 @@ For each group of parts that share a material and thickness,
 
 1. Nest the parts on every sheet size that has a price, using the rectangle
    packer or Sparrow. Every sheet lies long side horizontal. The edge gaps
-   (*reunavarat*: top, bottom, left, right) and the clamp strip
-   (*kynsiraina*, along the bottom edge on top of that edge's gap) are not
-   usable, and the cut gap (*rankaväli*) keeps parts apart.
+   (*reunavarat*: top, bottom, left, right; the clamp strip, *kynsiraina*, is
+   given as the bottom one) are not usable, and the cut gap (*rankaväli*)
+   keeps parts apart.
 2. Charge whole sheets: sheets × sheet weight × price per tonne × (1 + margin).
 3. Spread that cost over the parts by their real weight, which is the
    per-part summary at the bottom.

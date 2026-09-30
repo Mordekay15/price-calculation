@@ -96,9 +96,14 @@ def render_material_thickness(
 
 ADVANCED_LABEL = "Lisäasetukset"
 
-# The four edges in EdgeGaps order: (name in summaries, input label).
-_EDGES = (("ylä", "Yläreuna (mm)"), ("ala", "Alareuna (mm)"),
-          ("vasen", "Vasen reuna (mm)"), ("oikea", "Oikea reuna (mm)"))
+_BOTTOM_HELP = (
+    "Kynsiraina — pitkän sivun kaista, johon koneen kynnet tarttuvat — "
+    "kuuluu tähän: anna koko kaistan leveys, jolle ei sijoiteta osia."
+)
+
+# The four edges in EdgeGaps order: (name in summaries, input label, help).
+_EDGES = (("ylä", "Yläreuna (mm)", None), ("ala", "Alareuna (mm)", _BOTTOM_HELP),
+          ("vasen", "Vasen reuna (mm)", None), ("oikea", "Oikea reuna (mm)", None))
 
 
 def _edges_label(edges: tuple) -> str:
@@ -106,36 +111,32 @@ def _edges_label(edges: tuple) -> str:
     if len(set(edges)) == 1:
         return f"reunavara {edges[0]} mm"
     return "reunavarat " + ", ".join(
-        f"{name} {v}" for (name, _), v in zip(_EDGES, edges)) + " mm"
+        f"{name} {v}" for (name, _, _), v in zip(_EDGES, edges)) + " mm"
 
 
 # How each nesting setting reads in a one-line summary, e.g. "rankaväli 2 mm".
 NESTING_LABELS = {
     "rankavali_mm": lambda v: f"rankaväli {v} mm",
     "edges_mm":     _edges_label,
-    "clamp_mm":     lambda v: f"kynsiraina {v} mm",
 }
 
 
 @dataclass(frozen=True)
 class SheetSettings:
-    """The sheet inputs both tabs share: the cut gap, the four edge gaps
-    (``edges_mm`` = top, bottom, left, right) and the clamp strip, which lies
-    along the bottom edge on top of that edge's gap."""
+    """The sheet inputs both tabs share: the cut gap and the four edge gaps
+    (``edges_mm`` = top, bottom, left, right; the bottom one includes the
+    clamp strip)."""
 
     rankavali_mm: int = 0
     edges_mm: tuple[int, int, int, int] = (0, 0, 0, 0)
-    clamp_mm: int = 0
 
     def gaps(self) -> EdgeGaps:
         """The unusable strip along each edge, as the packers take it."""
-        top, bottom, left, right = self.edges_mm
-        return EdgeGaps(top=top, bottom=bottom + self.clamp_mm, left=left, right=right)
+        return EdgeGaps(*self.edges_mm)
 
     def values(self) -> dict:
         """The settings keyed as in ``NESTING_LABELS``."""
-        return {"rankavali_mm": self.rankavali_mm, "edges_mm": self.edges_mm,
-                "clamp_mm": self.clamp_mm}
+        return {"rankavali_mm": self.rankavali_mm, "edges_mm": self.edges_mm}
 
 
 def settings_summary(values: dict, labels: dict) -> str:
@@ -153,16 +154,10 @@ _RANKAVALI_HELP = (
     "kappaleen leveyteen ja korkeuteen sijoittelussa, jotta vierekkäiset "
     "kappaleet pysyvät tämän etäisyyden päässä toisistaan."
 )
-_CLAMP_HELP = (
-    "Kynsiraina on levyn alareunan (pitkä sivu) vyöhyke, johon koneen kynnet "
-    "tarttuvat — aluetta ei voi käyttää kappaleiden sijoitteluun. Se tulee "
-    "alareunan reunavaran lisäksi. Levy ostetaan silti täysikokoisena, joten "
-    "paino ja hinta lasketaan bruttomitoista."
-)
 _EDGES_HELP = (
     "Kaistat levyn reunoilla, joille ei sijoiteta osia. Levy on sijoittelu"
     "kuvissa pitkä sivu vaakasuorassa: ylä- ja alareuna ovat pitkät sivut, "
-    "vasen ja oikea reuna lyhyet."
+    "vasen ja oikea reuna lyhyet. Kynsiraina annetaan alareunaan."
 )
 
 
@@ -196,17 +191,12 @@ def render_main_settings(
 
 
 def render_nesting_inputs(*, key_prefix: str = "calc") -> SheetSettings:
-    """Rankaväli, kynsiraina and the four edge gaps, with a small sheet
-    diagram that shows which edge is which. The caller puts them in its
+    """Rankaväli and the four edge gaps, with a small sheet diagram that
+    shows which edge is which. The caller puts them in its
     ``ADVANCED_LABEL`` expander."""
-    c1, c2 = st.columns(2)
-    rankavali_mm = int(c1.number_input(
+    rankavali_mm = int(st.columns(2)[0].number_input(
         "Rankaväli (mm)", min_value=0, value=0, step=1,
         key=f"{key_prefix}_rankavali_mm", help=_RANKAVALI_HELP,
-    ))
-    clamp_mm = int(c2.number_input(
-        "Kynsiraina, alareuna (mm)", min_value=0, value=0, step=1,
-        key=f"{key_prefix}_long_side_clamp_mm", help=_CLAMP_HELP,
     ))
 
     st.markdown("**Levyn reunavarat**", help=_EDGES_HELP)
@@ -215,11 +205,11 @@ def render_nesting_inputs(*, key_prefix: str = "calc") -> SheetSettings:
         rows = (st.columns(2), st.columns(2))
     edges = tuple(
         int(col.number_input(label, min_value=0, value=0, step=1,
-                             key=f"{key_prefix}_edge_{name}"))
-        for col, (name, label) in zip((*rows[0], *rows[1]), _EDGES)
+                             key=f"{key_prefix}_edge_{name}", help=help_text))
+        for col, (name, label, help_text) in zip((*rows[0], *rows[1]), _EDGES)
     )
-    diagram.markdown(edge_gaps_svg(edges, clamp_mm), unsafe_allow_html=True)
-    return SheetSettings(rankavali_mm, edges, clamp_mm)
+    diagram.markdown(edge_gaps_svg(edges), unsafe_allow_html=True)
+    return SheetSettings(rankavali_mm, edges)
 
 
 # ── The per-group loop ────────────────────────────────────────────────────────
