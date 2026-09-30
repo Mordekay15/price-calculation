@@ -5,6 +5,7 @@ priced (see "How a DXF file is read" in the README)."""
 from __future__ import annotations
 
 import io
+import math
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -414,6 +415,10 @@ def _entity_polyline(entity, factor: float) -> tuple[list[Point], bool] | None:
     if len(pts) < 2:
         return None
     closed = p.start.isclose(p.end, abs_tol=_JOIN_TOL_MM / max(factor, 1e-9))
+    # A line shorter than the join tolerance (CAD exports leave 0.004 mm stubs
+    # between outline segments) is a stub to chain through, not a loop.
+    if max(bbox_wh(pts)) <= _JOIN_TOL_MM:
+        closed = False
     if closed and (pts[0][0] != pts[-1][0] or pts[0][1] != pts[-1][1]):
         pts.append(pts[0])  # make the closing edge explicit
     return pts, closed
@@ -424,42 +429,68 @@ def _entity_polyline(entity, factor: float) -> tuple[list[Point], bool] | None:
 def _chain_open_segments(segments: list[list[Point]], tol: float) -> list[Contour]:
     """Chain open segments end-to-end into closed loops / open chains.
 
-    Endpoints within `tol` mm are treated as the same vertex. A chain whose two
-    ends meet is a closed contour; otherwise it stays open.
+    Endpoints within `tol` mm are one vertex, and every end is moved onto it, so
+    a line that overshoots its corner by a few hundredths leaves no spike. A
+    chain whose two ends meet is a closed contour; otherwise it stays open.
     """
-    def key(pt: Point) -> tuple[int, int]:
-        return (round(pt[0] / tol), round(pt[1] / tol))
+    # Vertices: an endpoint joins the nearest vertex within `tol` (searched in
+    # the neighbouring grid cells too, so two ends on either side of a cell
+    # border still meet), else starts a new one.
+    vertices: list[Point] = []
+    grid: dict[tuple[int, int], list[int]] = defaultdict(list)
 
-    adj: dict[tuple[int, int], list[int]] = defaultdict(list)
-    for i, pts in enumerate(segments):
-        adj[key(pts[0])].append(i)
-        adj[key(pts[-1])].append(i)
+    def vertex(pt: Point) -> int:
+        cx, cy = math.floor(pt[0] / tol), math.floor(pt[1] / tol)
+        near = [(math.dist(vertices[v], pt), v)
+                for dx in (-1, 0, 1) for dy in (-1, 0, 1)
+                for v in grid.get((cx + dx, cy + dy), ())]
+        near = [n for n in near if n[0] <= tol]
+        if near:
+            return min(near)[1]
+        vertices.append(pt)
+        grid[(cx, cy)].append(len(vertices) - 1)
+        return len(vertices) - 1
 
-    used = [False] * len(segments)
+    contours: list[Contour] = []
+    segs: list[tuple[list[Point], int, int]] = []
+    for pts in segments:
+        a, b = vertex(pts[0]), vertex(pts[-1])
+        pts = [vertices[a], *pts[1:-1], vertices[b]]
+        if a == b:
+            if max(bbox_wh(pts)) > tol:     # a loop on its own
+                contours.append(Contour(points=pts, closed=True))
+            continue                        # else a zero-length stub
+        segs.append((pts, a, b))
 
-    def next_unused(node: tuple[int, int]) -> int | None:
-        for j in adj.get(node, ()):
+    adj: dict[int, list[int]] = defaultdict(list)
+    for i, (_, a, b) in enumerate(segs):
+        adj[a].append(i)
+        adj[b].append(i)
+
+    used = [False] * len(segs)
+
+    def next_unused(v: int) -> int | None:
+        for j in adj.get(v, ()):
             if not used[j]:
                 return j
         return None
 
-    contours: list[Contour] = []
-    for start in range(len(segments)):
+    for start in range(len(segs)):
         if used[start]:
             continue
         used[start] = True
-        chain = list(segments[start])
-        while (j := next_unused(key(chain[-1]))) is not None:   # extend the tail
+        chain, head, tail = list(segs[start][0]), segs[start][1], segs[start][2]
+        while (j := next_unused(tail)) is not None:     # extend the tail
             used[j] = True
-            seg = segments[j]
-            seg = seg if key(seg[0]) == key(chain[-1]) else seg[::-1]
+            seg, a, b = segs[j]
+            seg, tail = (seg, b) if a == tail else (seg[::-1], a)
             chain.extend(seg[1:])
-        while (j := next_unused(key(chain[0]))) is not None:    # extend the head
+        while (j := next_unused(head)) is not None:     # extend the head
             used[j] = True
-            seg = segments[j]
-            seg = seg if key(seg[-1]) == key(chain[0]) else seg[::-1]
+            seg, a, b = segs[j]
+            seg, head = (seg, a) if b == head else (seg[::-1], b)
             chain = seg[:-1] + chain
-        closed = len(chain) >= 4 and key(chain[0]) == key(chain[-1])
+        closed = len(chain) >= 4 and head == tail
         contours.append(Contour(points=chain, closed=closed))
     return contours
 
@@ -480,7 +511,10 @@ def _segments_cross(p1: Point, p2: Point, p3: Point, p4: Point) -> bool:
     """True if segment p1p2 properly crosses p3p4 (shared endpoints ignored)."""
     def orient(a, b, c):
         v = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
-        if abs(v) < 1e-9:
+        # c within 1e-6 mm of the line ab counts as on it. The tolerance is a
+        # distance, not a raw cross product: on a 2 m edge float noise of
+        # 1e-12 mm would otherwise turn two collinear edges into a "crossing".
+        if abs(v) <= 1e-6 * math.hypot(b[0] - a[0], b[1] - a[1]):
             return 0
         return 1 if v > 0 else -1
 
