@@ -31,6 +31,26 @@ from view.sparrow_progress import SparrowProgress, run_with_progress
 _CACHE = "dxf_sparrow_cache"    # {signature: computed group}
 _RENEST = "dxf_sparrow_renest"  # {signature} of groups to re-nest on this run
 
+# Streamlit's uploader already takes dropped files, but it looks like a plain
+# button. Make it a tall dashed drop zone that says files can be dropped on it.
+_DROPZONE_CSS = """
+<style>
+.st-key-dxf_uploader [data-testid="stFileUploaderDropzone"] {
+    min-height: 9rem;
+    border: 2px dashed rgba(128, 128, 128, 0.6);
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+}
+.st-key-dxf_uploader [data-testid="stFileUploaderDropzone"]::before {
+    content: "Vedä ja pudota DXF-tiedostot tähän";
+    width: 100%;
+    text-align: center;
+    font-weight: 600;
+}
+</style>
+"""
+
 
 @dataclass(frozen=True)
 class _Settings:
@@ -65,12 +85,14 @@ def _nesting_diff(saved: dict, current: dict) -> str:
 def render(data: dict) -> None:
     lookup = build_lookup(data)
 
+    st.html(_DROPZONE_CSS)
     uploaded = st.file_uploader(
         "Lataa DXF-tiedostot",
         type="dxf",
         accept_multiple_files=True,
         key="dxf_uploader",
-        help="Voit ladata useita tiedostoja kerralla. Jokainen tiedosto on yksi tuote.",
+        help="Vedä tiedostot alueelle tai valitse ne koneelta. Voit ladata useita "
+             "tiedostoja kerralla. Jokainen tiedosto on yksi tuote.",
     )
     parts = _sync_store(uploaded)
     if not parts:
