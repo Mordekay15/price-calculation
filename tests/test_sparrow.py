@@ -3,6 +3,7 @@ fixed-sheet search and the costing run in milliseconds; one test runs the real
 executable when it is installed."""
 
 import math
+from collections import Counter
 
 import pytest
 
@@ -79,6 +80,38 @@ def test_greedy_fills_a_sheet_then_repeats_the_layout():
     assert [(len(s.placements), s.count) for s in pack.sheets] == [(4, 2), (2, 1)]
     assert pack.sheets_needed == 3
     assert math.isclose(pack.used_area, 10 * 100 * 100)
+
+
+def made(packing):
+    """Pieces of each part a packing cuts."""
+    out = Counter()
+    for sheet in packing.sheets:
+        for pl in sheet.placements:
+            out[pl.part_id] += sheet.count
+    return dict(out)
+
+
+def test_mixed_parts_get_a_one_program_plan_next_to_the_fewest_sheets():
+    # 4 squares per 250 × 250 sheet. Greedy: 4 sheets over 3 layouts; one
+    # program of 2 a + 1 b, cut 5 times, needs a sheet more.
+    result = sparrow_options({("2", "S235 | 250x250"): 900.0}, "S235", "2", 2.0,
+                             [square(quantity=10, name="a"), square(quantity=5, name="b")],
+                             run_fn=fake_solver)
+    fewest, kit = result.options
+    assert (fewest.sheets_needed, fewest.programs) == (4, 3)
+    assert (kit.sheets_needed, kit.programs) == (5, 1)
+    assert made(fewest.packing) == made(kit.packing) == {"a": 10, "b": 5}
+
+
+def test_a_kit_plan_as_good_in_sheets_replaces_the_greedy_one():
+    # Greedy: 3 sheets, 3 layouts. Kit 3 a + 1 b ×2 and the rest on one sheet:
+    # 3 sheets, 2 programs.
+    result = sparrow_options({("2", "S235 | 250x250"): 900.0}, "S235", "2", 2.0,
+                             [square(quantity=7, name="a"), square(quantity=3, name="b")],
+                             run_fn=fake_solver)
+    [option] = result.options
+    assert (option.sheets_needed, option.programs) == (3, 2)
+    assert made(option.packing) == {"a": 7, "b": 3}
 
 
 def test_greedy_reports_a_part_too_big_for_the_sheet():

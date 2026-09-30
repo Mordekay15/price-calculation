@@ -1,6 +1,6 @@
 """Sparrow shape nesting, from a DXF part to a priced sheet size: parts, running
-the solver, fixed-sheet packing (Sparrow only knows an endless strip) and
-costing. The solver is passed in as ``run_fn``, so tests need no binary."""
+the solver, fixed-sheet packing (Sparrow only knows an endless strip), the
+repeatable-program plan (``core.programs``) and costing. The solver is passed in as ``run_fn``, so tests need no binary."""
 
 from __future__ import annotations
 
@@ -10,11 +10,12 @@ import shutil
 import subprocess
 import tempfile
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from core.dxf import DxfReport
 from core.geometry import bbox, bbox_wh, net_area, rotate_translate, signed_area
+from core.programs import choose_plans, kit_plan
 from core.sheet_cost import EdgeGaps, GroupCost, Packing, compute_options, usable_area
 
 Point = tuple[float, float]
@@ -363,12 +364,17 @@ def greedy_fixed_sheets(
         count = min(remaining[i] // n for i, n in per_sheet.items())
         for i, n in per_sheet.items():
             remaining[i] -= count * n
-        used_area = sum(net_area(pl.outer, pl.holes) for pl in best)
-        sheets.append(PackedSheet(best, sheet_w, sheet_h, used_area, count))
+        sheets.append(_sheet(best, sheet_w, sheet_h, count))
         if on_sheet is not None:
             on_sheet(n_total - sum(remaining), n_total)
 
     return PackResult(ok=True, sheets=sheets)
+
+
+def _sheet(placements: list[Placed], sheet_w: float, sheet_h: float,
+           count: int = 1) -> PackedSheet:
+    return PackedSheet(placements, sheet_w, sheet_h,
+                       sum(net_area(pl.outer, pl.holes) for pl in placements), count)
 
 
 def _mix(remaining: list[int], n: int) -> dict[int, int]:
@@ -487,7 +493,10 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, seed, time_limit_sec,
                         separation, on_progress=None) -> list[Packing]:
     """Pack the sheet one way only: Sparrow's fixed strip height is the sheet's
     short side and the strip runs along the long side (e.g. 1000 high, up to
-    2000 long on a 1000 × 2000 sheet), both less the edge gaps."""
+    2000 long on a 1000 × 2000 sheet), both less the edge gaps.
+
+    Returns the fewest-sheets packing and, when it is worth showing, the
+    repeatable-program one (see ``core.programs``)."""
     long_side, short_side = max(sw, sh), min(sw, sh)
     x0, y0, ew, eh = usable_area(sw, sh, edges)
     on_sheet = None
@@ -497,6 +506,41 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, seed, time_limit_sec,
     pack = greedy_fixed_sheets(parts, ew, eh, run_fn=run_fn, seed=seed,
                                time_limit_sec=time_limit_sec, separation=separation,
                                on_sheet=on_sheet)
-    return [Packing(sheets=pack.sheets, sheets_needed=pack.sheets_needed,
-                    eff_w=ew, eff_h=eh, draw_w=long_side, draw_h=short_side,
-                    failed=0 if pack.ok else 1, reason=pack.reason, x0=x0, y0=y0)]
+
+    def packing(sheets: list[PackedSheet]) -> Packing:
+        return Packing(sheets=sheets, sheets_needed=sum(s.count for s in sheets),
+                       eff_w=ew, eff_h=eh, draw_w=long_side, draw_h=short_side,
+                       failed=0 if pack.ok else 1, reason=pack.reason, x0=x0, y0=y0)
+
+    if not pack.ok:
+        return [packing(pack.sheets)]
+    kit = _kit(parts, pack.sheets, ew, eh, run_fn=run_fn, seed=seed,
+               time_limit_sec=time_limit_sec, separation=separation)
+    return [packing(sheets) for sheets in choose_plans(pack.sheets, kit)]
+
+
+# Sparrow runs spent looking for a one-program kit on one sheet size; each run
+# takes the search time.
+_KIT_BUDGET = 4
+
+
+def _kit(parts, greedy_sheets, sheet_w, sheet_h, *, run_fn, seed, time_limit_sec,
+         separation) -> list[PackedSheet] | None:
+    """``core.programs.kit_plan`` with Sparrow: a kit fits when one probe puts
+    every piece of it on the sheet; the remainder is packed greedily."""
+    def fits_kit(kit):
+        demand = {i: n for i, n in enumerate(kit) if n > 0}
+        err, kept, _ = _probe(parts, demand, sheet_w, sheet_h, run_fn=run_fn, seed=seed,
+                              time_limit_sec=time_limit_sec, separation=separation)
+        if err is not None or len(kept) < sum(kit):
+            return None
+        return _sheet(kept, sheet_w, sheet_h)
+
+    def pack_rest(rest):
+        pack = greedy_fixed_sheets(
+            [replace(p, quantity=q) for p, q in zip(parts, rest)], sheet_w, sheet_h,
+            run_fn=run_fn, seed=seed, time_limit_sec=time_limit_sec, separation=separation)
+        return pack.sheets if pack.ok else None
+
+    return kit_plan([p.quantity for p in parts], greedy_sheets, fits_kit, pack_rest,
+                    budget=_KIT_BUDGET)
