@@ -365,7 +365,8 @@ def _render_part_config(
     materials: list[str],
     lookup: dict,
 ) -> dict | None:
-    """Draw one part's card; return its product dict, or None if not priceable."""
+    """Draw one part's card, preview left and inputs right; return its product
+    dict, or None if not priceable."""
     with st.container(border=True):
         hdr = st.columns([6, 2])
         hdr[0].markdown(f"**#{idx + 1}** · {dxf.name}")
@@ -374,73 +375,93 @@ def _render_part_config(
         # material choice, never nested.
         if dxf.texts:
             st.caption("Piirustuksen tekstit: " + " · ".join(dxf.texts))
-        if dxf.unit_note and not dxf.unit_guessed:
-            st.caption(f"Yksikkö {dxf.unit_note}: {dxf.unit_label}.")
 
-        layers = _render_layer_picker(fid, dxf)
-        report = _part(fid, dxf, layers)
-
-        preview = preview_svg(report)
-        if preview:
-            st.markdown(preview, unsafe_allow_html=True)
-        if report.dropped:
-            st.caption(
-                f"Osan ulkopuolelta ohitettiin {len(report.dropped)} kuviota "
-                "(esim. lisäkuvat tai irralliset viivat) — harmaalla esikatselussa."
-            )
-
-        if report.problems:
-            hdr[1].markdown(":red[ei hinnoiteltavissa]")
-            st.error(
-                "**Tätä osaa ei voi vielä hinnoitella:**\n\n"
-                + "\n".join(f"- {p}" for p in report.problems)
-            )
+        preview_col, input_col = st.columns(2)
+        with input_col:
+            layers = _render_layer_picker(fid, dxf)
+            report = _part(fid, dxf, layers)
+            size = _checked_size(fid, dxf, report, hdr[1])
+        with preview_col:
+            _render_preview(report)
+        if size is None:
             return None
-
-        width = round(report.outline.width_mm, 1)
-        height = round(report.outline.height_mm, 1)
-
-        # No unit in the file: show the size the guess gives and price only
-        # once the user confirms it.
-        if dxf.unit_guessed:
-            st.warning(
-                "Piirustuksesta puuttuu mittayksikkö. Oletimme yksiköksi "
-                f"**{report.unit_label}**, jolloin osan koko on "
-                f"**{width:g} × {height:g} mm**. Tarkista mitat piirustuksesta."
-            )
-            if not st.checkbox(f"Koko {width:g} × {height:g} mm on oikein",
-                               key=f"dxf_unit_ok_{fid}"):
-                hdr[1].markdown(":orange[vahvista yksikkö]")
-                return None
-
-        hdr[1].markdown(f":gray[{width:g} × {height:g} mm · {report.unit_label}]")
-
-        # Material + thickness — persisted per file and shared with the manual
-        # calculator cards. Seed the selectboxes from the stored choice, then
-        # write the current choice back into it.
-        cfg = st.session_state.setdefault(_CONFIG, {}).setdefault(
-            fid, {"material": None, "thickness": None})
-        material, thickness = render_material_thickness(
-            materials, lookup,
-            mat_key=f"dxf_mat_{fid}", thick_key=f"dxf_th_{fid}",
-            mat_default=cfg["material"], thick_default=cfg["thickness"],
-        )
-        cfg["material"] = material
-        cfg["thickness"] = thickness
-        qty = int(st.number_input("Määrä (kpl)", min_value=1, value=1, step=1,
-                                  key=f"dxf_q_{fid}"))
+        with input_col:
+            material, thickness, qty = _render_part_inputs(fid, materials, lookup)
 
     return {
         "id":        fid,
         "name":      dxf.name,
         "material":  material,
         "thickness": thickness,
-        "width":     width,
-        "height":    height,
+        "width":     size[0],
+        "height":    size[1],
         "qty":       qty,
         "layers":    None if layers is None else tuple(sorted(layers)),
         "report":    report,
     }
+
+
+def _render_preview(report: DxfReport) -> None:
+    """The part as it will be cut; shapes left outside it are greyed out."""
+    preview = preview_svg(report)
+    if preview:
+        st.markdown(preview, unsafe_allow_html=True)
+    if report.dropped:
+        st.caption(
+            f"Osan ulkopuolelta ohitettiin {len(report.dropped)} kuviota "
+            "(esim. lisäkuvat tai irralliset viivat) — harmaalla esikatselussa."
+        )
+
+
+def _checked_size(fid: str, dxf: DxfFile, report: DxfReport, badge) -> tuple | None:
+    """The part's ``(width, height)`` in mm, or None (with the reason shown)
+    while it can't be priced. ``badge`` is the card header's status slot."""
+    if report.problems:
+        badge.markdown(":red[ei hinnoiteltavissa]")
+        st.error(
+            "**Tätä osaa ei voi vielä hinnoitella:**\n\n"
+            + "\n".join(f"- {p}" for p in report.problems)
+        )
+        return None
+
+    width = round(report.outline.width_mm, 1)
+    height = round(report.outline.height_mm, 1)
+
+    # No unit in the file: show the size the guess gives and price only once
+    # the user confirms it.
+    if dxf.unit_guessed:
+        st.warning(
+            "Piirustuksesta puuttuu mittayksikkö. Oletimme yksiköksi "
+            f"**{report.unit_label}**, jolloin osan koko on "
+            f"**{width:g} × {height:g} mm**. Tarkista mitat piirustuksesta."
+        )
+        if not st.checkbox(f"Koko {width:g} × {height:g} mm on oikein",
+                           key=f"dxf_unit_ok_{fid}"):
+            badge.markdown(":orange[vahvista yksikkö]")
+            return None
+
+    badge.markdown(f":gray[{width:g} × {height:g} mm · {report.unit_label}]")
+    return width, height
+
+
+def _render_part_inputs(fid: str, materials: list[str], lookup: dict) -> tuple:
+    """Material, thickness and quantity; returns ``(material, thickness, qty)``.
+
+    Material + thickness are persisted per file: the selectboxes are seeded
+    from the stored choice, then the current choice is written back.
+    """
+    cfg = st.session_state.setdefault(_CONFIG, {}).setdefault(
+        fid, {"material": None, "thickness": None})
+    material, thickness = render_material_thickness(
+        materials, lookup,
+        mat_key=f"dxf_mat_{fid}", thick_key=f"dxf_th_{fid}",
+        mat_default=cfg["material"], thick_default=cfg["thickness"],
+    )
+    cfg["material"] = material
+    cfg["thickness"] = thickness
+    qty = int(st.number_input("Määrä (kpl)", min_value=1, value=1, step=1,
+                              key=f"dxf_q_{fid}"))
+    return material, thickness, qty
 
 
 def _part(fid: str, dxf: DxfFile, layers: set[str] | None) -> DxfReport:
@@ -468,17 +489,20 @@ def _render_layer_picker(fid: str, dxf: DxfFile) -> set[str] | None:
         n, w, h = sizes.get(name, (0, 0, 0))
         return f"{name}  ·  {n} obj  ·  {w:.0f}×{h:.0f} mm"
 
-    chosen = set(st.multiselect(
-        "Leikattavat tasot (layers)",
-        options=avail,
-        default=suggested,
-        format_func=label,
-        key=f"dxf_layers_{fid}",
-        help="Vain osan leikattavat tasot. Kehys, otsikko, mitat, tekstit, "
-             "taivutusviivat ja info-tasot jätetään oletuksena pois — lisää tai "
-             "poista tasoja ja katso esikatselusta, että vain osa jää.",
-    ))
-    hidden = [n for n in avail if n not in suggested]
-    if hidden:
-        st.caption("Jätetty oletuksena pois: " + ", ".join(hidden))
+    # Folded: the default choice is usually right. Open when it can't be
+    # priced, since picking other layers is then the likely fix.
+    with st.expander("Tasot", expanded=bool(_part(fid, dxf, None).problems)):
+        chosen = set(st.multiselect(
+            "Leikattavat tasot (layers)",
+            options=avail,
+            default=suggested,
+            format_func=label,
+            key=f"dxf_layers_{fid}",
+            help="Vain osan leikattavat tasot. Kehys, otsikko, mitat, tekstit, "
+                 "taivutusviivat ja info-tasot jätetään oletuksena pois — lisää tai "
+                 "poista tasoja ja katso esikatselusta, että vain osa jää.",
+        ))
+        hidden = [n for n in avail if n not in suggested]
+        if hidden:
+            st.caption("Jätetty oletuksena pois: " + ", ".join(hidden))
     return chosen
