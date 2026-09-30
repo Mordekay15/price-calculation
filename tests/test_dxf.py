@@ -158,6 +158,57 @@ def test_no_unit_in_an_imperial_drawing_is_guessed_as_inch(drawing):
     assert math.isclose(dxf.part().outline.width_mm, 254)
 
 
+# ── CAD export noise (from real Inventor flat patterns) ──────────────────────
+
+def test_zero_length_stubs_in_the_outline_are_chained_through(drawing):
+    # Inventor leaves 0.004 mm lines between outline segments; each one used to
+    # be read as a closed loop and, the outline broken there, picked as a
+    # zero-area outline.
+    doc, msp = drawing()
+    for a, b in [((0, 0), (300, 0)), ((300, 0), (300, 200)), ((300, 200), (150.0264, 200)),
+                 ((150.0264, 200), (150.022, 200)), ((150.022, 200), (0, 200)), ((0, 200), (0, 0))]:
+        msp.add_line(a, b)
+    report = part_of(doc)
+    assert report.problems == []
+    assert math.isclose(report.outline.area_mm2, 60_000, rel_tol=1e-6)
+
+
+def test_ends_a_hair_apart_across_a_grid_border_still_meet(drawing):
+    # 1578.023 and 1578.047 are 0.024 mm apart but round to different 0.05 mm cells.
+    doc, msp = drawing()
+    rect(msp, 1500, 0, 200, 100)
+    for a, b in [((1578.023, 57.267), (1578.023, 59.767)), ((1578.023, 59.767), (1556.036, 59.765)),
+                 ((1556.036, 59.765), (1556.036, 57.265)), ((1556.036, 57.265), (1578.047, 57.267))]:
+        msp.add_line(a, b)
+    report = part_of(doc)
+    assert report.problems == []
+    assert len(report.holes) == 1
+
+
+def test_a_hole_edge_overshooting_its_corner_is_not_a_self_crossing(drawing):
+    # The bottom edge runs 0.023 mm past the right edge: snapped onto the corner.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 400, 100)
+    for a, b in [((305.13070048986242, 57.2667633604561317), (305.1305034145744912, 59.7667633527499618)),
+                 ((305.1305034145744912, 59.7667633527499618), (283.1429760329447731, 59.7650273349572032)),
+                 ((283.1429760329447731, 59.7650273349572032), (283.143173088236324, 57.2650273426273628)),
+                 ((305.153761142550195, 57.2667764654256288), (283.1345494911570881, 57.2650404462652602))]:
+        msp.add_line(a, b)
+    report = part_of(doc)
+    assert report.problems == []
+    assert len(report.holes) == 1
+
+
+def test_collinear_edges_of_a_long_outline_do_not_cross(drawing):
+    # Two top edges on the same line, a picometre apart in y, 2 m long.
+    doc, msp = drawing()
+    msp.add_lwpolyline([(2251.25, 206.2746068139259), (2251.25, 0.96), (0.09, 0.96),
+                        (0.09, 206.2746068139328), (287.13, 206.2746068139281),
+                        (288.63, 207.77), (295.63, 207.77),
+                        (297.13, 206.2746068139281)], close=True)
+    assert part_of(doc).problems == []
+
+
 # ── Refused, with a reason ────────────────────────────────────────────────────
 
 def refused(doc) -> str:
