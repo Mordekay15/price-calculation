@@ -100,16 +100,15 @@ def _selected_index(event, options: list[SheetOption], cheapest_idx: int) -> int
 
 def _render_summary(active: SheetOption, cheapest: SheetOption, n_pieces: int) -> None:
     """Headline metrics for the chosen size — big "€/kpl" is the visual anchor —
-    and which size it is."""
+    and, when it isn't the cheapest, what picking it costs."""
     m = st.columns([2, 1, 1, 1])
     m[0].metric("Materiaalikulu €/kpl (ka.)", f"{active.total_eur / n_pieces:,.2f} €")
     m[1].metric("Yhteensä €", f"{active.total_eur:,.2f}")
     m[2].metric("Levyjä", str(active.sheets_needed))
     m[3].metric("Käyttöaste", f"{active.utilization * 100:.1f} %")
 
-    if active is cheapest:
-        st.success(f"Edullisin levykoko: **{_size_label(active)}**")
-    else:
+    # The cheapest size needs no note: the table marks it "edullisin".
+    if active is not cheapest:
         delta = active.total_eur - cheapest.total_eur
         st.info(
             f"Valittu: **{_size_label(active)}** — {active.sheets_needed} "
