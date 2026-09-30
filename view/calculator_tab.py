@@ -55,7 +55,6 @@ def render(data: dict) -> None:
     prices: dict[str, float] = {}
     if groups:
         st.divider()
-        st.markdown("**Levyn käyttö**")
         prices, _, _ = render_groups(groups, render_one)
     render_pieces_summary(products, prices, title="Yhteenveto",
                           weight_label="Kappaleiden yhteispaino (kg)", lead="#")

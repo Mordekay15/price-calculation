@@ -78,8 +78,8 @@ def render(data: dict) -> None:
         return
 
     products = _render_part_cards(parts, materials_with_copper(lookup), lookup)
-    settings = _render_settings()
-    groups = group_products(products, settings.nest_mode)
+    margin_pct, nest_mode, sheet = _render_settings()
+    groups = group_products(products, nest_mode)
     if not groups:
         st.info("Valitse materiaali ja paksuus vähintään yhdelle osalle.")
         return
@@ -94,7 +94,14 @@ def render(data: dict) -> None:
         return
 
     st.divider()
-    st.markdown("**Levyn käyttö**")
+    # The search time sits with the button it applies to.
+    c_time, c_run, c_update = st.columns([1, 2, 2], vertical_alignment="bottom")
+    time_limit = c_time.number_input(
+        "Sijoittelun hakuaika (s)", min_value=1, value=4, step=1, key="dxf_sparrow_t",
+        help="Aikaraja yhdelle sijoitteluyritykselle (levyä kohden tehdään "
+             "yksi tai useampi). Pidempi aika voi löytää tiiviimmän sijoittelun, "
+             "mutta laskenta kestää kauemmin.")
+    settings = _Settings(nest_mode, sheet, int(time_limit), margin_pct)
     cache: dict = st.session_state.setdefault(_CACHE, {})
     # Two buttons that never overlap: the first nests only groups with no
     # result, the second only results made with other Sparrow settings. A
@@ -106,13 +113,12 @@ def render(data: dict) -> None:
             n_new += parse_thickness_mm(k[1]) is not None
         else:
             n_stale += _is_stale(entry, settings)
-    b1, b2 = st.columns(2)
-    run = b1.button(_run_label(n_new, n_stale, len(groups)), key="dxf_sparrow_run",
+    run = c_run.button(_run_label(n_new, n_stale, len(groups)), key="dxf_sparrow_run",
                     type="primary", disabled=n_new == 0,
                     help="Laskee vain osat, joilla ei vielä ole tulosta. Jo "
                          "laskettuihin ei kosketa.")
     # Shown only when there is something to update.
-    update = n_stale > 0 and b2.button(
+    update = n_stale > 0 and c_update.button(
         f"Päivitä eri asetuksilla lasketut ({n_stale})", key="dxf_sparrow_update",
         help="Laskee nykyisillä asetuksilla uudelleen kaikki tulokset, jotka on "
              "laskettu eri asetuksilla. Yksittäisen osan voi päivittää sen omasta "
@@ -158,7 +164,10 @@ def _render_part_cards(parts, materials: list[str], lookup: dict) -> list[dict]:
     return products
 
 
-def _render_settings() -> _Settings:
+def _render_settings() -> tuple[float, str, SheetSettings]:
+    """Margin, nesting mode and the folded sheet settings; returns
+    ``(margin_pct, nest_mode, sheet)``. The search time is read later, next
+    to the run button."""
     st.divider()
     margin_pct, nest_mode = render_main_settings(
         margin_key="dxf_margin_pct",
@@ -167,14 +176,8 @@ def _render_settings() -> _Settings:
     )
     with st.expander(ADVANCED_LABEL):
         sheet = render_nesting_inputs(key_prefix="dxf")
-        time_limit = st.number_input(
-            "Sijoittelun hakuaika (s)", min_value=1, value=4, step=1, key="dxf_sparrow_t",
-            help="Aikaraja yhdelle sijoitteluyritykselle (levyä kohden tehdään "
-                 "yksi tai useampi). Pidempi aika voi löytää tiiviimmän sijoittelun, "
-                 "mutta laskenta kestää kauemmin.")
-    settings = _Settings(nest_mode, sheet, int(time_limit), margin_pct)
-    st.caption(settings_summary(settings.nesting(), _NESTING_LABELS))
-    return settings
+    st.caption(settings_summary(sheet.values(), NESTING_LABELS))
+    return margin_pct, nest_mode, sheet
 
 
 def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
