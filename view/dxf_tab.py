@@ -131,8 +131,10 @@ def render(data: dict) -> None:
     renest = st.session_state.pop(_RENEST, set())
     _show(products, groups, settings, cache, _nester(lookup, settings, exe),
           run=run, renest=renest)
-    if run:
-        st.rerun()  # redraw the button with the new count ("kaikki laskettu")
+    if run or renest:
+        # The button's count was drawn before these groups were nested:
+        # redraw it with the new count (e.g. "kaikki laskettu").
+        st.rerun()
 
 
 def _is_stale(entry: dict, settings: _Settings) -> bool:
