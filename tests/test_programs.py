@@ -73,6 +73,17 @@ def test_uneven_quantities_give_a_main_program_and_a_remainder():
     assert made(plan, 2) == qty
 
 
+def test_a_kit_below_the_greedy_sheet_count_is_tried():
+    # 7 A + 3 B, 4 per sheet: greedy fills A first (3 layouts over 3 sheets);
+    # kit 3 A + 1 B ×2 and 1 A + 1 B on a third sheet is 2 programs.
+    sizes, qty = [5, 5], [7, 3]
+    base = greedy(sizes)(qty)
+    assert (sheets_used(base), len(base)) == (3, 3)
+    plan = kit_plan(qty, base, fits_kit(sizes), greedy(sizes))
+    assert (sheets_used(plan), len(plan)) == (3, 2)
+    assert made(plan, 2) == qty
+
+
 def test_the_budget_caps_the_fit_checks():
     calls = []
     sizes, qty = [1, 2], [100, 37]

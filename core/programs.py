@@ -28,10 +28,10 @@ def kit_plan(quantities: list[int], greedy: list, fits_kit, pack_rest, *,
     returns its layouts (None on failure). ``budget`` caps the ``fits_kit``
     calls, which can be slow.
 
-    Tried, in order: R that divides every quantity, from the fewest sheets the
-    greedy plan's fullest sheet allows up to one sheet more than the greedy
-    plan (one program, no remainder); then the two R just below the greedy
-    sheet count (a main program plus a remainder).
+    Tried, in order: R that divides every quantity, up to one sheet more than
+    the greedy plan (one program, no remainder); then the two R just below the
+    greedy sheet count (a main program plus a remainder). A kit with more
+    pieces than the greedy plan's fullest sheet is not tried.
     """
     if len(greedy) <= 1:
         return None     # already one program
@@ -40,15 +40,15 @@ def kit_plan(quantities: list[int], greedy: list, fits_kit, pack_rest, *,
         g = gcd(g, q)
     greedy_sheets = sheets_used(greedy)
     most_per_sheet = max(len(s.placements) for s in greedy)
-    lowest = max(1, -(-sum(quantities) // most_per_sheet))
     calls = 0
 
     def try_kit(r: int) -> list | None:
         nonlocal calls
-        if budget is not None and calls >= budget:
+        kit = [q // r for q in quantities]
+        if not any(kit) or sum(kit) > most_per_sheet or (budget is not None and calls >= budget):
             return None
         calls += 1
-        layout = fits_kit([q // r for q in quantities])
+        layout = fits_kit(kit)
         if layout is None:
             return None
         layout.count = r
@@ -56,13 +56,13 @@ def kit_plan(quantities: list[int], greedy: list, fits_kit, pack_rest, *,
         rest_layouts = pack_rest(rest) if any(rest) else []
         return None if rest_layouts is None else [layout, *rest_layouts]
 
-    for r in range(lowest, greedy_sheets + 2):
+    for r in range(1, greedy_sheets + 2):
         if g % r == 0 and (plan := try_kit(r)) is not None:
             return plan
 
     best = None
     for r in (greedy_sheets - 1, greedy_sheets - 2):
-        if r < lowest or g % r == 0:
+        if r < 1 or g % r == 0:
             continue
         plan = try_kit(r)
         if plan is not None and (best is None or _plan_key(plan) < _plan_key(best)):
