@@ -391,9 +391,14 @@ def _probe(parts, demand: dict[int, int], sheet_w: float, sheet_h: float,
 
     Returns ``(error, placed_on_sheet, strip_len)``: error is None on success;
     the list holds the parts that land fully inside the first ``sheet_w``.
+
+    Sparrow keeps ``separation`` from the strip's edges as well as between
+    parts. The gap is meant only between parts, so the strip is padded by it
+    on every side and the result moved back: a part may touch the sheet edge.
     """
+    pad = separation or 0.0
     active = list(demand)
-    instance = _build_instance(parts, demand, sheet_h)
+    instance = _build_instance(parts, demand, sheet_h + 2 * pad)
     res = run_fn(instance, seed=seed, time_limit_sec=time_limit_sec, separation=separation)
     if not res.ok:
         return res.message or "Sparrow-ajo epäonnistui", [], None
@@ -405,6 +410,7 @@ def _probe(parts, demand: dict[int, int], sheet_w: float, sheet_h: float,
             continue
         orig_i = active[local_id]
         part = parts[orig_i]
+        trans = (trans[0] - pad, trans[1] - pad)
         outer = rotate_translate(part.outer, rot, trans)
         minx, miny, maxx, maxy = bbox(outer)
         if minx < -_TOL or miny < -_TOL or maxx > sheet_w + _TOL or maxy > sheet_h + _TOL:
@@ -415,7 +421,7 @@ def _probe(parts, demand: dict[int, int], sheet_w: float, sheet_h: float,
                            [rotate_translate(h, rot, trans) for h in part.holes],
                            [rotate_translate(c, rot, trans) for c in part.construction]))
         left[orig_i] -= 1
-    return None, kept, res.strip_width
+    return None, kept, res.strip_width - 2 * pad
 
 
 def _build_instance(parts, demand: dict[int, int], strip_height: float) -> dict:

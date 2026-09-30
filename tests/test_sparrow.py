@@ -117,6 +117,42 @@ def test_edge_gaps_shrink_the_strip_sparrow_fills():
     assert (packing.x0, packing.y0, packing.eff_w, packing.eff_h) == (30, 10, 1930, 970)
 
 
+def test_the_strip_is_padded_by_the_gap_and_parts_moved_back():
+    seen = {}
+
+    def solver(instance, *, seed, time_limit_sec, separation):
+        seen["strip_height"] = instance["strip_height"]
+        return fake_solver(instance, seed=seed, time_limit_sec=time_limit_sec,
+                           separation=separation)
+
+    # the fake solver ignores the gap and places at the strip's corner (0, 0);
+    # moved back by the 10 mm pad, that lands outside the sheet and is dropped
+    pack = greedy_fixed_sheets([square(quantity=1)], 1000, 500, run_fn=solver,
+                               separation=10.0)
+    assert seen["strip_height"] == 520
+    assert not pack.ok
+
+
+@pytest.mark.sparrow
+def test_real_sparrow_lets_parts_touch_the_sheet_edge():
+    exe = find_executable()
+    if exe is None:
+        pytest.skip("Sparrow executable not found")
+
+    def run_fn(instance, *, seed, time_limit_sec, separation):
+        return run_sparrow(instance, executable=exe, time_limit_sec=2, seed=seed,
+                           min_item_separation=separation)
+
+    # Two 100 mm squares with a 10 mm gap need 210 × 100; with the gap at the
+    # sheet edges too they would need 230 × 120. The 212 × 102 sheet (2 mm of
+    # slack for the solver) holds both only without the edge gap.
+    pack = greedy_fixed_sheets([square(quantity=2)], 212, 102, run_fn=run_fn, separation=10.0)
+    assert pack.ok and pack.sheets_needed == 1
+    boxes = sorted(bbox(p.outer) for p in pack.sheets[0].placements)
+    gap = boxes[1][0] - boxes[0][2]
+    assert 10 - 0.5 <= gap and boxes[1][2] <= 212 + 0.5
+
+
 @pytest.mark.sparrow
 def test_real_sparrow_binary():
     exe = find_executable()

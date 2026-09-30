@@ -150,9 +150,10 @@ _NEST_HELP = (
     "tuotteelle lasketaan oma levytarpeensa."
 )
 _RANKAVALI_HELP = (
-    "Kappaleiden välinen rankaväli (leikkausvara). Lisätään jokaisen "
-    "kappaleen leveyteen ja korkeuteen sijoittelussa, jotta vierekkäiset "
-    "kappaleet pysyvät tämän etäisyyden päässä toisistaan."
+    "Kappaleiden välinen rankaväli (leikkausvara): vierekkäiset kappaleet "
+    "pysyvät tämän etäisyyden päässä toisistaan. Levyn reunaan rankaväliä ei "
+    "jätetä — kappale voi ulottua reunaan asti. Reunoille jätettävä kaista "
+    "annetaan reunavaroilla."
 )
 _EDGES_HELP = (
     "Kaistat levyn reunoilla, joille ei sijoiteta osia. Levy on sijoittelu"

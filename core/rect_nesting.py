@@ -155,8 +155,10 @@ def rect_options(
 ) -> GroupCost | None:
     """``core.sheet_cost.compute_options`` with the bounding-box packer.
 
-    Each piece is grown by the cut gap (rankaväli) so the packer leaves room
-    between parts; the edge gaps shrink every sheet's usable area.
+    Each piece is grown by the cut gap (rankaväli) on its right and bottom
+    side, so the packer leaves that gap between parts. The usable area is
+    grown by the same amount, so the last piece's gap may overhang the edge:
+    parts may touch the sheet edge. The edge gaps shrink the usable area.
     """
     pieces = [
         (p_idx, c_idx, w + rankavali_mm, h + rankavali_mm)
@@ -170,7 +172,8 @@ def rect_options(
         # (its greedy order packs differently the other way round), and the
         # finished layout is turned to lie down.
         x0, y0, eff_w, eff_h = usable_area(sw, sh, edges)
-        sheets, failed = pack(pieces, eff_h, eff_w, allow_rotation=True)
+        sheets, failed = pack(pieces, eff_h + rankavali_mm, eff_w + rankavali_mm,
+                              allow_rotation=True)
         return Packing(
             sheets=[_turned(sheet) for sheet in sheets],
             sheets_needed=len(sheets),

@@ -114,3 +114,15 @@ def test_rect_layouts_lie_long_side_horizontal_inside_the_usable_area():
     assert (packing.x0, packing.y0, packing.eff_w, packing.eff_h) == (20, 10, 1950, 940)
     for pl in (pl for sheet in packing.sheets for pl in sheet.placements):
         assert pl.x + pl.w <= packing.eff_w and pl.y + pl.h <= packing.eff_h
+
+
+def test_the_cut_gap_is_kept_between_pieces_but_not_at_the_sheet_edge():
+    lookup = {("2", "S235 | 1000x2000"): 900.0}
+
+    def sheets(width):
+        products = [{"id": "a", "width": width, "height": 2000, "qty": 2, "_global_idx": 0}]
+        return rect_options(lookup, "S235", "2", 2.0, products,
+                            rankavali_mm=10).options[0].sheets_needed
+
+    assert sheets(495) == 1      # 495 + 10 + 495 = 1000: both edges touched
+    assert sheets(496) == 2      # 496 + 10 + 496 > 1000: the gap still counts
