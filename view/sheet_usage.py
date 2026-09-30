@@ -1,6 +1,7 @@
 """The "sheet usage" section of both tabs: for one material + thickness group,
-the chosen size's metrics and layout (drawn by the caller) first, then the
-priced sheet sizes to pick from and the step-by-step price breakdown."""
+the chosen size's metrics first, then the priced sheet sizes to pick from, the
+chosen size's layout (drawn by the caller) and the step-by-step price
+breakdown."""
 
 import streamlit as st
 
@@ -38,8 +39,9 @@ def render_group(
     options = result.options
     cheapest_idx = cheapest_index(options)
 
-    # The answer (metrics + layout) goes above the table, but depends on the
-    # row picked in it: reserve its place, draw the table, then fill it.
+    # The answer (metrics) goes above the table, but depends on the row picked
+    # in it: reserve its place, draw the table, then fill it. The layout comes
+    # after the table, so the table sits right under the numbers it changes.
     summary = st.container()
     if len(options) > 1:
         st.caption("Valitse rivi vaihtaaksesi levykokoa.")
@@ -59,7 +61,7 @@ def render_group(
     active = options[_selected_index(event, options, cheapest_idx)]
     with summary:
         _render_summary(active, options[cheapest_idx], result.n_pieces)
-        draw_layout(active)
+    draw_layout(active)
 
     _render_breakdown(material, thickness, thickness_mm, margin_pct, result, active)
     return active.total_eur, active.bill_rate_ppt
