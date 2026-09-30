@@ -1,7 +1,7 @@
 """The DXF tab's result cache: Sparrow settings are saved with a result, not
 part of its key, so changing one keeps every result for per-group re-nesting."""
 
-from view.dxf_tab import _nesting_diff, _Settings, _sig
+from view.dxf_tab import _nesting_diff, _run_label, _Settings, _sig
 
 
 def settings(**kw) -> _Settings:
@@ -27,3 +27,11 @@ def test_nesting_diff_names_only_the_changed_settings():
     old, new = settings().nesting(), settings(time_limit=10).nesting()
     assert _nesting_diff(old, new) == "aikaraja 4 s (nyt 10 s)"
     assert _nesting_diff(new, new) == ""
+
+
+def test_run_label_counts_new_and_outdated_groups():
+    assert _run_label(3, 0, 3) == "Laske levykäyttö (Sparrow)"
+    assert _run_label(2, 0, 3) == "Laske levykäyttö (Sparrow) — 2 uutta"
+    assert _run_label(1, 2, 4) == "Laske levykäyttö (Sparrow) — 1 uusi, 2 päivitettävää"
+    assert _run_label(0, 1, 2) == "Laske levykäyttö (Sparrow) — 1 päivitettävä"
+    assert _run_label(0, 0, 2) == "Laske levykäyttö (Sparrow) — kaikki laskettu"

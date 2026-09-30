@@ -113,23 +113,31 @@ def render(data: dict) -> None:
     st.divider()
     st.markdown("**Levyn käyttö**")
     cache: dict = st.session_state.setdefault(_CACHE, {})
-    # Only groups without a result are nested. A group keeps its result when
-    # other parts are added or changed, and when a Sparrow setting changes —
-    # then its own button re-nests just that group with the new settings.
-    n_new = sum(_sig(k, p, settings) not in cache and parse_thickness_mm(k[1]) is not None
-                for k, p in groups.items())
-    b1, b2 = st.columns(2)
-    run = b1.button(_run_label(n_new, len(groups)), key="dxf_sparrow_run",
-                    disabled=n_new == 0,
-                    help="Laskee vain ryhmät, joilla ei vielä ole tulosta. Jo "
-                         "lasketut säilyvät, vaikka asetuksia muutettaisiin.")
-    rerun = b2.button("Laske kaikki uudelleen", key="dxf_sparrow_rerun",
-                      help="Laskee jokaisen ryhmän uudelleen nykyisillä asetuksilla.")
+    # The button nests only groups with no result or a result made with other
+    # Sparrow settings; up-to-date results are kept. A group's own button
+    # re-nests just that group, leaving the other outdated ones as they are.
+    n_new = n_stale = 0
+    for k, p in groups.items():
+        entry = cache.get(_sig(k, p, settings))
+        if entry is None:
+            n_new += parse_thickness_mm(k[1]) is not None
+        else:
+            n_stale += _is_stale(entry, settings)
+    run = st.button(_run_label(n_new, n_stale, len(groups)), key="dxf_sparrow_run",
+                    disabled=n_new + n_stale == 0)
+    if n_stale:
+        st.caption("Painike laskee myös eri asetuksilla lasketut ryhmät uudelleen. "
+                   "Yksittäisen ryhmän voi päivittää sen omasta painikkeesta.")
     renest = st.session_state.pop(_RENEST, set())
     _show(products, groups, settings, cache, _nester(lookup, settings, exe),
-          run=run, rerun=rerun, renest=renest)
-    if run or rerun:
+          run=run, renest=renest)
+    if run:
         st.rerun()  # redraw the button with the new count ("kaikki laskettu")
+
+
+def _is_stale(entry: dict, settings: _Settings) -> bool:
+    """True when a saved result was nested with other Sparrow settings."""
+    return entry.get("nesting", settings.nesting()) != settings.nesting()
 
 
 def _request_renest(sig: str) -> None:
@@ -137,13 +145,20 @@ def _request_renest(sig: str) -> None:
     st.session_state.setdefault(_RENEST, set()).add(sig)
 
 
-def _run_label(n_new: int, n_groups: int) -> str:
-    """The run button's label: how many groups a click would nest."""
-    if n_new == 0:
-        return "Laske levykäyttö (Sparrow) — kaikki laskettu"
-    if n_new < n_groups:
-        return f"Laske levykäyttö (Sparrow) — {n_new} uutta"
-    return "Laske levykäyttö (Sparrow)"
+def _run_label(n_new: int, n_stale: int, n_groups: int) -> str:
+    """The run button's label: how many groups a click would nest, e.g.
+    "— 1 uusi, 2 päivitettävää"."""
+    base = "Laske levykäyttö (Sparrow)"
+    if n_new + n_stale == 0:
+        return f"{base} — kaikki laskettu"
+    if n_new == n_groups:
+        return base
+    parts = []
+    if n_new:
+        parts.append(f"{n_new} uusi" if n_new == 1 else f"{n_new} uutta")
+    if n_stale:
+        parts.append(f"{n_stale} päivitettävä" if n_stale == 1 else f"{n_stale} päivitettävää")
+    return f"{base} — " + ", ".join(parts)
 
 
 def _render_part_cards(parts, materials: list[str], lookup: dict) -> list[dict]:
@@ -225,12 +240,12 @@ def _nester(lookup: dict, settings: _Settings, exe):
 
 
 def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest,
-          *, run: bool = False, rerun: bool = False, renest: set = frozenset()) -> None:
+          *, run: bool = False, renest: set = frozenset()) -> None:
     """Render every group's result, then the parts summary.
 
     A group is nested in its own place first — so each result shows as soon
-    as it is ready, not after the whole run — when ``run`` and it has no
-    result, when ``rerun``, or when its signature is in ``renest``.
+    as it is ready, not after the whole run — when ``run`` and its result is
+    missing or outdated, or when its signature is in ``renest``.
     """
     areas: dict[str, float] = {}
     current = settings.nesting()
@@ -238,7 +253,7 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest,
     def render_one(key, prods):
         sig = _sig(key, prods, settings)
         entry = cache.get(sig)
-        if rerun or sig in renest or (run and entry is None):
+        if sig in renest or (run and (entry is None or _is_stale(entry, settings))):
             new = nest(key, prods)
             if new is not None:
                 cache[sig] = entry = new
