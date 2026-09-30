@@ -57,7 +57,7 @@ def render_group(
 
     active = options[_selected_index(event, options, cheapest_idx)]
     with summary:
-        _render_summary(active, options[cheapest_idx], result.n_pieces)
+        _render_summary(active, result.n_pieces)
     draw_layout(active)
 
     _render_breakdown(material, thickness, thickness_mm, margin_pct, result, active)
@@ -98,23 +98,13 @@ def _selected_index(event, options: list[SheetOption], cheapest_idx: int) -> int
     return cheapest_idx
 
 
-def _render_summary(active: SheetOption, cheapest: SheetOption, n_pieces: int) -> None:
-    """Headline metrics for the chosen size — big "€/kpl" is the visual anchor —
-    and, when it isn't the cheapest, what picking it costs."""
+def _render_summary(active: SheetOption, n_pieces: int) -> None:
+    """Headline metrics for the chosen size — big "€/kpl" is the visual anchor."""
     m = st.columns([2, 1, 1, 1])
     m[0].metric("Materiaalikulu €/kpl (ka.)", f"{active.total_eur / n_pieces:,.2f} €")
     m[1].metric("Yhteensä €", f"{active.total_eur:,.2f}")
     m[2].metric("Levyjä", str(active.sheets_needed))
     m[3].metric("Käyttöaste", f"{active.utilization * 100:.1f} %")
-
-    # The cheapest size needs no note: the table marks it "edullisin".
-    if active is not cheapest:
-        delta = active.total_eur - cheapest.total_eur
-        st.info(
-            f"Valittu: **{_size_label(active)}** — {active.sheets_needed} "
-            f"levyä ({delta:+,.2f} € verrattuna edullisimpaan "
-            f"{_size_label(cheapest)})."
-        )
 
 
 def _size_label(o: SheetOption) -> str:
