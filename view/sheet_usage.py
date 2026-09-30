@@ -1,6 +1,6 @@
 """The "sheet usage" section of both tabs: for one material + thickness group,
-the priced sheet sizes, the chosen size's metrics, its layout (drawn by the
-caller) and the step-by-step price breakdown."""
+the chosen size's metrics and layout (drawn by the caller) first, then the
+priced sheet sizes to pick from and the step-by-step price breakdown."""
 
 import streamlit as st
 
@@ -32,21 +32,19 @@ def render_group(
         after_heading()
 
     if result is None:
-        if material == COPPER_MATERIAL:
-            st.info(
-                "Aseta kuparin hinta (€/kg) sivupalkista, niin levylaskenta "
-                "tulee näkyviin."
-            )
-        else:
-            st.info("Tälle yhdistelmälle ei ole levykohtaista hinnoittelua.")
+        _render_unpriced(material)
         return None, None
 
     options = result.options
-    n_pieces = result.n_pieces
     cheapest_idx = cheapest_index(options)
 
+    # The answer (metrics + layout) goes above the table, but depends on the
+    # row picked in it: reserve its place, draw the table, then fill it.
+    summary = st.container()
+    if len(options) > 1:
+        st.caption("Valitse rivi vaihtaaksesi levykokoa.")
     event = st.dataframe(
-        _table_rows(options, n_pieces, cheapest_idx),
+        _table_rows(options, result.n_pieces, cheapest_idx),
         width="stretch",
         hide_index=True,
         on_select="rerun",
@@ -55,53 +53,70 @@ def render_group(
     )
 
     if cheapest_idx is None:
-        st.warning("Osat eivät mahtuneet millekään hinnoitellulle levykoolle.")
-        # Show why each size failed — a Sparrow error (e.g. a broken binary)
-        # otherwise looks exactly like "the parts are too big".
-        reasons = {o.reason for o in options if o.reason}
-        if reasons:
-            st.caption("Syy: " + " · ".join(sorted(reasons)))
+        _render_no_fit(options)
         return None, None
 
-    # Default to the cheapest; let the user click a (valid) row to override.
-    selected_idx = cheapest_idx
-    sel = list(getattr(event.selection, "rows", []) or [])
-    if sel:
-        idx = sel[0]
-        if 0 <= idx < len(options) and options[idx].ok:
-            selected_idx = idx
-        else:
-            st.warning(
-                f"**{_size_label(options[idx])}** on liian pieni — osat eivät mahdu. "
-                "Käytetään edullisinta levykokoa."
-            )
+    active = options[_selected_index(event, options, cheapest_idx)]
+    with summary:
+        _render_summary(active, options[cheapest_idx], result.n_pieces)
+        draw_layout(active)
 
-    active = options[selected_idx]
-    cheapest = options[cheapest_idx]
-    if selected_idx != cheapest_idx:
-        delta = active.total_eur - cheapest.total_eur
+    _render_breakdown(material, thickness, thickness_mm, margin_pct, result, active)
+    return active.total_eur, active.bill_rate_ppt
+
+
+def _render_unpriced(material: str) -> None:
+    if material == COPPER_MATERIAL:
         st.info(
-            f"Valittu: **{_size_label(active)}** — {active.sheets_needed} "
-            f"levyä ({delta:+,.2f} € verrattuna edullisimpaan "
-            f"{_size_label(cheapest)})."
+            "Aseta kuparin hinta (€/kg) sivupalkista, niin levylaskenta "
+            "tulee näkyviin."
         )
     else:
-        st.success(
-            f"Edullisin: **{_size_label(active)}** — {active.sheets_needed} "
-            f"levyä, käyttöaste {active.utilization * 100:.1f} %."
-        )
+        st.info("Tälle yhdistelmälle ei ole levykohtaista hinnoittelua.")
 
-    # ── Headline metrics: big "€/kpl" is the visual anchor ──────────────────
+
+def _render_no_fit(options: list[SheetOption]) -> None:
+    st.warning("Osat eivät mahtuneet millekään hinnoitellulle levykoolle.")
+    # Show why each size failed — a Sparrow error (e.g. a broken binary)
+    # otherwise looks exactly like "the parts are too big".
+    reasons = {o.reason for o in options if o.reason}
+    if reasons:
+        st.caption("Syy: " + " · ".join(sorted(reasons)))
+
+
+def _selected_index(event, options: list[SheetOption], cheapest_idx: int) -> int:
+    """The clicked row if the pieces fit on it, else the cheapest."""
+    sel = list(getattr(event.selection, "rows", []) or [])
+    if not sel:
+        return cheapest_idx
+    idx = sel[0]
+    if 0 <= idx < len(options) and options[idx].ok:
+        return idx
+    st.warning(
+        f"**{_size_label(options[idx])}** on liian pieni — osat eivät mahdu. "
+        "Käytetään edullisinta levykokoa."
+    )
+    return cheapest_idx
+
+
+def _render_summary(active: SheetOption, cheapest: SheetOption, n_pieces: int) -> None:
+    """Headline metrics for the chosen size — big "€/kpl" is the visual anchor —
+    and which size it is."""
     m = st.columns([2, 1, 1, 1])
     m[0].metric("Materiaalikulu €/kpl (ka.)", f"{active.total_eur / n_pieces:,.2f} €")
     m[1].metric("Yhteensä €", f"{active.total_eur:,.2f}")
     m[2].metric("Levyjä", str(active.sheets_needed))
     m[3].metric("Käyttöaste", f"{active.utilization * 100:.1f} %")
 
-    draw_layout(active)
-
-    _render_breakdown(material, thickness, thickness_mm, margin_pct, result, active)
-    return active.total_eur, active.bill_rate_ppt
+    if active is cheapest:
+        st.success(f"Edullisin levykoko: **{_size_label(active)}**")
+    else:
+        delta = active.total_eur - cheapest.total_eur
+        st.info(
+            f"Valittu: **{_size_label(active)}** — {active.sheets_needed} "
+            f"levyä ({delta:+,.2f} € verrattuna edullisimpaan "
+            f"{_size_label(cheapest)})."
+        )
 
 
 def _size_label(o: SheetOption) -> str:
@@ -122,7 +137,7 @@ def _table_rows(options: list[SheetOption], n_pieces: int, cheapest_idx: int | N
             "Levyn kg":          None,
             "Yhteensä €":        None,
             "€/kpl":             None,
-            "Paras":             "🚫",
+            "Paras":             "ei mahdu",
         }
         if o.ok:
             row.update({
