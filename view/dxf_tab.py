@@ -39,7 +39,6 @@ class _Settings:
     rankavali_mm: int
     clamp_mm: int
     time_limit: int
-    seed: int
     margin_pct: float
 
     def nesting(self) -> dict:
@@ -47,13 +46,12 @@ class _Settings:
         saved results (marked as made with other settings) instead of
         dropping them, so each group can be re-nested on its own."""
         return {"rankavali_mm": self.rankavali_mm, "clamp_mm": self.clamp_mm,
-                "time_limit": self.time_limit, "seed": self.seed}
+                "time_limit": self.time_limit}
 
 
 _NESTING_LABELS = {
     **NESTING_LABELS,
     "time_limit":   lambda v: f"aikaraja {v} s",
-    "seed":         lambda v: f"siemen {v}",
 }
 
 
@@ -170,13 +168,9 @@ def _render_settings() -> _Settings:
     )
     with st.expander(ADVANCED_LABEL):
         rankavali_mm, clamp_mm = render_nesting_inputs(key_prefix="dxf")
-        c1, c2 = st.columns(2)
-        time_limit = c1.number_input("Sparrow-aikaraja / ajo (s)", min_value=1,
+        time_limit = st.number_input("Sparrow-aikaraja / ajo (s)", min_value=1,
                                      value=4, step=1, key="dxf_sparrow_t")
-        seed = c2.number_input("Siemen (seed)", min_value=0, value=0, step=1,
-                               key="dxf_sparrow_seed")
-    settings = _Settings(nest_mode, rankavali_mm, clamp_mm,
-                         int(time_limit), int(seed), margin_pct)
+    settings = _Settings(nest_mode, rankavali_mm, clamp_mm, int(time_limit), margin_pct)
     st.caption(settings_summary(settings.nesting(), _NESTING_LABELS))
     return settings
 
@@ -224,8 +218,7 @@ def _nester(lookup: dict, settings: _Settings, exe):
             lookup, material, thickness, thickness_mm, parts,
             run_fn=run_fn, margin_pct=settings.margin_pct,
             long_side_clamp_mm=settings.clamp_mm,
-            rankavali_mm=settings.rankavali_mm, seed=settings.seed,
-            time_limit_sec=settings.time_limit,
+            rankavali_mm=settings.rankavali_mm, time_limit_sec=settings.time_limit,
         )
         return {"result": result, "parts": parts, "areas": areas,
                 "thickness_mm": thickness_mm, "nesting": settings.nesting()}
