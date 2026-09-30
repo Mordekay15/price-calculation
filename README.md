@@ -113,8 +113,7 @@ the price all use the same result.
   size this gives, and the part is priced only after the user ticks that the
   size is right.
 - **Layers**: layers named like drawing furniture or reference geometry (frame,
-  border, title, info, text, dim, bend, centre, …) are left out by default. The
-  card's layer picker changes the choice.
+  border, title, info, text, dim, bend, centre, …) are left out.
 - **The part** is the largest closed outline. Outlines directly inside it are
   its holes, and anything outside it (detail views, sketches, stray lines) is
   dropped.

@@ -190,12 +190,12 @@ def _render_settings() -> _Settings:
 
 
 def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
-    """Stable cache key: the group, its parts (quantity, layers) and the margin.
+    """Stable cache key: the group, its parts (quantity) and the margin.
 
     The Sparrow settings are left out on purpose: they are saved with the
     result (``entry["nesting"]``), so changing one doesn't drop every result.
     """
-    prod_sig = ",".join(f"{p['id']}:{p['qty']}:{p['layers']}" for p in products)
+    prod_sig = ",".join(f"{p['id']}:{p['qty']}" for p in products)
     return f"{key}|{prod_sig}|{settings.margin_pct}"
 
 
@@ -319,13 +319,13 @@ def _parts_for_group(
 #
 # _sync_store() reads each uploaded file once with core.dxf.read_dxf (cached in
 # session state, pruned when a file is removed). _render_part_config() draws a
-# card — layer picker, preview, measured size, material / thickness / quantity —
+# card — preview, measured size, material / thickness / quantity —
 # and returns the product dict the pricing uses, or None (with the reasons
 # shown) when the part cannot be priced. The card and the pricing share the
 # same DxfReport, so what the card shows is exactly what Sparrow nests.
 
 _STORE   = "dxf_store"         # {file_id: DxfFile}
-_REPORTS = "dxf_part_reports"  # {(file_id, layers): DxfReport}
+_REPORTS = "dxf_part_reports"  # {file_id: DxfReport}
 _CONFIG  = "dxf_part_config"   # {file_id: {"material", "thickness"}}
 
 
@@ -349,11 +349,9 @@ def _evict(fid: str) -> None:
     """Drop everything kept for a removed file, including its widget state."""
     st.session_state.get(_STORE, {}).pop(fid, None)
     st.session_state.get(_CONFIG, {}).pop(fid, None)
-    reports: dict = st.session_state.get(_REPORTS, {})
-    for key in [k for k in reports if k[0] == fid]:
-        del reports[key]
+    st.session_state.get(_REPORTS, {}).pop(fid, None)
     for key in (f"dxf_mat_{fid}", f"dxf_th_{fid}", f"dxf_th_{fid}_disabled",
-                f"dxf_q_{fid}", f"dxf_layers_{fid}", f"dxf_unit_ok_{fid}"):
+                f"dxf_q_{fid}", f"dxf_unit_ok_{fid}"):
         st.session_state.pop(key, None)
 
 
@@ -376,9 +374,8 @@ def _render_part_config(
             st.caption("Piirustuksen tekstit: " + " · ".join(dxf.texts))
 
         preview_col, input_col = st.columns(2)
+        report = _part(fid, dxf)
         with input_col:
-            layers = _render_layer_picker(fid, dxf)
-            report = _part(fid, dxf, layers)
             size = _checked_size(fid, dxf, report, hdr[1])
         with preview_col:
             _render_preview(report)
@@ -395,7 +392,6 @@ def _render_part_config(
         "width":     size[0],
         "height":    size[1],
         "qty":       qty,
-        "layers":    None if layers is None else tuple(sorted(layers)),
         "report":    report,
     }
 
@@ -463,45 +459,10 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict) -> tuple:
     return material, thickness, qty
 
 
-def _part(fid: str, dxf: DxfFile, layers: set[str] | None) -> DxfReport:
-    """The part for this layer choice, memoised (building it scans every point)."""
+def _part(fid: str, dxf: DxfFile) -> DxfReport:
+    """The part from the default cut layers, memoised (building it scans every
+    point)."""
     cache: dict = st.session_state.setdefault(_REPORTS, {})
-    key = (fid, None if layers is None else tuple(sorted(layers)))
-    if key not in cache:
-        cache[key] = dxf.part(layers)
-    return cache[key]
-
-
-def _render_layer_picker(fid: str, dxf: DxfFile) -> set[str] | None:
-    """Layer multiselect, shown when a drawing has more than one layer.
-
-    Frame / title / text / dimension / bend / info layers are left out by
-    default. Returns the chosen layers, or None for the default choice.
-    """
-    avail = dxf.available_layers()
-    if len(avail) <= 1:
-        return None
-    suggested = dxf.suggested_layers()
-    sizes = dxf.layer_sizes()
-
-    def label(name: str) -> str:
-        n, w, h = sizes.get(name, (0, 0, 0))
-        return f"{name}  ·  {n} obj  ·  {w:.0f}×{h:.0f} mm"
-
-    # Folded: the default choice is usually right. Open when it can't be
-    # priced, since picking other layers is then the likely fix.
-    with st.expander("Tasot", expanded=bool(_part(fid, dxf, None).problems)):
-        chosen = set(st.multiselect(
-            "Leikattavat tasot (layers)",
-            options=avail,
-            default=suggested,
-            format_func=label,
-            key=f"dxf_layers_{fid}",
-            help="Vain osan leikattavat tasot. Kehys, otsikko, mitat, tekstit, "
-                 "taivutusviivat ja info-tasot jätetään oletuksena pois — lisää tai "
-                 "poista tasoja ja katso esikatselusta, että vain osa jää.",
-        ))
-        hidden = [n for n in avail if n not in suggested]
-        if hidden:
-            st.caption("Jätetty oletuksena pois: " + ", ".join(hidden))
-    return chosen
+    if fid not in cache:
+        cache[fid] = dxf.part()
+    return cache[fid]

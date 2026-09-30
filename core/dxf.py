@@ -163,17 +163,6 @@ class DxfFile:
         avail = self.available_layers()
         return [n for n in avail if not _is_non_cut_layer(n)] or avail
 
-    def layer_sizes(self) -> dict[str, tuple[int, float, float]]:
-        """Per-layer (piece count, bbox width mm, bbox height mm)."""
-        by_layer: dict[str, list[_Piece]] = defaultdict(list)
-        for p in self.pieces:
-            by_layer[p.layer].append(p)
-        out = {}
-        for name, pieces in by_layer.items():
-            x0, y0, x1, y1 = bbox([pt for p in pieces for pt in p.points])
-            out[name] = (len(pieces), x1 - x0, y1 - y0)
-        return out
-
     def part(self, layers: set[str] | None = None) -> DxfReport:
         """Build the main part from ``layers`` (default: ``suggested_layers``)."""
         chosen = set(self.suggested_layers() if layers is None else layers)

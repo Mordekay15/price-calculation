@@ -10,7 +10,7 @@ def settings(**kw) -> _Settings:
     return _Settings(**{**base, **kw})
 
 
-PRODS = [{"id": "a", "qty": 2, "layers": None}]
+PRODS = [{"id": "a", "qty": 2}]
 KEY = ("S235", "2", "a")
 
 
