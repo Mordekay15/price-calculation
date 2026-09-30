@@ -1,6 +1,6 @@
 """Page pieces shared by the manual tab and the DXF tab: the material / thickness
-pickers, margin and nesting inputs, the per-group loop with its grand total, and
-the pieces summary. Every widget takes a key from the caller, because Streamlit
+pickers, margin and nesting inputs, the per-group loop, and the pieces summary
+with the page's total. Every widget takes a key from the caller, because Streamlit
 renders both tabs on every run."""
 
 import streamlit as st
@@ -200,13 +200,6 @@ def render_groups(groups: dict[tuple, list[dict]], render_one):
     return prices, grand_total, missing
 
 
-def render_grand_total(grand_total: float | None, n_groups: int) -> None:
-    """The combined total, shown when more than one group was priced."""
-    if grand_total is not None and n_groups > 1:
-        st.divider()
-        st.metric("Yhdistetty edullisin yhteissumma (€)", f"{grand_total:,.2f}")
-
-
 # ── Pieces summary ────────────────────────────────────────────────────────────
 
 def render_pieces_summary(
@@ -244,9 +237,10 @@ def render_pieces_summary(
 
     st.divider()
     st.markdown(f"**{title}**")
+    # The one total of the page: the sum of every priced group.
     m1, m2 = st.columns(2)
-    m1.metric(weight_label, f"{sum(pc.batch_kg for pc in costs):.3f}")
     if total_cost_eur:
-        m2.metric("Materiaalikustannukset yhteensä (€)", f"{total_cost_eur:,.2f}")
+        m1.metric("Materiaalikustannukset yhteensä (€)", f"{total_cost_eur:,.2f}")
+    m2.metric(weight_label, f"{sum(pc.batch_kg for pc in costs):.3f}")
     st.caption("€/kpl jakaa koko levyn kustannuksen kappaleiden kesken painon mukaan.")
     st.dataframe(rows, width="stretch", hide_index=True)

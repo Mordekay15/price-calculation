@@ -16,7 +16,6 @@ from view.common import (
     ADVANCED_LABEL,
     NESTING_LABELS,
     materials_with_copper,
-    render_grand_total,
     render_groups,
     render_main_settings,
     render_material_thickness,
@@ -293,10 +292,9 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest,
         st.warning("Yhteissumma sisältää vain lasketut ryhmät — paina **Laske "
                    "levykäyttö (Sparrow)** laskeaksesi loput. Jo laskettuja ei "
                    "lasketa uudelleen.")
-    render_grand_total(grand_total, len(groups))
 
     ready = [p for p in products if is_ready(p)]
-    render_pieces_summary(ready, prices, title="Osayhteenveto",
+    render_pieces_summary(ready, prices, title="Yhteenveto",
                           weight_label="Osien yhteispaino (kg)", lead="Osa",
                           areas_mm2=areas)
 
