@@ -2,14 +2,15 @@ import math
 
 from core.rect_nesting import rect_options
 from core.sheet_cost import (
+    EdgeGaps,
     Packing,
     cheapest_index,
     compute_options,
-    effective_sheet,
     fmt_m,
     group_products,
     parse_size,
     piece_costs,
+    usable_area,
     utilization,
 )
 
@@ -22,7 +23,9 @@ LOOKUP = {
 
 def test_small_helpers():
     assert parse_size("1250x2500/1500x3000") == [(1250, 2500), (1500, 3000)]
-    assert effective_sheet(2000, 1000, 40) == (2000, 960)   # clamp on the long side
+    # laid long side horizontal, whichever way the size is written
+    assert usable_area(1000, 2000, EdgeGaps(bottom=40)) == (0, 0, 2000, 960)
+    assert usable_area(2000, 1000, EdgeGaps(10, 20, 30, 40)) == (30, 10, 1930, 970)
     assert fmt_m(1250) == "1.25" and fmt_m(1000) == "1.0"
     assert utilization(1_000_000, 1000, 2000, 2) == 0.25
 
@@ -33,7 +36,7 @@ def test_rect_options_prices_every_sheet_size():
         {"id": "b", "width": 900, "height": 700, "qty": 3, "_global_idx": 1},
     ]
     result = rect_options(LOOKUP, "S235", "2", 2.0, products,
-                          long_side_clamp_mm=40, rankavali_mm=5)
+                          edges=EdgeGaps(bottom=40), rankavali_mm=5)
     small = result.options[0]
     assert (small.sw, small.sh) == (1000, 2000)
     # 3 sheets of 1000 × 2000 × 2 mm steel = 96 kg at 900 €/tn
@@ -101,3 +104,25 @@ def test_grouping_and_piece_costs():
     assert [c.index for c in costs] == [0, 1]
     assert math.isclose(costs[0].kg, 0.16) and math.isclose(costs[0].batch_eur, 0.48)
     assert math.isclose(costs[1].kg, 0.24) and costs[1].eur is None   # real area used
+
+
+def test_rect_layouts_lie_long_side_horizontal_inside_the_usable_area():
+    products = [{"id": "a", "width": 900, "height": 300, "qty": 5, "_global_idx": 0}]
+    packing = rect_options(LOOKUP, "S235", "2", 2.0, products,
+                           edges=EdgeGaps(10, 50, 20, 30)).options[0].packing
+    assert (packing.draw_w, packing.draw_h) == (2000, 1000)
+    assert (packing.x0, packing.y0, packing.eff_w, packing.eff_h) == (20, 10, 1950, 940)
+    for pl in (pl for sheet in packing.sheets for pl in sheet.placements):
+        assert pl.x + pl.w <= packing.eff_w and pl.y + pl.h <= packing.eff_h
+
+
+def test_the_cut_gap_is_kept_between_pieces_but_not_at_the_sheet_edge():
+    lookup = {("2", "S235 | 1000x2000"): 900.0}
+
+    def sheets(width):
+        products = [{"id": "a", "width": width, "height": 2000, "qty": 2, "_global_idx": 0}]
+        return rect_options(lookup, "S235", "2", 2.0, products,
+                            rankavali_mm=10).options[0].sheets_needed
+
+    assert sheets(495) == 1      # 495 + 10 + 495 = 1000: both edges touched
+    assert sheets(496) == 2      # 496 + 10 + 496 > 1000: the gap still counts

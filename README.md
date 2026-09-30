@@ -91,8 +91,10 @@ For each group of parts that share a material and thickness,
 `core/sheet_cost.py` does the following:
 
 1. Nest the parts on every sheet size that has a price, using the rectangle
-   packer or Sparrow. The clamp strip (*kynsiraina*) on the long side is not
-   usable, and the cut gap (*rankaväli*) keeps parts apart.
+   packer or Sparrow. Every sheet lies long side horizontal. The edge gaps
+   (*reunavarat*: top, bottom, left, right; the clamp strip, *kynsiraina*, is
+   given as the bottom one) are not usable, and the cut gap (*rankaväli*)
+   keeps parts apart.
 2. Charge whole sheets: sheets × sheet weight × price per tonne × (1 + margin).
 3. Spread that cost over the parts by their real weight, which is the
    per-part summary at the bottom.
@@ -113,8 +115,7 @@ the price all use the same result.
   size this gives, and the part is priced only after the user ticks that the
   size is right.
 - **Layers**: layers named like drawing furniture or reference geometry (frame,
-  border, title, info, text, dim, bend, centre, …) are left out by default. The
-  card's layer picker changes the choice.
+  border, title, info, text, dim, bend, centre, …) are left out.
 - **The part** is the largest closed outline. Outlines directly inside it are
   its holes, and anything outside it (detail views, sketches, stray lines) is
   dropped.

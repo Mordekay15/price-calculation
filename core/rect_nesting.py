@@ -3,7 +3,7 @@
 
 from dataclasses import dataclass, field
 
-from core.sheet_cost import GroupCost, Packing, compute_options, effective_sheet
+from core.sheet_cost import EdgeGaps, GroupCost, Packing, compute_options, usable_area
 
 
 # ── Packing ───────────────────────────────────────────────────────────────────
@@ -131,6 +131,16 @@ def expand_products(products: list[dict]) -> list[tuple[int, int, int, int]]:
     return pieces
 
 
+def _turned(sheet: Sheet) -> Sheet:
+    """The sheet's layout mirrored across its diagonal: a standing sheet laid
+    down. Every piece keeps its place relative to the others, so the layout
+    stays valid."""
+    return Sheet(sheet.h, sheet.w, [
+        Placement(p.y, p.x, p.h, p.w, p.product_idx, not p.rotated)
+        for p in sheet.placements
+    ], [(y, x, h, w) for x, y, w, h in sheet.free_rects])
+
+
 # ── Costing with this packer ──────────────────────────────────────────────────
 
 def rect_options(
@@ -140,13 +150,15 @@ def rect_options(
     thickness_mm: float,
     products: list[dict],
     margin_pct: float = 0.0,
-    long_side_clamp_mm: int = 0,
+    edges: EdgeGaps = EdgeGaps(),
     rankavali_mm: int = 0,
 ) -> GroupCost | None:
     """``core.sheet_cost.compute_options`` with the bounding-box packer.
 
-    Each piece is grown by the cut gap (rankaväli) so the packer leaves room
-    between parts; the clamp strip shrinks every sheet's usable area.
+    Each piece is grown by the cut gap (rankaväli) on its right and bottom
+    side, so the packer leaves that gap between parts. The usable area is
+    grown by the same amount, so the last piece's gap may overhang the edge:
+    parts may touch the sheet edge. The edge gaps shrink the usable area.
     """
     pieces = [
         (p_idx, c_idx, w + rankavali_mm, h + rankavali_mm)
@@ -155,13 +167,18 @@ def rect_options(
     part_area_mm2 = sum(p["width"] * p["height"] * p["qty"] for p in products)
 
     def pack_fn(sw: int, sh: int) -> Packing:
-        eff_w, eff_h = effective_sheet(sw, sh, long_side_clamp_mm)
-        sheets, failed = pack(pieces, eff_w, eff_h, allow_rotation=True)
+        # Laid long side horizontal, like every sheet in the app. The packer
+        # still fills the sheet standing on its short side, as it always has
+        # (its greedy order packs differently the other way round), and the
+        # finished layout is turned to lie down.
+        x0, y0, eff_w, eff_h = usable_area(sw, sh, edges)
+        sheets, failed = pack(pieces, eff_h + rankavali_mm, eff_w + rankavali_mm,
+                              allow_rotation=True)
         return Packing(
-            sheets=sheets,
+            sheets=[_turned(sheet) for sheet in sheets],
             sheets_needed=len(sheets),
-            eff_w=eff_w, eff_h=eff_h, draw_w=sw, draw_h=sh,
-            failed=len(failed),
+            eff_w=eff_w, eff_h=eff_h, draw_w=max(sw, sh), draw_h=min(sw, sh),
+            failed=len(failed), x0=x0, y0=y0,
         )
 
     return compute_options(

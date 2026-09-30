@@ -13,22 +13,21 @@ from core.geometry import net_area
 from core.sheet_cost import group_products, is_ready
 from core.sparrow import find_executable, part_from_report, run_sparrow, sparrow_options
 from view.common import (
+    ADVANCED_LABEL,
+    NESTING_LABELS,
     materials_with_copper,
-    render_grand_total,
     render_groups,
-    render_margin,
-    render_nesting_settings,
+    render_main_settings,
     render_material_thickness,
+    render_nesting_inputs,
+    SheetSettings,
     render_pieces_summary,
+    settings_summary,
 )
 from view.drawing import draw_sparrow_layout, preview_svg
 from view.sheet_usage import render_group
 from view.sparrow_progress import SparrowProgress, run_with_progress
 
-_ROTATIONS: dict[str, tuple[float, ...]] = {
-    "0° / 90° / 180° / 270°": (0.0, 90.0, 180.0, 270.0),
-    "0° / 90°": (0.0, 90.0),
-}
 _CACHE = "dxf_sparrow_cache"    # {signature: computed group}
 _RENEST = "dxf_sparrow_renest"  # {signature} of groups to re-nest on this run
 
@@ -38,34 +37,25 @@ class _Settings:
     """Every input besides the parts that changes a Sparrow result."""
 
     nest_mode: str
-    rankavali_mm: int
-    clamp_mm: int
-    rotations: tuple[float, ...]
+    sheet: SheetSettings
     time_limit: int
-    seed: int
     margin_pct: float
 
     def nesting(self) -> dict:
         """The Sparrow settings a result is saved with. Changing one keeps the
         saved results (marked as made with other settings) instead of
         dropping them, so each group can be re-nested on its own."""
-        return {"rankavali_mm": self.rankavali_mm, "clamp_mm": self.clamp_mm,
-                "rotations": self.rotations, "time_limit": self.time_limit,
-                "seed": self.seed}
+        return {**self.sheet.values(), "time_limit": self.time_limit}
 
 
 _NESTING_LABELS = {
-    "rankavali_mm": lambda v: f"rankaväli {v} mm",
-    "clamp_mm":     lambda v: f"kynsiraina {v} mm",
-    "rotations":    lambda v: "kierrot " + next(
-        (k for k, r in _ROTATIONS.items() if r == v), str(v)),
-    "time_limit":   lambda v: f"aikaraja {v} s",
-    "seed":         lambda v: f"siemen {v}",
+    **NESTING_LABELS,
+    "time_limit":   lambda v: f"hakuaika {v} s",
 }
 
 
 def _nesting_diff(saved: dict, current: dict) -> str:
-    """Each setting that differs, as e.g. ``aikaraja 4 s (nyt 10 s)``."""
+    """Each setting that differs, as e.g. ``hakuaika 4 s (nyt 10 s)``."""
     return ", ".join(
         f"{label(saved[k])} (nyt {label(current[k]).split(' ', 1)[1]})"
         for k, label in _NESTING_LABELS.items() if saved[k] != current[k]
@@ -74,13 +64,6 @@ def _nesting_diff(saved: dict, current: dict) -> str:
 
 def render(data: dict) -> None:
     lookup = build_lookup(data)
-    st.subheader("DXF-nestaus")
-    st.caption(
-        "Lataa osat DXF-tiedostoina. Ohjelma lukee kunkin osan todellisen "
-        "muodon ja mitat, sijoittelee ne Sparrow-moottorilla ja vertaa, mille "
-        "levykoolle osat mahtuvat edullisimmin."
-    )
-    margin_pct = render_margin("dxf_margin_pct")
 
     uploaded = st.file_uploader(
         "Lataa DXF-tiedostot",
@@ -95,8 +78,8 @@ def render(data: dict) -> None:
         return
 
     products = _render_part_cards(parts, materials_with_copper(lookup), lookup)
-    settings = _render_settings(margin_pct)
-    groups = group_products(products, settings.nest_mode)
+    margin_pct, nest_mode, sheet = _render_settings()
+    groups = group_products(products, nest_mode)
     if not groups:
         st.info("Valitse materiaali ja paksuus vähintään yhdelle osalle.")
         return
@@ -111,7 +94,14 @@ def render(data: dict) -> None:
         return
 
     st.divider()
-    st.markdown("**Levyn käyttö**")
+    # The search time sits with the button it applies to.
+    c_time, c_run, c_update = st.columns([1, 2, 2], vertical_alignment="bottom")
+    time_limit = c_time.number_input(
+        "Sijoittelun hakuaika (s)", min_value=1, value=4, step=1, key="dxf_sparrow_t",
+        help="Aikaraja yhdelle sijoitteluyritykselle (levyä kohden tehdään "
+             "yksi tai useampi). Pidempi aika voi löytää tiiviimmän sijoittelun, "
+             "mutta laskenta kestää kauemmin.")
+    settings = _Settings(nest_mode, sheet, int(time_limit), margin_pct)
     cache: dict = st.session_state.setdefault(_CACHE, {})
     # Two buttons that never overlap: the first nests only groups with no
     # result, the second only results made with other Sparrow settings. A
@@ -123,16 +113,17 @@ def render(data: dict) -> None:
             n_new += parse_thickness_mm(k[1]) is not None
         else:
             n_stale += _is_stale(entry, settings)
-    b1, b2 = st.columns(2)
-    run = b1.button(_run_label(n_new, n_stale, len(groups)), key="dxf_sparrow_run",
-                    disabled=n_new == 0,
+    run = c_run.button(_run_label(n_new, n_stale, len(groups)), key="dxf_sparrow_run",
+                    type="primary", disabled=n_new == 0,
                     help="Laskee vain osat, joilla ei vielä ole tulosta. Jo "
                          "laskettuihin ei kosketa.")
-    update = b2.button(f"Päivitä eri asetuksilla lasketut ({n_stale})",
-                       key="dxf_sparrow_update", disabled=n_stale == 0,
-                       help="Laskee nykyisillä asetuksilla uudelleen kaikki tulokset, "
-                            "jotka on laskettu eri asetuksilla. Yksittäisen osan voi "
-                            "päivittää sen omasta painikkeesta.")
+    # Shown only when there is something to update.
+    update = n_stale > 0 and c_update.button(
+        f"Päivitä eri asetuksilla lasketut ({n_stale})", key="dxf_sparrow_update",
+        help="Laskee nykyisillä asetuksilla uudelleen kaikki tulokset, jotka on "
+             "laskettu eri asetuksilla. Yksittäisen osan voi päivittää sen omasta "
+             "painikkeesta.")
+    st.divider()  # the run buttons above, the results below
     renest = st.session_state.pop(_RENEST, set())
     _show(products, groups, settings, cache, _nester(lookup, settings, exe),
           run=run, update=update, renest=renest)
@@ -154,7 +145,7 @@ def _request_renest(sig: str) -> None:
 
 def _run_label(n_new: int, n_stale: int, n_groups: int) -> str:
     """The run button's label: how many new groups a click would nest."""
-    base = "Laske levykäyttö (Sparrow)"
+    base = "Laske levykäyttö"
     if n_new == 0:
         return f"{base} — " + ("ei uusia osia" if n_stale else "kaikki laskettu")
     if n_new == n_groups:
@@ -173,29 +164,35 @@ def _render_part_cards(parts, materials: list[str], lookup: dict) -> list[dict]:
     return products
 
 
-def _render_settings(margin_pct: float) -> _Settings:
-    nest_mode, rankavali_mm, clamp_mm = render_nesting_settings(
+def _render_settings() -> tuple[float, str, SheetSettings]:
+    """Margin, nesting mode and the folded sheet settings; returns
+    ``(margin_pct, nest_mode, sheet)``. The search time is read later, next
+    to the run button."""
+    st.divider()
+    margin_pct, nest_mode = render_main_settings(
+        margin_key="dxf_margin_pct",
         key_prefix="dxf",
         separate_label="Laske jokainen osa erikseen",
     )
-    c1, c2, c3 = st.columns(3)
-    rot_label = c1.selectbox("Sallitut kierrot", list(_ROTATIONS), key="dxf_rot")
-    time_limit = c2.number_input("Sparrow-aikaraja / ajo (s)", min_value=1,
-                                 value=4, step=1, key="dxf_sparrow_t")
-    seed = c3.number_input("Siemen (seed)", min_value=0, value=0, step=1,
-                           key="dxf_sparrow_seed")
-    return _Settings(nest_mode, rankavali_mm, clamp_mm, _ROTATIONS[rot_label],
-                     int(time_limit), int(seed), margin_pct)
+    with st.expander(ADVANCED_LABEL):
+        sheet = render_nesting_inputs(key_prefix="dxf")
+    st.caption(settings_summary(sheet.values(), NESTING_LABELS))
+    return margin_pct, nest_mode, sheet
 
 
 def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
-    """Stable cache key: the group, its parts (quantity, layers) and the margin.
+    """Stable cache key: material + thickness, the parts (quantity) and the
+    margin — what decides the nesting and its price.
 
-    The Sparrow settings are left out on purpose: they are saved with the
-    result (``entry["nesting"]``), so changing one doesn't drop every result.
+    The nesting mode is left out: a part nested alone is the same nesting in
+    either mode, so switching to "separate" keeps a group of one part, and
+    back again keeps each single-part group. The Sparrow settings are left
+    out too: they are saved with the result (``entry["nesting"]``), so
+    changing one doesn't drop every result.
     """
-    prod_sig = ",".join(f"{p['id']}:{p['qty']}:{p['layers']}" for p in products)
-    return f"{key}|{prod_sig}|{settings.margin_pct}"
+    material, thickness = key[0], key[1]
+    prod_sig = ",".join(f"{p['id']}:{p['qty']}" for p in products)
+    return f"{material}|{thickness}|{prod_sig}|{settings.margin_pct}"
 
 
 def _group_label(key: tuple, prods: list[dict]) -> str:
@@ -224,14 +221,13 @@ def _nester(lookup: dict, settings: _Settings, exe):
         thickness_mm = parse_thickness_mm(thickness)
         if thickness_mm is None:
             return None
-        parts, areas = _parts_for_group(prods, settings.rotations)
+        parts, areas = _parts_for_group(prods)
         result = run_with_progress(
             progress, _group_label(key, prods),
             sparrow_options,
             lookup, material, thickness, thickness_mm, parts,
             run_fn=run_fn, margin_pct=settings.margin_pct,
-            long_side_clamp_mm=settings.clamp_mm,
-            rankavali_mm=settings.rankavali_mm, seed=settings.seed,
+            edges=settings.sheet.gaps(), rankavali_mm=settings.sheet.rankavali_mm,
             time_limit_sec=settings.time_limit,
         )
         return {"result": result, "parts": parts, "areas": areas,
@@ -279,37 +275,33 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest,
         return render_group(
             key[0], key[1], entry["thickness_mm"], entry["result"],
             margin_pct=settings.margin_pct, key=f"dxf_su_select::{sig}",
-            draw_layout=lambda active: draw_sparrow_layout(active, entry["parts"], sig),
-            heading=f"**{_group_label(key, prods)}**", after_heading=note,
+            draw_layout=lambda active: draw_sparrow_layout(active, entry["parts"]),
+            note=note,
         )
 
     prices, grand_total, missing = render_groups(groups, render_one)
     if missing and grand_total is None:
-        st.info("Paina **Laske levykäyttö (Sparrow)** laskeaksesi levytarpeen ja hinnan.")
+        st.info("Paina **Laske levykäyttö** laskeaksesi levytarpeen ja hinnan.")
         return
     if missing:
         st.warning("Yhteissumma sisältää vain lasketut ryhmät — paina **Laske "
-                   "levykäyttö (Sparrow)** laskeaksesi loput. Jo laskettuja ei "
+                   "levykäyttö** laskeaksesi loput. Jo laskettuja ei "
                    "lasketa uudelleen.")
-    render_grand_total(grand_total, len(groups))
 
     ready = [p for p in products if is_ready(p)]
-    render_pieces_summary(ready, prices, title="Osayhteenveto",
+    render_pieces_summary(ready, prices,
                           weight_label="Osien yhteispaino (kg)", lead="Osa",
                           areas_mm2=areas)
 
 
-def _parts_for_group(
-    products: list[dict], rotations: tuple
-) -> tuple[list, dict[str, float]]:
+def _parts_for_group(products: list[dict]) -> tuple[list, dict[str, float]]:
     """Sparrow parts for a group, plus each product's real area (mm²/piece).
 
     The parts come from the same read result the card showed; the area is the
     outline minus its holes.
     """
     parts = [
-        part_from_report(p["report"], int(p["qty"]), allowed_orientations=rotations)
-        for p in products
+        part_from_report(p["report"], int(p["qty"])) for p in products
     ]
     areas = {p["id"]: net_area(sp.outer, sp.holes) for p, sp in zip(products, parts)}
     return parts, areas
@@ -319,13 +311,13 @@ def _parts_for_group(
 #
 # _sync_store() reads each uploaded file once with core.dxf.read_dxf (cached in
 # session state, pruned when a file is removed). _render_part_config() draws a
-# card — layer picker, preview, measured size, material / thickness / quantity —
+# card — preview, measured size, material / thickness / quantity —
 # and returns the product dict the pricing uses, or None (with the reasons
 # shown) when the part cannot be priced. The card and the pricing share the
 # same DxfReport, so what the card shows is exactly what Sparrow nests.
 
 _STORE   = "dxf_store"         # {file_id: DxfFile}
-_REPORTS = "dxf_part_reports"  # {(file_id, layers): DxfReport}
+_REPORTS = "dxf_part_reports"  # {file_id: DxfReport}
 _CONFIG  = "dxf_part_config"   # {file_id: {"material", "thickness"}}
 
 
@@ -349,11 +341,9 @@ def _evict(fid: str) -> None:
     """Drop everything kept for a removed file, including its widget state."""
     st.session_state.get(_STORE, {}).pop(fid, None)
     st.session_state.get(_CONFIG, {}).pop(fid, None)
-    reports: dict = st.session_state.get(_REPORTS, {})
-    for key in [k for k in reports if k[0] == fid]:
-        del reports[key]
+    st.session_state.get(_REPORTS, {}).pop(fid, None)
     for key in (f"dxf_mat_{fid}", f"dxf_th_{fid}", f"dxf_th_{fid}_disabled",
-                f"dxf_q_{fid}", f"dxf_layers_{fid}", f"dxf_unit_ok_{fid}"):
+                f"dxf_q_{fid}", f"dxf_unit_ok_{fid}"):
         st.session_state.pop(key, None)
 
 
@@ -364,7 +354,8 @@ def _render_part_config(
     materials: list[str],
     lookup: dict,
 ) -> dict | None:
-    """Draw one part's card; return its product dict, or None if not priceable."""
+    """Draw one part's card, preview left and inputs right; return its product
+    dict, or None if not priceable."""
     with st.container(border=True):
         hdr = st.columns([6, 2])
         hdr[0].markdown(f"**#{idx + 1}** · {dxf.name}")
@@ -373,111 +364,99 @@ def _render_part_config(
         # material choice, never nested.
         if dxf.texts:
             st.caption("Piirustuksen tekstit: " + " · ".join(dxf.texts))
-        if dxf.unit_note and not dxf.unit_guessed:
-            st.caption(f"Yksikkö {dxf.unit_note}: {dxf.unit_label}.")
 
-        layers = _render_layer_picker(fid, dxf)
-        report = _part(fid, dxf, layers)
-
-        preview = preview_svg(report)
-        if preview:
-            st.markdown(preview, unsafe_allow_html=True)
-        if report.dropped:
-            st.caption(
-                f"Osan ulkopuolelta ohitettiin {len(report.dropped)} kuviota "
-                "(esim. lisäkuvat tai irralliset viivat) — harmaalla esikatselussa."
-            )
-
-        if report.problems:
-            hdr[1].markdown(":red[ei hinnoiteltavissa]")
-            st.error(
-                "**Tätä osaa ei voi vielä hinnoitella:**\n\n"
-                + "\n".join(f"- {p}" for p in report.problems)
-            )
+        preview_col, input_col = st.columns([1, 3])
+        report = _part(fid, dxf)
+        with input_col:
+            size = _checked_size(fid, dxf, report, hdr[1])
+        with preview_col:
+            _render_preview(report)
+        if size is None:
             return None
-
-        width = round(report.outline.width_mm, 1)
-        height = round(report.outline.height_mm, 1)
-
-        # No unit in the file: show the size the guess gives and price only
-        # once the user confirms it.
-        if dxf.unit_guessed:
-            st.warning(
-                "Piirustuksesta puuttuu mittayksikkö. Oletimme yksiköksi "
-                f"**{report.unit_label}**, jolloin osan koko on "
-                f"**{width:g} × {height:g} mm**. Tarkista mitat piirustuksesta."
-            )
-            if not st.checkbox(f"Koko {width:g} × {height:g} mm on oikein",
-                               key=f"dxf_unit_ok_{fid}"):
-                hdr[1].markdown(":orange[vahvista yksikkö]")
-                return None
-
-        hdr[1].markdown(f":gray[{width:g} × {height:g} mm · {report.unit_label}]")
-
-        # Material + thickness — persisted per file and shared with the manual
-        # calculator cards. Seed the selectboxes from the stored choice, then
-        # write the current choice back into it.
-        cfg = st.session_state.setdefault(_CONFIG, {}).setdefault(
-            fid, {"material": None, "thickness": None})
-        material, thickness = render_material_thickness(
-            materials, lookup,
-            mat_key=f"dxf_mat_{fid}", thick_key=f"dxf_th_{fid}",
-            mat_default=cfg["material"], thick_default=cfg["thickness"],
-        )
-        cfg["material"] = material
-        cfg["thickness"] = thickness
-        qty = int(st.number_input("Määrä (kpl)", min_value=1, value=1, step=1,
-                                  key=f"dxf_q_{fid}"))
+        with input_col:
+            material, thickness, qty = _render_part_inputs(fid, materials, lookup)
 
     return {
         "id":        fid,
         "name":      dxf.name,
         "material":  material,
         "thickness": thickness,
-        "width":     width,
-        "height":    height,
+        "width":     size[0],
+        "height":    size[1],
         "qty":       qty,
-        "layers":    None if layers is None else tuple(sorted(layers)),
         "report":    report,
     }
 
 
-def _part(fid: str, dxf: DxfFile, layers: set[str] | None) -> DxfReport:
-    """The part for this layer choice, memoised (building it scans every point)."""
-    cache: dict = st.session_state.setdefault(_REPORTS, {})
-    key = (fid, None if layers is None else tuple(sorted(layers)))
-    if key not in cache:
-        cache[key] = dxf.part(layers)
-    return cache[key]
+def _render_preview(report: DxfReport) -> None:
+    """The part as it will be cut; shapes left outside it are greyed out."""
+    preview = preview_svg(report)
+    if preview:
+        st.markdown(preview, unsafe_allow_html=True)
+    if report.dropped:
+        st.caption(
+            f"Osan ulkopuolelta ohitettiin {len(report.dropped)} kuviota "
+            "(esim. lisäkuvat tai irralliset viivat) — harmaalla esikatselussa."
+        )
 
 
-def _render_layer_picker(fid: str, dxf: DxfFile) -> set[str] | None:
-    """Layer multiselect, shown when a drawing has more than one layer.
-
-    Frame / title / text / dimension / bend / info layers are left out by
-    default. Returns the chosen layers, or None for the default choice.
-    """
-    avail = dxf.available_layers()
-    if len(avail) <= 1:
+def _checked_size(fid: str, dxf: DxfFile, report: DxfReport, badge) -> tuple | None:
+    """The part's ``(width, height)`` in mm, or None (with the reason shown)
+    while it can't be priced. ``badge`` is the card header's status slot."""
+    if report.problems:
+        badge.markdown(":red[ei hinnoiteltavissa]")
+        st.error(
+            "**Tätä osaa ei voi vielä hinnoitella:**\n\n"
+            + "\n".join(f"- {p}" for p in report.problems)
+        )
         return None
-    suggested = dxf.suggested_layers()
-    sizes = dxf.layer_sizes()
 
-    def label(name: str) -> str:
-        n, w, h = sizes.get(name, (0, 0, 0))
-        return f"{name}  ·  {n} obj  ·  {w:.0f}×{h:.0f} mm"
+    width = round(report.outline.width_mm, 1)
+    height = round(report.outline.height_mm, 1)
 
-    chosen = set(st.multiselect(
-        "Leikattavat tasot (layers)",
-        options=avail,
-        default=suggested,
-        format_func=label,
-        key=f"dxf_layers_{fid}",
-        help="Vain osan leikattavat tasot. Kehys, otsikko, mitat, tekstit, "
-             "taivutusviivat ja info-tasot jätetään oletuksena pois — lisää tai "
-             "poista tasoja ja katso esikatselusta, että vain osa jää.",
-    ))
-    hidden = [n for n in avail if n not in suggested]
-    if hidden:
-        st.caption("Jätetty oletuksena pois: " + ", ".join(hidden))
-    return chosen
+    # No unit in the file: show the size the guess gives and price only once
+    # the user confirms it. The warning goes above the checkbox and only
+    # while it is unticked.
+    if dxf.unit_guessed:
+        note = st.empty()
+        if not st.checkbox(f"Koko {width:g} × {height:g} mm on oikein",
+                           key=f"dxf_unit_ok_{fid}"):
+            note.warning(
+                "Piirustuksesta puuttuu mittayksikkö. Oletimme yksiköksi "
+                f"**{report.unit_label}**, jolloin osan koko on "
+                f"**{width:g} × {height:g} mm**. Tarkista mitat piirustuksesta."
+            )
+            badge.markdown(":orange[vahvista yksikkö]")
+            return None
+
+    badge.markdown(f":gray[{width:g} × {height:g} mm · {report.unit_label}]")
+    return width, height
+
+
+def _render_part_inputs(fid: str, materials: list[str], lookup: dict) -> tuple:
+    """Material, thickness and quantity; returns ``(material, thickness, qty)``.
+
+    Material + thickness are persisted per file: the selectboxes are seeded
+    from the stored choice, then the current choice is written back.
+    """
+    cfg = st.session_state.setdefault(_CONFIG, {}).setdefault(
+        fid, {"material": None, "thickness": None})
+    material, thickness = render_material_thickness(
+        materials, lookup,
+        mat_key=f"dxf_mat_{fid}", thick_key=f"dxf_th_{fid}",
+        mat_default=cfg["material"], thick_default=cfg["thickness"],
+    )
+    cfg["material"] = material
+    cfg["thickness"] = thickness
+    qty = int(st.number_input("Määrä (kpl)", min_value=1, value=1, step=1,
+                              key=f"dxf_q_{fid}"))
+    return material, thickness, qty
+
+
+def _part(fid: str, dxf: DxfFile) -> DxfReport:
+    """The part from the default cut layers, memoised (building it scans every
+    point)."""
+    cache: dict = st.session_state.setdefault(_REPORTS, {})
+    if fid not in cache:
+        cache[fid] = dxf.part()
+    return cache[fid]

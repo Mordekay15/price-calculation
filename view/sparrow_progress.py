@@ -17,7 +17,7 @@ def run_with_progress(progress: "SparrowProgress", label: str, fn, *args, **kwar
     it finishes.
     """
     progress.reset()
-    bar = st.progress(0.0, text=f"Sparrow laskee: {label}…")
+    bar = st.progress(0.0, text=f"Lasketaan: {label}…")
     with ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(fn, *args, on_progress=progress.event, **kwargs)
         while not wait([future], timeout=0.5).done:
@@ -72,7 +72,7 @@ class SparrowProgress:
             value = min(0.99, (self._size_index + within) / self._size_count)
             text = (
                 f"levykoko {self._size} ({self._size_index + 1}/{self._size_count})"
-                f" · Sparrow-ajo {self._runs}"
+                f" · yritys {self._runs}"
             )
             if self._placed:
                 placed = min(p for p, _ in self._placed.values())

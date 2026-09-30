@@ -9,14 +9,28 @@ from dataclasses import dataclass
 from core.pricing import get_sizes_for_material, parse_thickness_mm, weight_kg
 
 
+@dataclass(frozen=True)
+class EdgeGaps:
+    """Strips along a sheet's edges where no part is placed, in mm.
+
+    The sheet lies long side horizontal: ``top`` and ``bottom`` are its long
+    edges, ``left`` and ``right`` its short ones.
+    """
+
+    top: int = 0
+    bottom: int = 0
+    left: int = 0
+    right: int = 0
+
+
 @dataclass
 class Packing:
     """How one sheet size was packed, as reported by a packer.
 
-    ``eff_w × eff_h`` is the usable area after the clamp strip and
-    ``draw_w × draw_h`` the sheet as laid out (a packer may turn it).
-    ``failed`` counts pieces that did not fit; ``alt`` optionally carries the
-    other sheet orientation's packing for display.
+    ``draw_w × draw_h`` is the sheet laid long side horizontal. Parts may use
+    the ``eff_w × eff_h`` area whose top-left corner is at ``(x0, y0)`` (see
+    ``usable_area``); placements are relative to that corner. ``failed``
+    counts pieces that did not fit.
     """
 
     sheets: list
@@ -27,7 +41,8 @@ class Packing:
     draw_h: int
     failed: int = 0
     reason: str = ""
-    alt: Packing | None = None
+    x0: int = 0
+    y0: int = 0
 
 
 @dataclass
@@ -81,19 +96,21 @@ def parse_size(size_str: str) -> list[tuple[int, int]]:
     return out
 
 
-def effective_sheet(sw: int, sh: int, long_side_clamp_mm: int) -> tuple[int, int]:
-    """Shrink the sheet's short side by the claw strip on the long edge."""
-    if sw >= sh:
-        return sw, max(0, sh - long_side_clamp_mm)
-    return max(0, sw - long_side_clamp_mm), sh
+def usable_area(sw: int, sh: int, gaps: EdgeGaps) -> tuple[int, int, int, int]:
+    """The sheet laid long side horizontal, less its edge gaps: ``(x0, y0, w,
+    h)`` of the area parts may use, measured from the top-left corner."""
+    long_side, short_side = max(sw, sh), min(sw, sh)
+    w = max(0, long_side - gaps.left - gaps.right)
+    h = max(0, short_side - gaps.top - gaps.bottom)
+    return gaps.left, gaps.top, w, h
 
 
 def utilization(part_area_mm2: float, sheet_w: float, sheet_h: float, n_sheets: int = 1) -> float:
     """Share of the bought sheet area that ends up as parts (Käyttöaste).
 
     ``part_area_mm2`` is the real part area — without the cut gap, and with the
-    holes removed for DXF parts. The clamp strip counts as sheet area, because
-    it is paid for. Every utilisation figure in the app uses this one formula.
+    holes removed for DXF parts. The edge gaps count as sheet area, because
+    they are paid for. Every utilisation figure in the app uses this one formula.
     """
     total = sheet_w * sheet_h * n_sheets
     return part_area_mm2 / total if total else 0.0

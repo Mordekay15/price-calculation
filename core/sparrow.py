@@ -10,22 +10,20 @@ import shutil
 import subprocess
 import tempfile
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from core.dxf import DxfReport
 from core.geometry import bbox, bbox_wh, net_area, rotate_translate, signed_area
-from core.sheet_cost import GroupCost, Packing, compute_options, effective_sheet
+from core.sheet_cost import EdgeGaps, GroupCost, Packing, compute_options, usable_area
 
 Point = tuple[float, float]
 
 
 # ── 1. Parts ──────────────────────────────────────────────────────────────────
 
-# Default rotations offered to the packer (degrees). Four quadrant orientations
-# suit rectangular-ish sheet-metal parts.
-DEFAULT_ORIENTATIONS: tuple[float, ...] = (0.0, 90.0, 180.0, 270.0)
+# The rotations every part may take (degrees): the four quarter turns.
+ORIENTATIONS: tuple[float, ...] = (0.0, 90.0, 180.0, 270.0)
 
 # Points closer than this (mm) are treated as the same vertex when cleaning a
 # ring. Guards against jagua-rs bailing on duplicate vertices, including f32
@@ -46,7 +44,6 @@ class SparrowPart:
     quantity: int
     outer: list[Point]
     holes: list[list[Point]] = field(default_factory=list)
-    allowed_orientations: tuple[float, ...] = DEFAULT_ORIENTATIONS
     width_mm: float = 0.0
     height_mm: float = 0.0
     construction: list[list[Point]] = field(default_factory=list)
@@ -61,12 +58,7 @@ class SparrowPart:
         return {"type": "polygon", "data": {"outer": outer, "inner": inner}}
 
 
-def part_from_report(
-    report: DxfReport,
-    quantity: int = 1,
-    *,
-    allowed_orientations: tuple[float, ...] = DEFAULT_ORIENTATIONS,
-) -> SparrowPart:
+def part_from_report(report: DxfReport, quantity: int = 1) -> SparrowPart:
     """The SparrowPart for a priceable DXF part, with its holes attached.
 
     Outer rings come out counter-clockwise and holes clockwise (standard
@@ -78,7 +70,6 @@ def part_from_report(
         quantity=int(quantity),
         outer=_oriented(outline.points, ccw=True),
         holes=[_oriented(h.points, ccw=False) for h in report.holes],
-        allowed_orientations=tuple(float(a) for a in allowed_orientations),
         width_mm=outline.width_mm,
         height_mm=outline.height_mm,
         construction=list(report.reference_lines),
@@ -320,7 +311,7 @@ def greedy_fixed_sheets(
     remaining = [int(p.quantity) for p in parts]
     for i, p in enumerate(parts):
         w, h = bbox_wh(p.outer)
-        if remaining[i] > 0 and not _fits(w, h, sheet_w, sheet_h, p.allowed_orientations):
+        if remaining[i] > 0 and not _fits(w, h, sheet_w, sheet_h):
             return PackResult(ok=False, reason=f"osa {p.part_id} ei mahdu levylle "
                                                f"({w:.0f}×{h:.0f} mm)")
 
@@ -400,9 +391,14 @@ def _probe(parts, demand: dict[int, int], sheet_w: float, sheet_h: float,
 
     Returns ``(error, placed_on_sheet, strip_len)``: error is None on success;
     the list holds the parts that land fully inside the first ``sheet_w``.
+
+    Sparrow keeps ``separation`` from the strip's edges as well as between
+    parts. The gap is meant only between parts, so the strip is padded by it
+    on every side and the result moved back: a part may touch the sheet edge.
     """
+    pad = separation or 0.0
     active = list(demand)
-    instance = _build_instance(parts, demand, sheet_h)
+    instance = _build_instance(parts, demand, sheet_h + 2 * pad)
     res = run_fn(instance, seed=seed, time_limit_sec=time_limit_sec, separation=separation)
     if not res.ok:
         return res.message or "Sparrow-ajo epäonnistui", [], None
@@ -414,6 +410,7 @@ def _probe(parts, demand: dict[int, int], sheet_w: float, sheet_h: float,
             continue
         orig_i = active[local_id]
         part = parts[orig_i]
+        trans = (trans[0] - pad, trans[1] - pad)
         outer = rotate_translate(part.outer, rot, trans)
         minx, miny, maxx, maxy = bbox(outer)
         if minx < -_TOL or miny < -_TOL or maxx > sheet_w + _TOL or maxy > sheet_h + _TOL:
@@ -424,7 +421,7 @@ def _probe(parts, demand: dict[int, int], sheet_w: float, sheet_h: float,
                            [rotate_translate(h, rot, trans) for h in part.holes],
                            [rotate_translate(c, rot, trans) for c in part.construction]))
         left[orig_i] -= 1
-    return None, kept, res.strip_width
+    return None, kept, res.strip_width - 2 * pad
 
 
 def _build_instance(parts, demand: dict[int, int], strip_height: float) -> dict:
@@ -433,18 +430,16 @@ def _build_instance(parts, demand: dict[int, int], strip_height: float) -> dict:
     items = []
     for local_id, (orig_i, n) in enumerate(demand.items()):
         part = parts[orig_i]
-        item = {"id": local_id, "demand": int(n), "part_id": part.part_id}
-        if part.allowed_orientations:
-            item["allowed_orientations"] = [float(a) for a in part.allowed_orientations]
+        item = {"id": local_id, "demand": int(n), "part_id": part.part_id,
+                "allowed_orientations": list(ORIENTATIONS)}
         item["shape"] = part.shape_dict()
         items.append(item)
     return {"name": "pack", "strip_height": float(strip_height), "items": items}
 
 
-def _fits(w: float, h: float, sw: float, sh: float, orients) -> bool:
-    """True if a w×h part fits an sw×sh sheet in some allowed orientation."""
-    can_swap = not orients or any(round(float(a) / 90.0) % 2 == 1 for a in orients)
-    return (w <= sw + _TOL and h <= sh + _TOL) or (can_swap and h <= sw + _TOL and w <= sh + _TOL)
+def _fits(w: float, h: float, sw: float, sh: float) -> bool:
+    """True if a w×h part fits an sw×sh sheet as is or turned a quarter."""
+    return (w <= sw + _TOL and h <= sh + _TOL) or (h <= sw + _TOL and w <= sh + _TOL)
 
 
 # ── 4. Costing ────────────────────────────────────────────────────────────────
@@ -458,7 +453,7 @@ def sparrow_options(
     *,
     run_fn,
     margin_pct: float = 0.0,
-    long_side_clamp_mm: int = 0,
+    edges: EdgeGaps = EdgeGaps(),
     rankavali_mm: int = 0,
     seed: int = 0,
     time_limit_sec: int = 4,
@@ -468,20 +463,18 @@ def sparrow_options(
 
     ``on_progress``, if given, receives ``("size", index=, count=, w=, h=)``
     before each sheet size and ``("sheet", w=, h=, placed=, total=)`` each time
-    a sheet layout is settled in one orientation.
+    a sheet layout is settled.
     """
     n_pieces = sum(p.quantity for p in parts)
     part_area_mm2 = sum(net_area(p.outer, p.holes) * p.quantity for p in parts)
     separation = float(rankavali_mm) if rankavali_mm else None
 
     def pack_fn(sw: int, sh: int) -> Packing:
-        best, alt = _pack_best_orientation(
-            parts, sw, sh, long_side_clamp_mm,
+        return _pack_on_short_side(
+            parts, sw, sh, edges,
             run_fn=run_fn, seed=seed, time_limit_sec=time_limit_sec,
             separation=separation, on_progress=on_progress,
         )
-        best.alt = alt
-        return best
 
     return compute_options(
         lookup, material, thickness, thickness_mm,
@@ -490,56 +483,20 @@ def sparrow_options(
     )
 
 
-def _pack_best_orientation(parts, sw, sh, clamp, *, run_fn, seed, time_limit_sec,
-                           separation, on_progress=None) -> tuple[Packing, Packing | None]:
-    """Pack the sheet both ways round (portrait / landscape); return ``(best, alt)``.
-
-    ``best`` has the fewest sheets (on a tie the long-side strip) and drives
-    the price; ``alt`` is the other orientation's real re-nest, for the "turn
-    the sheet" view (None when square, skipped or not fitting). When neither
-    fits, ``(first_attempt, None)`` is returned to surface the failure.
-
-    The turned sheet is skipped when every part may turn a quarter: its layout
-    would just be the first one rotated. Otherwise both nest at the same time —
-    Sparrow's time limit is wall-clock, so the pair takes about as long as one.
-    """
-    def attempt(cw, ch) -> Packing:
-        ew, eh = effective_sheet(cw, ch, clamp)
-        on_sheet = None
-        if on_progress is not None:
-            on_sheet = lambda placed, total: on_progress(  # noqa: E731
-                "sheet", w=cw, h=ch, placed=placed, total=total)
-        pack = greedy_fixed_sheets(parts, ew, eh, run_fn=run_fn, seed=seed,
-                                   time_limit_sec=time_limit_sec, separation=separation,
-                                   on_sheet=on_sheet)
-        return Packing(sheets=pack.sheets, sheets_needed=pack.sheets_needed,
-                       eff_w=ew, eff_h=eh, draw_w=cw, draw_h=ch,
-                       failed=0 if pack.ok else 1, reason=pack.reason)
-
-    # Sparrow's fixed strip height is the sheet's short side; the strip runs
-    # along the long side (listed first, so it also wins a tie).
+def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, seed, time_limit_sec,
+                        separation, on_progress=None) -> Packing:
+    """Pack the sheet one way only: Sparrow's fixed strip height is the sheet's
+    short side and the strip runs along the long side (e.g. 1000 high, up to
+    2000 long on a 1000 × 2000 sheet), both less the edge gaps."""
     long_side, short_side = max(sw, sh), min(sw, sh)
-    if sw == sh or _quarter_turn_free(parts):
-        options = [attempt(long_side, short_side)]
-    else:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            options = list(pool.map(lambda d: attempt(*d),
-                                    [(long_side, short_side), (short_side, long_side)]))
-
-    ok = [o for o in options if not o.failed]
-    if not ok:
-        return options[0], None
-    best = min(ok, key=lambda o: o.sheets_needed)
-    return best, next((o for o in ok if o is not best), None)
-
-
-def _quarter_turn_free(parts) -> bool:
-    """True if every part's allowed rotations are closed under +90° (empty =
-    free rotation) — then any layout turned 90° is still valid."""
-    for p in parts:
-        if not p.allowed_orientations:
-            continue
-        angles = {round(float(a)) % 360 for a in p.allowed_orientations}
-        if any((a + 90) % 360 not in angles for a in angles):
-            return False
-    return True
+    x0, y0, ew, eh = usable_area(sw, sh, edges)
+    on_sheet = None
+    if on_progress is not None:
+        on_sheet = lambda placed, total: on_progress(  # noqa: E731
+            "sheet", w=long_side, h=short_side, placed=placed, total=total)
+    pack = greedy_fixed_sheets(parts, ew, eh, run_fn=run_fn, seed=seed,
+                               time_limit_sec=time_limit_sec, separation=separation,
+                               on_sheet=on_sheet)
+    return Packing(sheets=pack.sheets, sheets_needed=pack.sheets_needed,
+                   eff_w=ew, eff_h=eh, draw_w=long_side, draw_h=short_side,
+                   failed=0 if pack.ok else 1, reason=pack.reason, x0=x0, y0=y0)

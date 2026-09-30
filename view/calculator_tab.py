@@ -10,13 +10,15 @@ from core.pricing import build_lookup, parse_thickness_mm
 from core.rect_nesting import rect_options
 from core.sheet_cost import group_products
 from view.common import (
+    ADVANCED_LABEL,
+    NESTING_LABELS,
     materials_with_copper,
-    render_grand_total,
     render_groups,
-    render_margin,
-    render_nesting_settings,
+    render_main_settings,
     render_material_thickness,
+    render_nesting_inputs,
     render_pieces_summary,
+    settings_summary,
 )
 from view.drawing import draw_rect_layout
 from view.sheet_usage import render_group
@@ -24,11 +26,14 @@ from view.sheet_usage import render_group
 
 def render(data: dict) -> None:
     lookup = build_lookup(data)
-    st.subheader("Hintalaskuri")
 
-    margin_pct = render_margin("calc_margin_pct")
     products = _render_products(materials_with_copper(lookup), lookup)
-    nest_mode, rankavali_mm, long_side_clamp_mm = render_nesting_settings()
+
+    st.divider()
+    margin_pct, nest_mode = render_main_settings(margin_key="calc_margin_pct")
+    with st.expander(ADVANCED_LABEL):
+        sheet = render_nesting_inputs()
+    st.caption(settings_summary(sheet.values(), NESTING_LABELS))
 
     def render_one(key, prods):
         material, thickness = key[0], key[1]
@@ -37,24 +42,21 @@ def render(data: dict) -> None:
             return None
         result = rect_options(
             lookup, material, thickness, thickness_mm, prods,
-            margin_pct=margin_pct, long_side_clamp_mm=long_side_clamp_mm,
-            rankavali_mm=rankavali_mm,
+            margin_pct=margin_pct, edges=sheet.gaps(), rankavali_mm=sheet.rankavali_mm,
         )
         ids = "-".join(str(p["id"]) for p in prods)
         return render_group(
             material, thickness, thickness_mm, result, margin_pct=margin_pct,
             key=f"sheet_select::{material}::{thickness}::{ids}",
-            draw_layout=lambda option: draw_rect_layout(option, prods, rankavali_mm),
+            draw_layout=lambda option: draw_rect_layout(option, prods, sheet.rankavali_mm),
         )
 
     groups = group_products(products, nest_mode)
     prices: dict[str, float] = {}
     if groups:
         st.divider()
-        st.markdown("**Levyn käyttö**")
-        prices, grand_total, _ = render_groups(groups, render_one)
-        render_grand_total(grand_total, len(groups))
-    render_pieces_summary(products, prices, title="Kappaleyhteenveto",
+        prices, _, _ = render_groups(groups, render_one)
+    render_pieces_summary(products, prices,
                           weight_label="Kappaleiden yhteispaino (kg)", lead="#")
 
 
@@ -91,22 +93,23 @@ def _render_product(prod: dict, index: int, materials: list[str], lookup: dict) 
             if hdr_cols[1].button("Poista", key=f"del_{pid}"):
                 delete_requested = True
 
+        # One row: Materiaali | Paksuus | Leveys | Korkeus | Määrä.
+        mat_col, thick_col, w_col, h_col, q_col = st.columns([3, 2, 2, 2, 2])
         material, thickness = render_material_thickness(
             materials, lookup,
             mat_key=f"mat_{pid}", thick_key=f"th_{pid}",
             mat_default=prod["material"], thick_default=prod["thickness"],
+            cols=(mat_col, thick_col),
         )
-
-        inp_cols = st.columns(3)
-        w = inp_cols[0].number_input(
+        w = w_col.number_input(
             "Leveys (mm)", min_value=0.0, value=float(prod["width"]),
             step=10.0, key=f"w_{pid}",
         )
-        h = inp_cols[1].number_input(
+        h = h_col.number_input(
             "Korkeus (mm)", min_value=0.0, value=float(prod["height"]),
             step=10.0, key=f"h_{pid}",
         )
-        q = inp_cols[2].number_input(
+        q = q_col.number_input(
             "Määrä (kpl)", min_value=1, value=int(prod["qty"]),
             step=1, key=f"q_{pid}",
         )

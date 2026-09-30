@@ -33,7 +33,6 @@ def render() -> dict:
 
     with st.sidebar:
         st.header("Hinnastot")
-        st.caption("Lataa hinnasto PDF-muodossa")
 
         _render_uploader()
 
@@ -60,7 +59,7 @@ def render() -> dict:
 
 def _render_uploader() -> None:
     uploaded = st.file_uploader(
-        "Lataa hinnasto (PDF)",
+        "Hinnasto (PDF)",
         type="pdf",
         key="upload_pricelist",
     )
@@ -149,12 +148,8 @@ def _ask_supplier(widget_key: str) -> str | None:
 # ── Status ────────────────────────────────────────────────────────────────────
 
 def _render_status(supplier: Supplier, stored: dict) -> None:
-    st.markdown(
-        f"**{supplier.label}** · {stored['source_file']}  \n"
-        f"<span style='color:#64748b;font-size:12px;'>"
-        f"Päivitetty {stored['updated_at']}</span>",
-        unsafe_allow_html=True,
-    )
+    st.markdown(f"**{supplier.label}** · {stored['source_file']}")
+    st.caption(f"Päivitetty {stored['updated_at']}")
 
 
 # ── Copper ────────────────────────────────────────────────────────────────────
@@ -164,7 +159,6 @@ def _render_copper() -> float | None:
     Copper carries no list price; the user sets the price per kilo here. The
     input starts empty so no price exists until the user enters one.
     """
-    st.markdown("**Kupari**")
     return st.number_input(
         "Kuparin hinta (€/kg)",
         min_value=COPPER_PRICE_MIN,

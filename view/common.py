@@ -1,7 +1,9 @@
 """Page pieces shared by the manual tab and the DXF tab: the material / thickness
-pickers, margin and nesting inputs, the per-group loop with its grand total, and
-the pieces summary. Every widget takes a key from the caller, because Streamlit
+pickers, margin and nesting inputs, the per-group loop, and the pieces summary
+with the page's total. Every widget takes a key from the caller, because Streamlit
 renders both tabs on every run."""
+
+from dataclasses import dataclass
 
 import streamlit as st
 
@@ -11,7 +13,8 @@ from core.pricing import (
     get_materials,
     get_thicknesses_for_material,
 )
-from core.sheet_cost import piece_costs
+from core.sheet_cost import EdgeGaps, piece_costs
+from view.drawing import edge_gaps_svg
 
 
 def materials_with_copper(lookup: dict) -> list[str]:
@@ -46,6 +49,7 @@ def render_material_thickness(
     thick_key: str,
     mat_default: str | None = None,
     thick_default: str | None = None,
+    cols=None,
 ) -> tuple[str | None, str | None]:
     """Render the shared material + thickness selectboxes.
 
@@ -54,12 +58,14 @@ def render_material_thickness(
     selectable, the thickness box disabled until a material is chosen).
     ``mat_default`` / ``thick_default`` seed the initial selection — pass a
     card's stored values to keep its choice across reruns, or leave them None
-    to start on the placeholder. Returns ``(material, thickness)``, each None
-    when unset.
+    to start on the placeholder. ``cols`` are the two containers to draw the
+    boxes in (default: two new side-by-side columns). Returns
+    ``(material, thickness)``, each None when unset.
     """
+    mat_col, thick_col = cols or st.columns(2)
     mat_opts = [_PLACEHOLDER_MAT] + materials
     mat_default = mat_default if mat_default in materials else _PLACEHOLDER_MAT
-    mat_raw = st.selectbox(
+    mat_raw = mat_col.selectbox(
         "Materiaali",
         mat_opts,
         index=mat_opts.index(mat_default),
@@ -71,7 +77,7 @@ def render_material_thickness(
     if thicknesses:
         th_opts = [_PLACEHOLDER_THICK] + thicknesses
         th_default = thick_default if thick_default in thicknesses else _PLACEHOLDER_THICK
-        th_raw = st.selectbox(
+        th_raw = thick_col.selectbox(
             "Paksuus (mm)",
             th_opts,
             index=th_opts.index(th_default),
@@ -79,7 +85,7 @@ def render_material_thickness(
         )
         thickness = th_raw if th_raw != _PLACEHOLDER_THICK else None
     else:
-        st.selectbox(
+        thick_col.selectbox(
             "Paksuus (mm)", [_PLACEHOLDER_THICK], index=0,
             disabled=True, key=f"{thick_key}_disabled",
         )
@@ -88,15 +94,54 @@ def render_material_thickness(
     return material, thickness
 
 
-def render_margin(key: str) -> float:
-    """The material margin ("Materiaalin kate") input, as a percentage."""
-    return st.number_input(
-        "Materiaalin kate (%)",
-        min_value=0.0,
-        value=15.0,
-        step=0.5,
-        key=key,
-    )
+ADVANCED_LABEL = "Lisäasetukset"
+
+_BOTTOM_HELP = (
+    "Kynsiraina — pitkän sivun kaista, johon koneen kynnet tarttuvat — "
+    "kuuluu tähän: anna koko kaistan leveys, jolle ei sijoiteta osia."
+)
+
+# The four edges in EdgeGaps order: (name in summaries, input label, help).
+_EDGES = (("ylä", "Yläreuna (mm)", None), ("ala", "Alareuna (mm)", _BOTTOM_HELP),
+          ("vasen", "Vasen reuna (mm)", None), ("oikea", "Oikea reuna (mm)", None))
+
+
+def _edges_label(edges: tuple) -> str:
+    """``reunavara 10 mm`` when every edge is the same, else each edge."""
+    if len(set(edges)) == 1:
+        return f"reunavara {edges[0]} mm"
+    return "reunavarat " + ", ".join(
+        f"{name} {v}" for (name, _, _), v in zip(_EDGES, edges)) + " mm"
+
+
+# How each nesting setting reads in a one-line summary, e.g. "rankaväli 2 mm".
+NESTING_LABELS = {
+    "rankavali_mm": lambda v: f"rankaväli {v} mm",
+    "edges_mm":     _edges_label,
+}
+
+
+@dataclass(frozen=True)
+class SheetSettings:
+    """The sheet inputs both tabs share: the cut gap and the four edge gaps
+    (``edges_mm`` = top, bottom, left, right; the bottom one includes the
+    clamp strip)."""
+
+    rankavali_mm: int = 0
+    edges_mm: tuple[int, int, int, int] = (0, 0, 0, 0)
+
+    def gaps(self) -> EdgeGaps:
+        """The unusable strip along each edge, as the packers take it."""
+        return EdgeGaps(*self.edges_mm)
+
+    def values(self) -> dict:
+        """The settings keyed as in ``NESTING_LABELS``."""
+        return {"rankavali_mm": self.rankavali_mm, "edges_mm": self.edges_mm}
+
+
+def settings_summary(values: dict, labels: dict) -> str:
+    """The folded settings as one line, so a changed value is never hidden."""
+    return " · ".join(label(values[k]) for k, label in labels.items())
 
 
 _NEST_HELP = (
@@ -105,29 +150,34 @@ _NEST_HELP = (
     "tuotteelle lasketaan oma levytarpeensa."
 )
 _RANKAVALI_HELP = (
-    "Kappaleiden välinen rankaväli (leikkausvara). Lisätään jokaisen "
-    "kappaleen leveyteen ja korkeuteen sijoittelussa, jotta vierekkäiset "
-    "kappaleet pysyvät tämän etäisyyden päässä toisistaan."
+    "Kappaleiden välinen rankaväli (leikkausvara): vierekkäiset kappaleet "
+    "pysyvät tämän etäisyyden päässä toisistaan. Levyn reunaan rankaväliä ei "
+    "jätetä — kappale voi ulottua reunaan asti. Reunoille jätettävä kaista "
+    "annetaan reunavaroilla."
 )
-_CLAMP_HELP = (
-    "Kynsiraina on levyn pitkän sivun reunavyöhyke, johon koneen kynnet "
-    "tarttuvat — aluetta ei voi käyttää kappaleiden sijoitteluun. "
-    "Levy ostetaan silti täysikokoisena, joten paino ja hinta lasketaan "
-    "bruttomitoista."
+_EDGES_HELP = (
+    "Kaistat levyn reunoilla, joille ei sijoiteta osia. Levy on sijoittelu"
+    "kuvissa pitkä sivu vaakasuorassa: ylä- ja alareuna ovat pitkät sivut, "
+    "vasen ja oikea reuna lyhyet. Kynsiraina annetaan alareunaan."
 )
 
 
-def render_nesting_settings(
+def render_main_settings(
     *,
+    margin_key: str,
     key_prefix: str = "calc",
     separate_label: str = "Laske jokainen tuote erikseen",
-) -> tuple[str, int, int]:
-    """The "Sijoittelutapa" toggle, rankaväli and the long-side clamp strip.
+) -> tuple[float, str]:
+    """The settings every quote touches, in one row: margin and "Sijoittelutapa".
 
-    Returns ``(nest_mode, rankavali_mm, long_side_clamp_mm)``; ``nest_mode`` is
-    "combined" or "separate".
+    Returns ``(margin_pct, nest_mode)``; ``nest_mode`` is "combined" or
+    "separate".
     """
-    nest_mode = st.radio(
+    c1, c2 = st.columns([1, 3])
+    margin_pct = c1.number_input(
+        "Materiaalin kate (%)", min_value=0.0, value=15.0, step=0.5, key=margin_key,
+    )
+    nest_mode = c2.radio(
         "Sijoittelutapa",
         options=("combined", "separate"),
         format_func=lambda v: {
@@ -138,15 +188,29 @@ def render_nesting_settings(
         key=f"{key_prefix}_nest_mode",
         help=_NEST_HELP,
     )
-    rankavali_mm = int(st.number_input(
+    return margin_pct, nest_mode
+
+
+def render_nesting_inputs(*, key_prefix: str = "calc") -> SheetSettings:
+    """Rankaväli and the four edge gaps, with a small sheet diagram that
+    shows which edge is which. The caller puts them in its
+    ``ADVANCED_LABEL`` expander."""
+    rankavali_mm = int(st.columns(2)[0].number_input(
         "Rankaväli (mm)", min_value=0, value=0, step=1,
         key=f"{key_prefix}_rankavali_mm", help=_RANKAVALI_HELP,
     ))
-    long_side_clamp_mm = int(st.number_input(
-        "Pitkän sivun kynsirainan leveys (mm)", min_value=0, value=0, step=1,
-        key=f"{key_prefix}_long_side_clamp_mm", help=_CLAMP_HELP,
-    ))
-    return nest_mode, rankavali_mm, long_side_clamp_mm
+
+    st.markdown("**Levyn reunavarat**", help=_EDGES_HELP)
+    diagram, inputs = st.columns([2, 3])
+    with inputs:
+        rows = (st.columns(2), st.columns(2))
+    edges = tuple(
+        int(col.number_input(label, min_value=0, value=0, step=1,
+                             key=f"{key_prefix}_edge_{name}", help=help_text))
+        for col, (name, label, help_text) in zip((*rows[0], *rows[1]), _EDGES)
+    )
+    diagram.markdown(edge_gaps_svg(edges), unsafe_allow_html=True)
+    return SheetSettings(rankavali_mm, edges)
 
 
 # ── The per-group loop ────────────────────────────────────────────────────────
@@ -165,7 +229,9 @@ def render_groups(groups: dict[tuple, list[dict]], render_one):
     prices: dict[str, float] = {}
     grand_total = None
     missing = False
-    for key, prods in groups.items():
+    for i, (key, prods) in enumerate(groups.items()):
+        if i:
+            st.divider()  # one line between groups (each part, in "separate")
         out = render_one(key, prods)
         if out is None:
             missing = True
@@ -179,20 +245,12 @@ def render_groups(groups: dict[tuple, list[dict]], render_one):
     return prices, grand_total, missing
 
 
-def render_grand_total(grand_total: float | None, n_groups: int) -> None:
-    """The combined total, shown when more than one group was priced."""
-    if grand_total is not None and n_groups > 1:
-        st.divider()
-        st.metric("Yhdistetty edullisin yhteissumma (€)", f"{grand_total:,.2f}")
-
-
 # ── Pieces summary ────────────────────────────────────────────────────────────
 
 def render_pieces_summary(
     products: list[dict],
     prices: dict[str, float],
     *,
-    title: str,
     weight_label: str,
     lead: str,
     areas_mm2: dict[str, float] | None = None,
@@ -222,10 +280,9 @@ def render_pieces_summary(
     total_cost_eur = sum(pc.batch_eur for pc in costs if pc.batch_eur)
 
     st.divider()
-    st.markdown(f"**{title}**")
+    # The one total of the page: the sum of every priced group.
     m1, m2 = st.columns(2)
-    m1.metric(weight_label, f"{sum(pc.batch_kg for pc in costs):.3f}")
     if total_cost_eur:
-        m2.metric("Materiaalikustannukset yhteensä (€)", f"{total_cost_eur:,.2f}")
-    st.caption("€/kpl jakaa koko levyn kustannuksen kappaleiden kesken painon mukaan.")
+        m1.metric("Materiaalikustannukset yhteensä (€)", f"{total_cost_eur:,.2f}")
+    m2.metric(weight_label, f"{sum(pc.batch_kg for pc in costs):.3f}")
     st.dataframe(rows, width="stretch", hide_index=True)

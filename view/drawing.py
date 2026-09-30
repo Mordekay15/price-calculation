@@ -1,5 +1,5 @@
 """Every SVG drawing: the sheet layouts of both tabs (rectangles, Sparrow's real
-shapes) and the DXF part preview on a card."""
+shapes), the edge-gap diagram and the DXF part preview on a card."""
 
 import streamlit as st
 
@@ -55,16 +55,61 @@ def _svg_open(vb_w: float, vb_h: float, scale: float) -> str:
     )
 
 
-def _clamp_strip(sw: float, sh: float, eff_w: float, eff_h: float) -> str:
-    """Greyed-out clamp strip: bought, but not usable for parts."""
-    out = ""
-    if eff_w < sw:
-        out += (f'<rect x="{eff_w}" y="0" width="{sw - eff_w}" height="{sh}" '
-                f'fill="#cbd5e1" fill-opacity="0.5"/>')
-    if eff_h < sh:
-        out += (f'<rect x="0" y="{eff_h}" width="{sw}" height="{sh - eff_h}" '
-                f'fill="#cbd5e1" fill-opacity="0.5"/>')
-    return out
+def _unusable_border(packing) -> str:
+    """The edge gaps greyed out: bought, but not usable for parts. Drawn as
+    the sheet minus its usable area (even-odd fill)."""
+    p = packing
+    if (p.eff_w, p.eff_h) == (p.draw_w, p.draw_h):
+        return ""
+    return (f'<path d="M0 0H{p.draw_w}V{p.draw_h}H0Z '
+            f'M{p.x0} {p.y0}H{p.x0 + p.eff_w}V{p.y0 + p.eff_h}H{p.x0}Z" '
+            f'fill="#94a3b8" fill-opacity="0.45" fill-rule="evenodd"/>')
+
+
+def _usable_group(packing) -> str:
+    """Opens a group whose origin is the usable area's corner, where the
+    packers' placements start."""
+    return f'<g transform="translate({packing.x0} {packing.y0})">'
+
+
+def edge_gaps_svg(edges_mm: tuple[int, int, int, int]) -> str:
+    """A small schematic sheet (long side horizontal) with its edge gaps
+    shaded and labelled, so the user can see which input is which edge. Not
+    to scale: a band shows only whether a gap is set."""
+    top, bottom, left, right = edges_mm
+    x, y, w, h = 44, 22, 190, 96          # the sheet inside a 278 × 150 box
+
+    def band(bx, by, bw, bh, opacity):
+        return (f'<rect x="{bx}" y="{by}" width="{bw}" height="{bh}" '
+                f'fill="currentColor" fill-opacity="{opacity}"/>')
+
+    t = 10                                # drawn band thickness
+    out = ['<svg viewBox="0 0 278 150" width="100%" style="max-width:300px;'
+           'color:inherit;font-family:sans-serif;font-size:11px;">']
+    if top:
+        out.append(band(x, y, w, t, 0.25))
+    if bottom:
+        out.append(band(x, y + h - t, w, t, 0.25))
+    if left:
+        out.append(band(x, y, t, h, 0.25))
+    if right:
+        out.append(band(x + w - t, y, t, h, 0.25))
+    out.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="none" '
+               f'stroke="currentColor" stroke-width="1.5"/>')
+    cy = y + h / 2
+    out += [
+        f'<text x="{x + w / 2}" y="{y - 7}" text-anchor="middle" fill="currentColor">Ylä {top}</text>',
+        f'<text x="{x + w / 2}" y="{y + h + 16}" text-anchor="middle" fill="currentColor">'
+        f'Ala {bottom}</text>',
+        f'<text x="{x - 8}" y="{cy}" text-anchor="middle" fill="currentColor" '
+        f'transform="rotate(-90 {x - 8} {cy})">Vasen {left}</text>',
+        f'<text x="{x + w + 14}" y="{cy}" text-anchor="middle" fill="currentColor" '
+        f'transform="rotate(90 {x + w + 14} {cy})">Oikea {right}</text>',
+        f'<text x="{x + w / 2}" y="{cy + 4}" text-anchor="middle" fill="currentColor" '
+        f'fill-opacity="0.6">osien alue</text>',
+        "</svg>",
+    ]
+    return "".join(out)
 
 
 # ── Manual calculator: rectangles ─────────────────────────────────────────────
@@ -78,7 +123,6 @@ def draw_rect_layout(option: SheetOption, products: list[dict], rankavali_mm: in
     packing = option.packing
     sheets = packing.sheets
     sw, sh = packing.draw_w, packing.draw_h
-    st.markdown(f"**Sijoittelu** — {len(sheets)} levyä")
     _render_legend([
         (p["_global_idx"],
          f"{p.get('name') or 'Tuote #' + str(p['_global_idx'] + 1)} "
@@ -95,14 +139,14 @@ def draw_rect_layout(option: SheetOption, products: list[dict], rankavali_mm: in
         )
         cards.append((
             f"**Levy {n}** · käyttöaste {utilization(part_area, sw, sh) * 100:.1f} %",
-            _rect_sheet_svg(sheet, sw, sh, packing.eff_w, packing.eff_h,
-                            scale, products, rankavali_mm),
+            _rect_sheet_svg(sheet, packing, scale, products, rankavali_mm),
         ))
     _render_sheet_grid(cards)
 
 
-def _rect_sheet_svg(sheet, sw, sh, eff_w, eff_h, scale, products, rankavali_mm) -> str:
-    out = [_svg_open(sw, sh, scale), _clamp_strip(sw, sh, eff_w, eff_h)]
+def _rect_sheet_svg(sheet, packing, scale, products, rankavali_mm) -> str:
+    out = [_svg_open(packing.draw_w, packing.draw_h, scale), _unusable_border(packing),
+           _usable_group(packing)]
     for pl in sheet.placements:
         prod = products[pl.product_idx]
         idx = prod["_global_idx"]
@@ -126,43 +170,21 @@ def _rect_sheet_svg(sheet, sw, sh, eff_w, eff_h, scale, products, rankavali_mm) 
             f'font-size="{fs * 0.65:.0f}" fill="#0f172a">'
             f'{prod["width"]:g}×{prod["height"]:g}</text>'
         )
-    out.append("</svg>")
+    out.append("</g></svg>")
     return "".join(out)
 
 
 # ── DXF tab: Sparrow's real shapes and the part preview ────────────────────────────────────────────
 
-def draw_sparrow_layout(option: SheetOption, parts: list, key: str) -> None:
+def draw_sparrow_layout(option: SheetOption, parts: list) -> None:
     """One SVG per distinct sheet layout for the chosen size.
 
     Identical sheets are drawn once with a "×N" count and a sheet-number range
-    (e.g. "Levy 1–4 · ×4"). The "turn" toggle shows the *other* orientation's
-    real re-nest when Sparrow made one; otherwise (a square sheet, or parts free
-    to turn 90°) it just rotates the picture. The price never changes.
+    (e.g. "Levy 1–4 · ×4").
     """
-    alt = option.packing.alt
-    rotate = st.checkbox(
-        "Käännä levy 90°",
-        value=False,
-        key=f"dxf_su_rot::{key}",
-        help="Näyttää Sparrown asettelun käännetylle levylle (sama levykoko ja "
-             "hinta, eri sijoittelu). Neliölevyllä tai kun osat saa kääntää "
-             "90°, vain kuva kääntyy.",
-    )
     shown = option.packing
-    if rotate and alt:
-        shown = alt
-        used = sum(s.used_area * s.count for s in alt.sheets)
-        st.caption(
-            f"Käännetty levy — Sparrow laski asettelun uudelleen: käyttöaste "
-            f"{utilization(used, alt.draw_w, alt.draw_h, alt.sheets_needed) * 100:.1f} %, "
-            f"{alt.sheets_needed} levyä."
-        )
-    turn_picture = rotate and not alt  # no re-nest: rotate the picture only
-
     sheets = shown.sheets
     sw, sh = shown.draw_w, shown.draw_h
-    st.markdown(f"**Sijoittelu** — {sum(s.count for s in sheets)} levyä")
 
     used = sorted({pl.part_index for s in sheets for pl in s.placements})
     _render_legend([
@@ -180,28 +202,21 @@ def draw_sparrow_layout(option: SheetOption, parts: list, key: str) -> None:
         first = last + 1
         cards.append((
             f"**{label}** · käyttöaste {utilization(sheet.used_area, sw, sh) * 100:.1f} %",
-            _shape_sheet_svg(sheet, sw, sh, shown.eff_w, shown.eff_h,
-                             scale, turn_picture),
+            _shape_sheet_svg(sheet, shown, scale),
         ))
     _render_sheet_grid(cards)
 
 
-def _shape_sheet_svg(sheet, sw, sh, eff_w, eff_h, scale, rotate: bool) -> str:
-    """Real placements (holes via even-odd), Y flipped from CAD to SVG.
-
-    ``rotate`` turns the *view* 90° by wrapping the content in a rotation group;
-    part labels are counter-rotated so they stay upright.
-    """
-    vb_w, vb_h = (sh, sw) if rotate else (sw, sh)
-    out = [_svg_open(vb_w, vb_h, scale)]
-    if rotate:
-        out.append(f'<g transform="translate({sh},0) rotate(90)">')
-    out.append(_clamp_strip(sw, sh, eff_w, eff_h))
+def _shape_sheet_svg(sheet, packing, scale) -> str:
+    """Real placements (holes via even-odd). Sparrow's Y runs up from the
+    bottom of the usable area, so it is flipped within that area's height."""
+    sw, sh, eh = packing.draw_w, packing.draw_h, packing.eff_h
+    out = [_svg_open(sw, sh, scale), _unusable_border(packing), _usable_group(packing)]
 
     stroke = max(sw, sh) / 400.0
     for pl in sheet.placements:
         colour = _colour(pl.part_index)
-        d = " ".join(_ring_path(r, sh) for r in (pl.outer, *pl.holes))
+        d = " ".join(_ring_path(r, eh) for r in (pl.outer, *pl.holes))
         out.append(
             f'<path d="{d}" fill="{colour}" fill-opacity="0.55" fill-rule="evenodd" '
             f'stroke="{colour}" stroke-width="{stroke:.2f}" stroke-linejoin="round"/>'
@@ -210,24 +225,21 @@ def _shape_sheet_svg(sheet, sw, sh, eff_w, eff_h, scale, rotate: bool) -> str:
         for cline in pl.construction:
             if len(cline) < 2:
                 continue
-            cd = "M " + " L ".join(f"{x:.1f} {sh - y:.1f}" for x, y in cline)
+            cd = "M " + " L ".join(f"{x:.1f} {eh - y:.1f}" for x, y in cline)
             out.append(
                 f'<path d="{cd}" fill="none" stroke="#0f172a" '
                 f'stroke-width="{stroke * 0.6:.2f}" stroke-opacity="0.7" '
                 f'stroke-dasharray="{stroke * 2.5:.1f} {stroke * 1.8:.1f}"/>'
             )
         cx = sum(p[0] for p in pl.outer) / len(pl.outer)
-        ty = sh - sum(p[1] for p in pl.outer) / len(pl.outer)
-        upright = f' transform="rotate(-90 {cx:.1f} {ty:.1f})"' if rotate else ""
+        ty = eh - sum(p[1] for p in pl.outer) / len(pl.outer)
         out.append(
-            f'<text x="{cx:.1f}" y="{ty:.1f}"{upright} text-anchor="middle" '
+            f'<text x="{cx:.1f}" y="{ty:.1f}" text-anchor="middle" '
             f'dominant-baseline="central" font-family="sans-serif" '
             f'font-size="{max(sw, sh) / 45.0:.0f}" font-weight="700" fill="#0f172a">'
             f'#{pl.part_index + 1}</text>'
         )
-    if rotate:
-        out.append("</g>")
-    out.append("</svg>")
+    out.append("</g></svg>")
     return "".join(out)
 
 
