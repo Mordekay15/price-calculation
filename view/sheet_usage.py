@@ -217,7 +217,7 @@ def _render_breakdown(
         if pieces_kg:
             st.caption(
                 f"{o.sheet_kg:,.2f} kg levyä laskutetaan {pieces_kg:,.2f} kg "
-                f"todellisille kappaleille. Yhteenveto-taulukko jakaa "
+                f"todellisille kappaleille. Sivun lopun taulukko jakaa "
                 f"tämän takaisin kappaleille painon mukaan käyttäen efektiivistä "
                 f"hintaa {o.adjusted_ppt:,.2f} × ({o.sheet_kg:,.2f} / {pieces_kg:,.2f}) "
                 f"= **{o.bill_rate_ppt:,.2f} €/tn**."

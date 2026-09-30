@@ -251,7 +251,6 @@ def render_pieces_summary(
     products: list[dict],
     prices: dict[str, float],
     *,
-    title: str,
     weight_label: str,
     lead: str,
     areas_mm2: dict[str, float] | None = None,
@@ -281,11 +280,9 @@ def render_pieces_summary(
     total_cost_eur = sum(pc.batch_eur for pc in costs if pc.batch_eur)
 
     st.divider()
-    st.markdown(f"**{title}**")
     # The one total of the page: the sum of every priced group.
     m1, m2 = st.columns(2)
     if total_cost_eur:
         m1.metric("Materiaalikustannukset yhteensä (€)", f"{total_cost_eur:,.2f}")
     m2.metric(weight_label, f"{sum(pc.batch_kg for pc in costs):.3f}")
-    st.caption("€/kpl jakaa koko levyn kustannuksen kappaleiden kesken painon mukaan.")
     st.dataframe(rows, width="stretch", hide_index=True)

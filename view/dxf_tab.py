@@ -289,7 +289,7 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest,
                    "lasketa uudelleen.")
 
     ready = [p for p in products if is_ready(p)]
-    render_pieces_summary(ready, prices, title="Yhteenveto",
+    render_pieces_summary(ready, prices,
                           weight_label="Osien yhteispaino (kg)", lead="Osa",
                           areas_mm2=areas)
 

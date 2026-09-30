@@ -56,7 +56,7 @@ def render(data: dict) -> None:
     if groups:
         st.divider()
         prices, _, _ = render_groups(groups, render_one)
-    render_pieces_summary(products, prices, title="Yhteenveto",
+    render_pieces_summary(products, prices,
                           weight_label="Kappaleiden yhteispaino (kg)", lead="#")
 
 
