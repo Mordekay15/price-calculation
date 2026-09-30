@@ -74,12 +74,6 @@ def _nesting_diff(saved: dict, current: dict) -> str:
 
 def render(data: dict) -> None:
     lookup = build_lookup(data)
-    st.subheader("DXF-nestaus")
-    st.caption(
-        "Lataa osat DXF-tiedostoina. Ohjelma lukee kunkin osan todellisen "
-        "muodon ja mitat, sijoittelee ne Sparrow-moottorilla ja vertaa, mille "
-        "levykoolle osat mahtuvat edullisimmin."
-    )
     margin_pct = render_margin("dxf_margin_pct")
 
     uploaded = st.file_uploader(

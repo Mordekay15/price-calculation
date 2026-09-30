@@ -24,7 +24,6 @@ from view.sheet_usage import render_group
 
 def render(data: dict) -> None:
     lookup = build_lookup(data)
-    st.subheader("Hintalaskuri")
 
     margin_pct = render_margin("calc_margin_pct")
     products = _render_products(materials_with_copper(lookup), lookup)
