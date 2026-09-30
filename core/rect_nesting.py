@@ -4,6 +4,7 @@ Identical sheets are merged into one layout with a ``count``, as Sparrow's are."
 
 from dataclasses import dataclass, field
 
+from core.programs import choose_plans, kit_plan, sheets_used
 from core.sheet_cost import EdgeGaps, GroupCost, Packing, compute_options, usable_area
 
 
@@ -156,6 +157,15 @@ def _turned(sheet: Sheet) -> Sheet:
     ], [(y, x, h, w) for x, y, w, h in sheet.free_rects], sheet.count)
 
 
+def _one_sheet(sheets: list[Sheet], failed: int) -> Sheet | None:
+    """The layout, when every piece went on a single sheet."""
+    return sheets[0] if not failed and sheets_used(sheets) == 1 else None
+
+
+def _all_fit(sheets: list[Sheet], failed: int) -> list[Sheet] | None:
+    return None if failed else sheets
+
+
 # ── Costing with this packer ──────────────────────────────────────────────────
 
 def rect_options(
@@ -174,30 +184,45 @@ def rect_options(
     side, so the packer leaves that gap between parts. The usable area is
     grown by the same amount, so the last piece's gap may overhang the edge:
     parts may touch the sheet edge. The edge gaps shrink the usable area.
+    Each size is priced with the fewest sheets and, when worth showing, with a
+    repeatable program (see ``core.programs``).
     """
-    pieces = [
-        (p_idx, c_idx, w + rankavali_mm, h + rankavali_mm)
-        for p_idx, c_idx, w, h in expand_products(products)
-    ]
+    quantities = [int(p["qty"]) for p in products]
     part_area_mm2 = sum(p["width"] * p["height"] * p["qty"] for p in products)
+
+    def pieces_for(qty: list[int]) -> list[tuple[int, int, int, int]]:
+        counted = [{**p, "qty": q} for p, q in zip(products, qty)]
+        return [(p_idx, c_idx, w + rankavali_mm, h + rankavali_mm)
+                for p_idx, c_idx, w, h in expand_products(counted)]
 
     def pack_fn(sw: int, sh: int) -> list[Packing]:
         # Laid long side horizontal, like every sheet in the app. The packer
         # still fills the sheet standing on its short side, as it always has
         # (its greedy order packs differently the other way round), and the
-        # finished layout is turned to lie down.
+        # finished layouts are turned to lie down.
         x0, y0, eff_w, eff_h = usable_area(sw, sh, edges)
-        sheets, failed = pack(pieces, eff_h + rankavali_mm, eff_w + rankavali_mm,
-                              allow_rotation=True)
-        return [Packing(
-            sheets=[_turned(sheet) for sheet in merge_identical(sheets)],
-            sheets_needed=len(sheets),
-            eff_w=eff_w, eff_h=eff_h, draw_w=max(sw, sh), draw_h=min(sw, sh),
-            failed=len(failed), x0=x0, y0=y0,
-        )]
+
+        def pack_sheets(qty: list[int]) -> tuple[list[Sheet], int]:
+            sheets, failed = pack(pieces_for(qty), eff_h + rankavali_mm,
+                                  eff_w + rankavali_mm, allow_rotation=True)
+            return merge_identical(sheets), len(failed)
+
+        def packing(sheets: list[Sheet], failed: int = 0) -> Packing:
+            return Packing(
+                sheets=[_turned(sheet) for sheet in sheets], sheets_needed=sheets_used(sheets),
+                eff_w=eff_w, eff_h=eff_h, draw_w=max(sw, sh), draw_h=min(sw, sh),
+                failed=failed, x0=x0, y0=y0,
+            )
+
+        greedy, failed = pack_sheets(quantities)
+        if failed:
+            return [packing(greedy, failed)]
+        kit = kit_plan(quantities, greedy, lambda kit: _one_sheet(*pack_sheets(kit)),
+                       lambda rest: _all_fit(*pack_sheets(rest)))
+        return [packing(sheets) for sheets in choose_plans(greedy, kit)]
 
     return compute_options(
         lookup, material, thickness, thickness_mm,
-        n_pieces=len(pieces), part_area_mm2=part_area_mm2, pack=pack_fn,
+        n_pieces=sum(quantities), part_area_mm2=part_area_mm2, pack=pack_fn,
         margin_pct=margin_pct,
     )

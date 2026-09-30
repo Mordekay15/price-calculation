@@ -143,9 +143,34 @@ def test_the_cut_gap_is_kept_between_pieces_but_not_at_the_sheet_edge():
 
 
 def test_identical_rect_sheets_become_one_layout_with_a_count():
-    # 900 × 300 pieces: 6 fit a 1000 × 2000 sheet, so 20 pieces make three
-    # full identical sheets and one sheet of the last two
+    # 900 × 300 pieces: 6 fit a 1000 × 2000 sheet, so 19 pieces make three
+    # full identical sheets and one sheet of the last one
+    products = [{"id": "a", "width": 900, "height": 300, "qty": 19, "_global_idx": 0}]
+    [option] = rect_options(LOOKUP, "S235", "2", 2.0, products).options[:1]
+    assert option.sheets_needed == 4
+    assert [(len(s.placements), s.count) for s in option.packing.sheets] == [(6, 3), (1, 1)]
+
+
+def test_rect_quantities_that_split_evenly_become_one_program():
+    # 20 pieces on 4 sheets: 5 per sheet cut 4 times, not 6 ×3 and 2 ×1
     products = [{"id": "a", "width": 900, "height": 300, "qty": 20, "_global_idx": 0}]
-    packing = rect_options(LOOKUP, "S235", "2", 2.0, products).options[0].packing
-    assert packing.sheets_needed == 4
-    assert [(len(s.placements), s.count) for s in packing.sheets] == [(6, 3), (2, 1)]
+    [option] = rect_options(LOOKUP, "S235", "2", 2.0, products).options[:1]
+    assert (option.sheets_needed, option.programs) == (4, 1)
+    assert [(len(s.placements), s.count) for s in option.packing.sheets] == [(5, 4)]
+
+
+def test_mixed_rect_parts_get_both_plans_with_exact_quantities():
+    lookup = {("2", "S235 | 1000x2000"): 900.0}
+    # 20 a + 5 b: greedy needs 4 sheets over 4 layouts; one program of
+    # 4 a + 1 b cut 5 times needs a sheet more
+    products = [{"id": "a", "width": 500, "height": 500, "qty": 20, "_global_idx": 0},
+                {"id": "b", "width": 1000, "height": 500, "qty": 5, "_global_idx": 1}]
+    options = rect_options(lookup, "S235", "2", 2.0, products).options
+    assert [(o.sheets_needed, o.programs) for o in options] == [(4, 4), (5, 1)]
+    for o in options:
+        made = [0, 0]
+        for sheet in o.packing.sheets:
+            for pl in sheet.placements:
+                made[pl.product_idx] += sheet.count
+        assert made == [20, 5]
+    assert cheapest_index(options) == 0          # the extra sheet costs more
