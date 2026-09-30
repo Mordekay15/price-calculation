@@ -98,22 +98,23 @@ def _render_product(prod: dict, index: int, materials: list[str], lookup: dict) 
             if hdr_cols[1].button("Poista", key=f"del_{pid}"):
                 delete_requested = True
 
+        # One row: Materiaali | Paksuus | Leveys | Korkeus | Määrä.
+        mat_col, thick_col, w_col, h_col, q_col = st.columns([3, 2, 2, 2, 2])
         material, thickness = render_material_thickness(
             materials, lookup,
             mat_key=f"mat_{pid}", thick_key=f"th_{pid}",
             mat_default=prod["material"], thick_default=prod["thickness"],
+            cols=(mat_col, thick_col),
         )
-
-        inp_cols = st.columns(3)
-        w = inp_cols[0].number_input(
+        w = w_col.number_input(
             "Leveys (mm)", min_value=0.0, value=float(prod["width"]),
             step=10.0, key=f"w_{pid}",
         )
-        h = inp_cols[1].number_input(
+        h = h_col.number_input(
             "Korkeus (mm)", min_value=0.0, value=float(prod["height"]),
             step=10.0, key=f"h_{pid}",
         )
-        q = inp_cols[2].number_input(
+        q = q_col.number_input(
             "Määrä (kpl)", min_value=1, value=int(prod["qty"]),
             step=1, key=f"q_{pid}",
         )

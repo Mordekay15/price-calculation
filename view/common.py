@@ -46,6 +46,7 @@ def render_material_thickness(
     thick_key: str,
     mat_default: str | None = None,
     thick_default: str | None = None,
+    cols=None,
 ) -> tuple[str | None, str | None]:
     """Render the shared material + thickness selectboxes.
 
@@ -54,12 +55,14 @@ def render_material_thickness(
     selectable, the thickness box disabled until a material is chosen).
     ``mat_default`` / ``thick_default`` seed the initial selection — pass a
     card's stored values to keep its choice across reruns, or leave them None
-    to start on the placeholder. Returns ``(material, thickness)``, each None
-    when unset.
+    to start on the placeholder. ``cols`` are the two containers to draw the
+    boxes in (default: two new side-by-side columns). Returns
+    ``(material, thickness)``, each None when unset.
     """
+    mat_col, thick_col = cols or st.columns(2)
     mat_opts = [_PLACEHOLDER_MAT] + materials
     mat_default = mat_default if mat_default in materials else _PLACEHOLDER_MAT
-    mat_raw = st.selectbox(
+    mat_raw = mat_col.selectbox(
         "Materiaali",
         mat_opts,
         index=mat_opts.index(mat_default),
@@ -71,7 +74,7 @@ def render_material_thickness(
     if thicknesses:
         th_opts = [_PLACEHOLDER_THICK] + thicknesses
         th_default = thick_default if thick_default in thicknesses else _PLACEHOLDER_THICK
-        th_raw = st.selectbox(
+        th_raw = thick_col.selectbox(
             "Paksuus (mm)",
             th_opts,
             index=th_opts.index(th_default),
@@ -79,7 +82,7 @@ def render_material_thickness(
         )
         thickness = th_raw if th_raw != _PLACEHOLDER_THICK else None
     else:
-        st.selectbox(
+        thick_col.selectbox(
             "Paksuus (mm)", [_PLACEHOLDER_THICK], index=0,
             disabled=True, key=f"{thick_key}_disabled",
         )
