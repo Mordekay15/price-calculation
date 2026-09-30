@@ -475,13 +475,11 @@ def sparrow_options(
     separation = float(rankavali_mm) if rankavali_mm else None
 
     def pack_fn(sw: int, sh: int) -> Packing:
-        best, alt = _pack_best_orientation(
+        return _pack_best_orientation(
             parts, sw, sh, long_side_clamp_mm,
             run_fn=run_fn, seed=seed, time_limit_sec=time_limit_sec,
             separation=separation, on_progress=on_progress,
         )
-        best.alt = alt
-        return best
 
     return compute_options(
         lookup, material, thickness, thickness_mm,
@@ -491,13 +489,12 @@ def sparrow_options(
 
 
 def _pack_best_orientation(parts, sw, sh, clamp, *, run_fn, seed, time_limit_sec,
-                           separation, on_progress=None) -> tuple[Packing, Packing | None]:
-    """Pack the sheet both ways round (portrait / landscape); return ``(best, alt)``.
+                           separation, on_progress=None) -> Packing:
+    """Pack the sheet both ways round (portrait / landscape); return the best.
 
-    ``best`` has the fewest sheets (on a tie the long-side strip) and drives
-    the price; ``alt`` is the other orientation's real re-nest, for the "turn
-    the sheet" view (None when square, skipped or not fitting). When neither
-    fits, ``(first_attempt, None)`` is returned to surface the failure.
+    The best has the fewest sheets (on a tie the long-side strip) and drives
+    the price. When neither fits, the first attempt is returned to surface the
+    failure.
 
     The turned sheet is skipped when every part may turn a quarter: its layout
     would just be the first one rotated. Otherwise both nest at the same time —
@@ -528,9 +525,8 @@ def _pack_best_orientation(parts, sw, sh, clamp, *, run_fn, seed, time_limit_sec
 
     ok = [o for o in options if not o.failed]
     if not ok:
-        return options[0], None
-    best = min(ok, key=lambda o: o.sheets_needed)
-    return best, next((o for o in ok if o is not best), None)
+        return options[0]
+    return min(ok, key=lambda o: o.sheets_needed)
 
 
 def _quarter_turn_free(parts) -> bool:

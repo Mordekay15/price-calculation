@@ -132,34 +132,13 @@ def _rect_sheet_svg(sheet, sw, sh, eff_w, eff_h, scale, products, rankavali_mm) 
 
 # ── DXF tab: Sparrow's real shapes and the part preview ────────────────────────────────────────────
 
-def draw_sparrow_layout(option: SheetOption, parts: list, key: str) -> None:
+def draw_sparrow_layout(option: SheetOption, parts: list) -> None:
     """One SVG per distinct sheet layout for the chosen size.
 
     Identical sheets are drawn once with a "×N" count and a sheet-number range
-    (e.g. "Levy 1–4 · ×4"). The "turn" toggle shows the *other* orientation's
-    real re-nest when Sparrow made one; otherwise (a square sheet, or parts free
-    to turn 90°) it just rotates the picture. The price never changes.
+    (e.g. "Levy 1–4 · ×4").
     """
-    alt = option.packing.alt
-    rotate = st.checkbox(
-        "Käännä levy 90°",
-        value=False,
-        key=f"dxf_su_rot::{key}",
-        help="Näyttää Sparrown asettelun käännetylle levylle (sama levykoko ja "
-             "hinta, eri sijoittelu). Neliölevyllä tai kun osat saa kääntää "
-             "90°, vain kuva kääntyy.",
-    )
     shown = option.packing
-    if rotate and alt:
-        shown = alt
-        used = sum(s.used_area * s.count for s in alt.sheets)
-        st.caption(
-            f"Käännetty levy — Sparrow laski asettelun uudelleen: käyttöaste "
-            f"{utilization(used, alt.draw_w, alt.draw_h, alt.sheets_needed) * 100:.1f} %, "
-            f"{alt.sheets_needed} levyä."
-        )
-    turn_picture = rotate and not alt  # no re-nest: rotate the picture only
-
     sheets = shown.sheets
     sw, sh = shown.draw_w, shown.draw_h
     st.markdown(f"**Sijoittelu** — {sum(s.count for s in sheets)} levyä")
@@ -180,23 +159,14 @@ def draw_sparrow_layout(option: SheetOption, parts: list, key: str) -> None:
         first = last + 1
         cards.append((
             f"**{label}** · käyttöaste {utilization(sheet.used_area, sw, sh) * 100:.1f} %",
-            _shape_sheet_svg(sheet, sw, sh, shown.eff_w, shown.eff_h,
-                             scale, turn_picture),
+            _shape_sheet_svg(sheet, sw, sh, shown.eff_w, shown.eff_h, scale),
         ))
     _render_sheet_grid(cards)
 
 
-def _shape_sheet_svg(sheet, sw, sh, eff_w, eff_h, scale, rotate: bool) -> str:
-    """Real placements (holes via even-odd), Y flipped from CAD to SVG.
-
-    ``rotate`` turns the *view* 90° by wrapping the content in a rotation group;
-    part labels are counter-rotated so they stay upright.
-    """
-    vb_w, vb_h = (sh, sw) if rotate else (sw, sh)
-    out = [_svg_open(vb_w, vb_h, scale)]
-    if rotate:
-        out.append(f'<g transform="translate({sh},0) rotate(90)">')
-    out.append(_clamp_strip(sw, sh, eff_w, eff_h))
+def _shape_sheet_svg(sheet, sw, sh, eff_w, eff_h, scale) -> str:
+    """Real placements (holes via even-odd), Y flipped from CAD to SVG."""
+    out = [_svg_open(sw, sh, scale), _clamp_strip(sw, sh, eff_w, eff_h)]
 
     stroke = max(sw, sh) / 400.0
     for pl in sheet.placements:
@@ -218,15 +188,12 @@ def _shape_sheet_svg(sheet, sw, sh, eff_w, eff_h, scale, rotate: bool) -> str:
             )
         cx = sum(p[0] for p in pl.outer) / len(pl.outer)
         ty = sh - sum(p[1] for p in pl.outer) / len(pl.outer)
-        upright = f' transform="rotate(-90 {cx:.1f} {ty:.1f})"' if rotate else ""
         out.append(
-            f'<text x="{cx:.1f}" y="{ty:.1f}"{upright} text-anchor="middle" '
+            f'<text x="{cx:.1f}" y="{ty:.1f}" text-anchor="middle" '
             f'dominant-baseline="central" font-family="sans-serif" '
             f'font-size="{max(sw, sh) / 45.0:.0f}" font-weight="700" fill="#0f172a">'
             f'#{pl.part_index + 1}</text>'
         )
-    if rotate:
-        out.append("</g>")
     out.append("</svg>")
     return "".join(out)
 

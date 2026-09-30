@@ -15,8 +15,7 @@ class Packing:
 
     ``eff_w × eff_h`` is the usable area after the clamp strip and
     ``draw_w × draw_h`` the sheet as laid out (a packer may turn it).
-    ``failed`` counts pieces that did not fit; ``alt`` optionally carries the
-    other sheet orientation's packing for display.
+    ``failed`` counts pieces that did not fit.
     """
 
     sheets: list
@@ -27,7 +26,6 @@ class Packing:
     draw_h: int
     failed: int = 0
     reason: str = ""
-    alt: Packing | None = None
 
 
 @dataclass

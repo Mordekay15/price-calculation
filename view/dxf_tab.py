@@ -280,7 +280,7 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest,
         return render_group(
             key[0], key[1], entry["thickness_mm"], entry["result"],
             margin_pct=settings.margin_pct, key=f"dxf_su_select::{sig}",
-            draw_layout=lambda active: draw_sparrow_layout(active, entry["parts"], sig),
+            draw_layout=lambda active: draw_sparrow_layout(active, entry["parts"]),
             note=note,
         )
 
