@@ -77,8 +77,8 @@ def test_compute_options_uses_the_packer_it_is_given():
 
     def pack(sw, sh):
         seen.append((sw, sh))
-        return Packing(sheets=["layout"], sheets_needed=2, eff_w=sw, eff_h=sh,
-                       draw_w=sw, draw_h=sh)
+        return [Packing(sheets=["layout"], sheets_needed=2, eff_w=sw, eff_h=sh,
+                        draw_w=sw, draw_h=sh)]
 
     result = compute_options({("2", "S235 | 1000x2000"): 1000.0}, "S235", "2", 2.0,
                              n_pieces=4, part_area_mm2=500_000, pack=pack)
@@ -87,6 +87,20 @@ def test_compute_options_uses_the_packer_it_is_given():
     assert option.sheets_needed == 2 and option.packing.sheets == ["layout"]
     assert math.isclose(option.total_eur, 64.0)            # 2 sheets × 32 kg × 1000 €/tn
     assert math.isclose(option.utilization, 0.125)         # 0.5 m² of 4 m²
+
+
+def test_each_plan_of_a_size_is_priced_and_a_tie_goes_to_fewer_programs():
+    def pack(sw, sh):
+        return [Packing(sheets=["a", "b"], sheets_needed=2, eff_w=sw, eff_h=sh,
+                        draw_w=sw, draw_h=sh),
+                Packing(sheets=["kit"], sheets_needed=2, eff_w=sw, eff_h=sh,
+                        draw_w=sw, draw_h=sh)]
+
+    options = compute_options({("2", "S235 | 1000x2000"): 1000.0}, "S235", "2", 2.0,
+                              n_pieces=4, part_area_mm2=500_000, pack=pack).options
+    assert [o.programs for o in options] == [2, 1]
+    assert options[0].total_eur == options[1].total_eur
+    assert cheapest_index(options) == 1
 
 
 def test_grouping_and_piece_costs():

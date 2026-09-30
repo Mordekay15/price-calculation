@@ -469,7 +469,7 @@ def sparrow_options(
     part_area_mm2 = sum(net_area(p.outer, p.holes) * p.quantity for p in parts)
     separation = float(rankavali_mm) if rankavali_mm else None
 
-    def pack_fn(sw: int, sh: int) -> Packing:
+    def pack_fn(sw: int, sh: int) -> list[Packing]:
         return _pack_on_short_side(
             parts, sw, sh, edges,
             run_fn=run_fn, seed=seed, time_limit_sec=time_limit_sec,
@@ -484,7 +484,7 @@ def sparrow_options(
 
 
 def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, seed, time_limit_sec,
-                        separation, on_progress=None) -> Packing:
+                        separation, on_progress=None) -> list[Packing]:
     """Pack the sheet one way only: Sparrow's fixed strip height is the sheet's
     short side and the strip runs along the long side (e.g. 1000 high, up to
     2000 long on a 1000 × 2000 sheet), both less the edge gaps."""
@@ -497,6 +497,6 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, seed, time_limit_sec,
     pack = greedy_fixed_sheets(parts, ew, eh, run_fn=run_fn, seed=seed,
                                time_limit_sec=time_limit_sec, separation=separation,
                                on_sheet=on_sheet)
-    return Packing(sheets=pack.sheets, sheets_needed=pack.sheets_needed,
-                   eff_w=ew, eff_h=eh, draw_w=long_side, draw_h=short_side,
-                   failed=0 if pack.ok else 1, reason=pack.reason, x0=x0, y0=y0)
+    return [Packing(sheets=pack.sheets, sheets_needed=pack.sheets_needed,
+                    eff_w=ew, eff_h=eh, draw_w=long_side, draw_h=short_side,
+                    failed=0 if pack.ok else 1, reason=pack.reason, x0=x0, y0=y0)]

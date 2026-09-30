@@ -181,7 +181,7 @@ def rect_options(
     ]
     part_area_mm2 = sum(p["width"] * p["height"] * p["qty"] for p in products)
 
-    def pack_fn(sw: int, sh: int) -> Packing:
+    def pack_fn(sw: int, sh: int) -> list[Packing]:
         # Laid long side horizontal, like every sheet in the app. The packer
         # still fills the sheet standing on its short side, as it always has
         # (its greedy order packs differently the other way round), and the
@@ -189,12 +189,12 @@ def rect_options(
         x0, y0, eff_w, eff_h = usable_area(sw, sh, edges)
         sheets, failed = pack(pieces, eff_h + rankavali_mm, eff_w + rankavali_mm,
                               allow_rotation=True)
-        return Packing(
+        return [Packing(
             sheets=[_turned(sheet) for sheet in merge_identical(sheets)],
             sheets_needed=len(sheets),
             eff_w=eff_w, eff_h=eff_h, draw_w=max(sw, sh), draw_h=min(sw, sh),
             failed=len(failed), x0=x0, y0=y0,
-        )
+        )]
 
     return compute_options(
         lookup, material, thickness, thickness_mm,
