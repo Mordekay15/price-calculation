@@ -126,3 +126,12 @@ def test_the_cut_gap_is_kept_between_pieces_but_not_at_the_sheet_edge():
 
     assert sheets(495) == 1      # 495 + 10 + 495 = 1000: both edges touched
     assert sheets(496) == 2      # 496 + 10 + 496 > 1000: the gap still counts
+
+
+def test_identical_rect_sheets_become_one_layout_with_a_count():
+    # 900 × 300 pieces: 6 fit a 1000 × 2000 sheet, so 20 pieces make three
+    # full identical sheets and one sheet of the last two
+    products = [{"id": "a", "width": 900, "height": 300, "qty": 20, "_global_idx": 0}]
+    packing = rect_options(LOOKUP, "S235", "2", 2.0, products).options[0].packing
+    assert packing.sheets_needed == 4
+    assert [(len(s.placements), s.count) for s in packing.sheets] == [(6, 3), (2, 1)]

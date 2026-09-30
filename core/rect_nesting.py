@@ -1,5 +1,6 @@
 """Bounding-box nesting for the manual tab: a greedy guillotine packer
-(longest side first, best-area fit, 90° rotation) and ``rect_options``."""
+(longest side first, best-area fit, 90° rotation) and ``rect_options``.
+Identical sheets are merged into one layout with a ``count``, as Sparrow's are."""
 
 from dataclasses import dataclass, field
 
@@ -24,6 +25,7 @@ class Sheet:
     h: int
     placements: list[Placement] = field(default_factory=list)
     free_rects: list[tuple[int, int, int, int]] = field(default_factory=list)
+    count: int = 1      # identical sheets cut from this layout
 
     def __post_init__(self):
         if not self.free_rects:
@@ -131,6 +133,19 @@ def expand_products(products: list[dict]) -> list[tuple[int, int, int, int]]:
     return pieces
 
 
+def merge_identical(sheets: list[Sheet]) -> list[Sheet]:
+    """One sheet per distinct layout, its ``count`` the sheets that repeat it,
+    in order of first appearance."""
+    merged: dict[tuple, Sheet] = {}
+    for sheet in sheets:
+        key = tuple(sorted((p.x, p.y, p.w, p.h, p.product_idx) for p in sheet.placements))
+        if key in merged:
+            merged[key].count += sheet.count
+        else:
+            merged[key] = sheet
+    return list(merged.values())
+
+
 def _turned(sheet: Sheet) -> Sheet:
     """The sheet's layout mirrored across its diagonal: a standing sheet laid
     down. Every piece keeps its place relative to the others, so the layout
@@ -138,7 +153,7 @@ def _turned(sheet: Sheet) -> Sheet:
     return Sheet(sheet.h, sheet.w, [
         Placement(p.y, p.x, p.h, p.w, p.product_idx, not p.rotated)
         for p in sheet.placements
-    ], [(y, x, h, w) for x, y, w, h in sheet.free_rects])
+    ], [(y, x, h, w) for x, y, w, h in sheet.free_rects], sheet.count)
 
 
 # ── Costing with this packer ──────────────────────────────────────────────────
@@ -175,7 +190,7 @@ def rect_options(
         sheets, failed = pack(pieces, eff_h + rankavali_mm, eff_w + rankavali_mm,
                               allow_rotation=True)
         return Packing(
-            sheets=[_turned(sheet) for sheet in sheets],
+            sheets=[_turned(sheet) for sheet in merge_identical(sheets)],
             sheets_needed=len(sheets),
             eff_w=eff_w, eff_h=eff_h, draw_w=max(sw, sh), draw_h=min(sw, sh),
             failed=len(failed), x0=x0, y0=y0,
