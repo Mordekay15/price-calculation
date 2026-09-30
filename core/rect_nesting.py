@@ -131,6 +131,16 @@ def expand_products(products: list[dict]) -> list[tuple[int, int, int, int]]:
     return pieces
 
 
+def _turned(sheet: Sheet) -> Sheet:
+    """The sheet's layout mirrored across its diagonal: a standing sheet laid
+    down. Every piece keeps its place relative to the others, so the layout
+    stays valid."""
+    return Sheet(sheet.h, sheet.w, [
+        Placement(p.y, p.x, p.h, p.w, p.product_idx, not p.rotated)
+        for p in sheet.placements
+    ], [(y, x, h, w) for x, y, w, h in sheet.free_rects])
+
+
 # ── Costing with this packer ──────────────────────────────────────────────────
 
 def rect_options(
@@ -155,12 +165,17 @@ def rect_options(
     part_area_mm2 = sum(p["width"] * p["height"] * p["qty"] for p in products)
 
     def pack_fn(sw: int, sh: int) -> Packing:
-        eff_w, eff_h = effective_sheet(sw, sh, long_side_clamp_mm)
-        sheets, failed = pack(pieces, eff_w, eff_h, allow_rotation=True)
+        # Laid long side horizontal, like every sheet in the app. The packer
+        # still fills the sheet standing on its short side, as it always has
+        # (its greedy order packs differently the other way round), and the
+        # finished layout is turned to lie down.
+        long_side, short_side = max(sw, sh), min(sw, sh)
+        eff_w, eff_h = effective_sheet(long_side, short_side, long_side_clamp_mm)
+        sheets, failed = pack(pieces, eff_h, eff_w, allow_rotation=True)
         return Packing(
-            sheets=sheets,
+            sheets=[_turned(sheet) for sheet in sheets],
             sheets_needed=len(sheets),
-            eff_w=eff_w, eff_h=eff_h, draw_w=sw, draw_h=sh,
+            eff_w=eff_w, eff_h=eff_h, draw_w=long_side, draw_h=short_side,
             failed=len(failed),
         )
 

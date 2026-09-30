@@ -101,3 +101,13 @@ def test_grouping_and_piece_costs():
     assert [c.index for c in costs] == [0, 1]
     assert math.isclose(costs[0].kg, 0.16) and math.isclose(costs[0].batch_eur, 0.48)
     assert math.isclose(costs[1].kg, 0.24) and costs[1].eur is None   # real area used
+
+
+def test_rect_layouts_lie_long_side_horizontal_inside_the_usable_area():
+    products = [{"id": "a", "width": 900, "height": 300, "qty": 5, "_global_idx": 0}]
+    packing = rect_options(LOOKUP, "S235", "2", 2.0, products,
+                           long_side_clamp_mm=40).options[0].packing
+    assert (packing.draw_w, packing.draw_h) == (2000, 1000)
+    assert (packing.eff_w, packing.eff_h) == (2000, 960)
+    for pl in (pl for sheet in packing.sheets for pl in sheet.placements):
+        assert pl.x + pl.w <= packing.eff_w and pl.y + pl.h <= packing.eff_h
