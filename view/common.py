@@ -229,7 +229,9 @@ def render_groups(groups: dict[tuple, list[dict]], render_one):
     prices: dict[str, float] = {}
     grand_total = None
     missing = False
-    for key, prods in groups.items():
+    for i, (key, prods) in enumerate(groups.items()):
+        if i:
+            st.divider()  # one line between groups (each part, in "separate")
         out = render_one(key, prods)
         if out is None:
             missing = True
