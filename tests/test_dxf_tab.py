@@ -6,7 +6,7 @@ from view.dxf_tab import _nesting_diff, _run_label, _Settings, _sig
 
 def settings(**kw) -> _Settings:
     base = dict(nest_mode="separate", rankavali_mm=0, clamp_mm=0,
-                rotations=(0.0, 90.0), time_limit=4, seed=0, margin_pct=15.0)
+                time_limit=4, seed=0, margin_pct=15.0)
     return _Settings(**{**base, **kw})
 
 

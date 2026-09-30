@@ -22,9 +22,8 @@ Point = tuple[float, float]
 
 # ── 1. Parts ──────────────────────────────────────────────────────────────────
 
-# Default rotations offered to the packer (degrees). Four quadrant orientations
-# suit rectangular-ish sheet-metal parts.
-DEFAULT_ORIENTATIONS: tuple[float, ...] = (0.0, 90.0, 180.0, 270.0)
+# The rotations every part may take (degrees): the four quarter turns.
+ORIENTATIONS: tuple[float, ...] = (0.0, 90.0, 180.0, 270.0)
 
 # Points closer than this (mm) are treated as the same vertex when cleaning a
 # ring. Guards against jagua-rs bailing on duplicate vertices, including f32
@@ -45,7 +44,6 @@ class SparrowPart:
     quantity: int
     outer: list[Point]
     holes: list[list[Point]] = field(default_factory=list)
-    allowed_orientations: tuple[float, ...] = DEFAULT_ORIENTATIONS
     width_mm: float = 0.0
     height_mm: float = 0.0
     construction: list[list[Point]] = field(default_factory=list)
@@ -60,12 +58,7 @@ class SparrowPart:
         return {"type": "polygon", "data": {"outer": outer, "inner": inner}}
 
 
-def part_from_report(
-    report: DxfReport,
-    quantity: int = 1,
-    *,
-    allowed_orientations: tuple[float, ...] = DEFAULT_ORIENTATIONS,
-) -> SparrowPart:
+def part_from_report(report: DxfReport, quantity: int = 1) -> SparrowPart:
     """The SparrowPart for a priceable DXF part, with its holes attached.
 
     Outer rings come out counter-clockwise and holes clockwise (standard
@@ -77,7 +70,6 @@ def part_from_report(
         quantity=int(quantity),
         outer=_oriented(outline.points, ccw=True),
         holes=[_oriented(h.points, ccw=False) for h in report.holes],
-        allowed_orientations=tuple(float(a) for a in allowed_orientations),
         width_mm=outline.width_mm,
         height_mm=outline.height_mm,
         construction=list(report.reference_lines),
@@ -319,7 +311,7 @@ def greedy_fixed_sheets(
     remaining = [int(p.quantity) for p in parts]
     for i, p in enumerate(parts):
         w, h = bbox_wh(p.outer)
-        if remaining[i] > 0 and not _fits(w, h, sheet_w, sheet_h, p.allowed_orientations):
+        if remaining[i] > 0 and not _fits(w, h, sheet_w, sheet_h):
             return PackResult(ok=False, reason=f"osa {p.part_id} ei mahdu levylle "
                                                f"({w:.0f}×{h:.0f} mm)")
 
@@ -432,18 +424,16 @@ def _build_instance(parts, demand: dict[int, int], strip_height: float) -> dict:
     items = []
     for local_id, (orig_i, n) in enumerate(demand.items()):
         part = parts[orig_i]
-        item = {"id": local_id, "demand": int(n), "part_id": part.part_id}
-        if part.allowed_orientations:
-            item["allowed_orientations"] = [float(a) for a in part.allowed_orientations]
+        item = {"id": local_id, "demand": int(n), "part_id": part.part_id,
+                "allowed_orientations": list(ORIENTATIONS)}
         item["shape"] = part.shape_dict()
         items.append(item)
     return {"name": "pack", "strip_height": float(strip_height), "items": items}
 
 
-def _fits(w: float, h: float, sw: float, sh: float, orients) -> bool:
-    """True if a w×h part fits an sw×sh sheet in some allowed orientation."""
-    can_swap = not orients or any(round(float(a) / 90.0) % 2 == 1 for a in orients)
-    return (w <= sw + _TOL and h <= sh + _TOL) or (can_swap and h <= sw + _TOL and w <= sh + _TOL)
+def _fits(w: float, h: float, sw: float, sh: float) -> bool:
+    """True if a w×h part fits an sw×sh sheet as is or turned a quarter."""
+    return (w <= sw + _TOL and h <= sh + _TOL) or (h <= sw + _TOL and w <= sh + _TOL)
 
 
 # ── 4. Costing ────────────────────────────────────────────────────────────────

@@ -27,10 +27,6 @@ from view.drawing import draw_sparrow_layout, preview_svg
 from view.sheet_usage import render_group
 from view.sparrow_progress import SparrowProgress, run_with_progress
 
-_ROTATIONS: dict[str, tuple[float, ...]] = {
-    "0° / 90° / 180° / 270°": (0.0, 90.0, 180.0, 270.0),
-    "0° / 90°": (0.0, 90.0),
-}
 _CACHE = "dxf_sparrow_cache"    # {signature: computed group}
 _RENEST = "dxf_sparrow_renest"  # {signature} of groups to re-nest on this run
 
@@ -42,7 +38,6 @@ class _Settings:
     nest_mode: str
     rankavali_mm: int
     clamp_mm: int
-    rotations: tuple[float, ...]
     time_limit: int
     seed: int
     margin_pct: float
@@ -52,14 +47,11 @@ class _Settings:
         saved results (marked as made with other settings) instead of
         dropping them, so each group can be re-nested on its own."""
         return {"rankavali_mm": self.rankavali_mm, "clamp_mm": self.clamp_mm,
-                "rotations": self.rotations, "time_limit": self.time_limit,
-                "seed": self.seed}
+                "time_limit": self.time_limit, "seed": self.seed}
 
 
 _NESTING_LABELS = {
     **NESTING_LABELS,
-    "rotations":    lambda v: "kierrot " + next(
-        (k for k, r in _ROTATIONS.items() if r == v), str(v)),
     "time_limit":   lambda v: f"aikaraja {v} s",
     "seed":         lambda v: f"siemen {v}",
 }
@@ -177,13 +169,12 @@ def _render_settings() -> _Settings:
     )
     with st.expander(ADVANCED_LABEL):
         rankavali_mm, clamp_mm = render_nesting_inputs(key_prefix="dxf")
-        c1, c2, c3 = st.columns(3)
-        rot_label = c1.selectbox("Sallitut kierrot", list(_ROTATIONS), key="dxf_rot")
-        time_limit = c2.number_input("Sparrow-aikaraja / ajo (s)", min_value=1,
+        c1, c2 = st.columns(2)
+        time_limit = c1.number_input("Sparrow-aikaraja / ajo (s)", min_value=1,
                                      value=4, step=1, key="dxf_sparrow_t")
-        seed = c3.number_input("Siemen (seed)", min_value=0, value=0, step=1,
+        seed = c2.number_input("Siemen (seed)", min_value=0, value=0, step=1,
                                key="dxf_sparrow_seed")
-    settings = _Settings(nest_mode, rankavali_mm, clamp_mm, _ROTATIONS[rot_label],
+    settings = _Settings(nest_mode, rankavali_mm, clamp_mm,
                          int(time_limit), int(seed), margin_pct)
     st.caption(settings_summary(settings.nesting(), _NESTING_LABELS))
     return settings
@@ -225,7 +216,7 @@ def _nester(lookup: dict, settings: _Settings, exe):
         thickness_mm = parse_thickness_mm(thickness)
         if thickness_mm is None:
             return None
-        parts, areas = _parts_for_group(prods, settings.rotations)
+        parts, areas = _parts_for_group(prods)
         result = run_with_progress(
             progress, _group_label(key, prods),
             sparrow_options,
@@ -299,17 +290,14 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest,
                           areas_mm2=areas)
 
 
-def _parts_for_group(
-    products: list[dict], rotations: tuple
-) -> tuple[list, dict[str, float]]:
+def _parts_for_group(products: list[dict]) -> tuple[list, dict[str, float]]:
     """Sparrow parts for a group, plus each product's real area (mm²/piece).
 
     The parts come from the same read result the card showed; the area is the
     outline minus its holes.
     """
     parts = [
-        part_from_report(p["report"], int(p["qty"]), allowed_orientations=rotations)
-        for p in products
+        part_from_report(p["report"], int(p["qty"])) for p in products
     ]
     areas = {p["id"]: net_area(sp.outer, sp.holes) for p, sp in zip(products, parts)}
     return parts, areas
