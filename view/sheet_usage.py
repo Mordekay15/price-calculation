@@ -3,6 +3,7 @@ the chosen size's metrics first, then the priced sheet sizes to pick from, the
 chosen size's layout (drawn by the caller) and the step-by-step price
 breakdown."""
 
+import pandas as pd
 import streamlit as st
 
 from core.pricing import COPPER_MATERIAL, density_for_material
@@ -43,7 +44,7 @@ def render_group(
     if len(options) > 1:
         st.caption("Valitse rivi vaihtaaksesi levykokoa.")
     event = st.dataframe(
-        _table_rows(options, result.n_pieces, cheapest_idx),
+        _styled_table(_table_rows(options, result.n_pieces, cheapest_idx), cheapest_idx),
         width="stretch",
         hide_index=True,
         on_select="rerun",
@@ -138,6 +139,30 @@ def _table_rows(options: list[SheetOption], n_pieces: int, cheapest_idx: int | N
             })
         rows.append(row)
     return rows
+
+
+# Light enough to read in both themes; the "Paras" text says the same for
+# anyone who can't tell the colour apart.
+_CHEAPEST_ROW = "background-color: rgba(34, 197, 94, 0.22)"
+
+# A Styler replaces Streamlit's own number display, so every number column
+# gets its format here ("" for a size the pieces don't fit).
+_NUMBER_FORMATS = {
+    "Tarvittavat levyt": "{:.0f}",
+    "Levyn kg":          "{:,.2f}",
+    "Yhteensä €":        "{:,.2f}",
+    "€/kpl":             "{:,.2f}",
+}
+
+
+def _styled_table(rows: list[dict], cheapest_idx: int | None):
+    """The sheet-size table with the cheapest row coloured green."""
+    def colour(row):
+        return [_CHEAPEST_ROW if row.name == cheapest_idx else ""] * len(row)
+
+    return (pd.DataFrame(rows).style
+            .apply(colour, axis=1)
+            .format(_NUMBER_FORMATS, na_rep=""))
 
 
 def _render_breakdown(
