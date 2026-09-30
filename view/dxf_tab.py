@@ -373,7 +373,7 @@ def _render_part_config(
         if dxf.texts:
             st.caption("Piirustuksen tekstit: " + " · ".join(dxf.texts))
 
-        preview_col, input_col = st.columns(2)
+        preview_col, input_col = st.columns([1, 3])
         report = _part(fid, dxf)
         with input_col:
             size = _checked_size(fid, dxf, report, hdr[1])
