@@ -120,6 +120,7 @@ def render(data: dict) -> None:
         help="Laskee nykyisillä asetuksilla uudelleen kaikki tulokset, jotka on "
              "laskettu eri asetuksilla. Yksittäisen osan voi päivittää sen omasta "
              "painikkeesta.")
+    st.divider()  # the run buttons above, the results below
     renest = st.session_state.pop(_RENEST, set())
     _show(products, groups, settings, cache, _nester(lookup, settings, exe),
           run=run, update=update, renest=renest)
