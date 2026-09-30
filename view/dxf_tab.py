@@ -20,6 +20,7 @@ from view.common import (
     render_main_settings,
     render_material_thickness,
     render_nesting_inputs,
+    SheetSettings,
     render_pieces_summary,
     settings_summary,
 )
@@ -36,8 +37,7 @@ class _Settings:
     """Every input besides the parts that changes a Sparrow result."""
 
     nest_mode: str
-    rankavali_mm: int
-    clamp_mm: int
+    sheet: SheetSettings
     time_limit: int
     margin_pct: float
 
@@ -45,8 +45,7 @@ class _Settings:
         """The Sparrow settings a result is saved with. Changing one keeps the
         saved results (marked as made with other settings) instead of
         dropping them, so each group can be re-nested on its own."""
-        return {"rankavali_mm": self.rankavali_mm, "clamp_mm": self.clamp_mm,
-                "time_limit": self.time_limit}
+        return {**self.sheet.values(), "time_limit": self.time_limit}
 
 
 _NESTING_LABELS = {
@@ -167,13 +166,13 @@ def _render_settings() -> _Settings:
         separate_label="Laske jokainen osa erikseen",
     )
     with st.expander(ADVANCED_LABEL):
-        rankavali_mm, clamp_mm = render_nesting_inputs(key_prefix="dxf")
+        sheet = render_nesting_inputs(key_prefix="dxf")
         time_limit = st.number_input(
             "Sijoittelun hakuaika (s)", min_value=1, value=4, step=1, key="dxf_sparrow_t",
             help="Aikaraja yhdelle sijoitteluyritykselle (levyä kohden tehdään "
                  "yksi tai useampi). Pidempi aika voi löytää tiiviimmän sijoittelun, "
                  "mutta laskenta kestää kauemmin.")
-    settings = _Settings(nest_mode, rankavali_mm, clamp_mm, int(time_limit), margin_pct)
+    settings = _Settings(nest_mode, sheet, int(time_limit), margin_pct)
     st.caption(settings_summary(settings.nesting(), _NESTING_LABELS))
     return settings
 
@@ -220,8 +219,8 @@ def _nester(lookup: dict, settings: _Settings, exe):
             sparrow_options,
             lookup, material, thickness, thickness_mm, parts,
             run_fn=run_fn, margin_pct=settings.margin_pct,
-            long_side_clamp_mm=settings.clamp_mm,
-            rankavali_mm=settings.rankavali_mm, time_limit_sec=settings.time_limit,
+            edges=settings.sheet.gaps(), rankavali_mm=settings.sheet.rankavali_mm,
+            time_limit_sec=settings.time_limit,
         )
         return {"result": result, "parts": parts, "areas": areas,
                 "thickness_mm": thickness_mm, "nesting": settings.nesting()}

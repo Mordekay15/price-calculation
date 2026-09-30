@@ -91,7 +91,9 @@ For each group of parts that share a material and thickness,
 `core/sheet_cost.py` does the following:
 
 1. Nest the parts on every sheet size that has a price, using the rectangle
-   packer or Sparrow. The clamp strip (*kynsiraina*) on the long side is not
+   packer or Sparrow. Every sheet lies long side horizontal. The edge gaps
+   (*reunavarat*: top, bottom, left, right) and the clamp strip
+   (*kynsiraina*, along the bottom edge on top of that edge's gap) are not
    usable, and the cut gap (*rankaväli*) keeps parts apart.
 2. Charge whole sheets: sheets × sheet weight × price per tonne × (1 + margin).
 3. Spread that cost over the parts by their real weight, which is the

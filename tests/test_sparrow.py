@@ -8,6 +8,7 @@ import pytest
 
 from core.dxf import read_dxf
 from core.geometry import bbox, signed_area
+from core.sheet_cost import EdgeGaps
 from core.sparrow import (
     SparrowPart,
     SparrowResult,
@@ -106,6 +107,14 @@ def test_the_sheet_is_nested_once_with_the_short_side_as_strip_height():
     packing = result.options[0].packing
     assert (packing.draw_w, packing.draw_h) == (2000, 1000)
     assert nested == {(2000, 1000)}
+
+
+def test_edge_gaps_shrink_the_strip_sparrow_fills():
+    result = sparrow_options({("2", "S235 | 1000x2000"): 900.0}, "S235", "2", 2.0,
+                             [square(quantity=6)], run_fn=fake_solver,
+                             edges=EdgeGaps(top=10, bottom=20, left=30, right=40))
+    packing = result.options[0].packing
+    assert (packing.x0, packing.y0, packing.eff_w, packing.eff_h) == (30, 10, 1930, 970)
 
 
 @pytest.mark.sparrow

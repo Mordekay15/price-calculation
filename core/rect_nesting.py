@@ -3,7 +3,7 @@
 
 from dataclasses import dataclass, field
 
-from core.sheet_cost import GroupCost, Packing, compute_options, effective_sheet
+from core.sheet_cost import EdgeGaps, GroupCost, Packing, compute_options, usable_area
 
 
 # ── Packing ───────────────────────────────────────────────────────────────────
@@ -150,13 +150,13 @@ def rect_options(
     thickness_mm: float,
     products: list[dict],
     margin_pct: float = 0.0,
-    long_side_clamp_mm: int = 0,
+    edges: EdgeGaps = EdgeGaps(),
     rankavali_mm: int = 0,
 ) -> GroupCost | None:
     """``core.sheet_cost.compute_options`` with the bounding-box packer.
 
     Each piece is grown by the cut gap (rankaväli) so the packer leaves room
-    between parts; the clamp strip shrinks every sheet's usable area.
+    between parts; the edge gaps shrink every sheet's usable area.
     """
     pieces = [
         (p_idx, c_idx, w + rankavali_mm, h + rankavali_mm)
@@ -169,14 +169,13 @@ def rect_options(
         # still fills the sheet standing on its short side, as it always has
         # (its greedy order packs differently the other way round), and the
         # finished layout is turned to lie down.
-        long_side, short_side = max(sw, sh), min(sw, sh)
-        eff_w, eff_h = effective_sheet(long_side, short_side, long_side_clamp_mm)
+        x0, y0, eff_w, eff_h = usable_area(sw, sh, edges)
         sheets, failed = pack(pieces, eff_h, eff_w, allow_rotation=True)
         return Packing(
             sheets=[_turned(sheet) for sheet in sheets],
             sheets_needed=len(sheets),
-            eff_w=eff_w, eff_h=eff_h, draw_w=long_side, draw_h=short_side,
-            failed=len(failed),
+            eff_w=eff_w, eff_h=eff_h, draw_w=max(sw, sh), draw_h=min(sw, sh),
+            failed=len(failed), x0=x0, y0=y0,
         )
 
     return compute_options(

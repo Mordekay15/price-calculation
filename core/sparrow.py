@@ -15,7 +15,7 @@ from pathlib import Path
 
 from core.dxf import DxfReport
 from core.geometry import bbox, bbox_wh, net_area, rotate_translate, signed_area
-from core.sheet_cost import GroupCost, Packing, compute_options, effective_sheet
+from core.sheet_cost import EdgeGaps, GroupCost, Packing, compute_options, usable_area
 
 Point = tuple[float, float]
 
@@ -447,7 +447,7 @@ def sparrow_options(
     *,
     run_fn,
     margin_pct: float = 0.0,
-    long_side_clamp_mm: int = 0,
+    edges: EdgeGaps = EdgeGaps(),
     rankavali_mm: int = 0,
     seed: int = 0,
     time_limit_sec: int = 4,
@@ -465,7 +465,7 @@ def sparrow_options(
 
     def pack_fn(sw: int, sh: int) -> Packing:
         return _pack_on_short_side(
-            parts, sw, sh, long_side_clamp_mm,
+            parts, sw, sh, edges,
             run_fn=run_fn, seed=seed, time_limit_sec=time_limit_sec,
             separation=separation, on_progress=on_progress,
         )
@@ -477,13 +477,13 @@ def sparrow_options(
     )
 
 
-def _pack_on_short_side(parts, sw, sh, clamp, *, run_fn, seed, time_limit_sec,
+def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, seed, time_limit_sec,
                         separation, on_progress=None) -> Packing:
     """Pack the sheet one way only: Sparrow's fixed strip height is the sheet's
     short side and the strip runs along the long side (e.g. 1000 high, up to
-    2000 long on a 1000 × 2000 sheet)."""
+    2000 long on a 1000 × 2000 sheet), both less the edge gaps."""
     long_side, short_side = max(sw, sh), min(sw, sh)
-    ew, eh = effective_sheet(long_side, short_side, clamp)
+    x0, y0, ew, eh = usable_area(sw, sh, edges)
     on_sheet = None
     if on_progress is not None:
         on_sheet = lambda placed, total: on_progress(  # noqa: E731
@@ -493,4 +493,4 @@ def _pack_on_short_side(parts, sw, sh, clamp, *, run_fn, seed, time_limit_sec,
                                on_sheet=on_sheet)
     return Packing(sheets=pack.sheets, sheets_needed=pack.sheets_needed,
                    eff_w=ew, eff_h=eh, draw_w=long_side, draw_h=short_side,
-                   failed=0 if pack.ok else 1, reason=pack.reason)
+                   failed=0 if pack.ok else 1, reason=pack.reason, x0=x0, y0=y0)

@@ -32,9 +32,8 @@ def render(data: dict) -> None:
     st.divider()
     margin_pct, nest_mode = render_main_settings(margin_key="calc_margin_pct")
     with st.expander(ADVANCED_LABEL):
-        rankavali_mm, long_side_clamp_mm = render_nesting_inputs()
-    st.caption(settings_summary(
-        {"rankavali_mm": rankavali_mm, "clamp_mm": long_side_clamp_mm}, NESTING_LABELS))
+        sheet = render_nesting_inputs()
+    st.caption(settings_summary(sheet.values(), NESTING_LABELS))
 
     def render_one(key, prods):
         material, thickness = key[0], key[1]
@@ -43,14 +42,13 @@ def render(data: dict) -> None:
             return None
         result = rect_options(
             lookup, material, thickness, thickness_mm, prods,
-            margin_pct=margin_pct, long_side_clamp_mm=long_side_clamp_mm,
-            rankavali_mm=rankavali_mm,
+            margin_pct=margin_pct, edges=sheet.gaps(), rankavali_mm=sheet.rankavali_mm,
         )
         ids = "-".join(str(p["id"]) for p in prods)
         return render_group(
             material, thickness, thickness_mm, result, margin_pct=margin_pct,
             key=f"sheet_select::{material}::{thickness}::{ids}",
-            draw_layout=lambda option: draw_rect_layout(option, prods, rankavali_mm),
+            draw_layout=lambda option: draw_rect_layout(option, prods, sheet.rankavali_mm),
         )
 
     groups = group_products(products, nest_mode)
