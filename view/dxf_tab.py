@@ -29,7 +29,8 @@ _ROTATIONS: dict[str, tuple[float, ...]] = {
     "0° / 90° / 180° / 270°": (0.0, 90.0, 180.0, 270.0),
     "0° / 90°": (0.0, 90.0),
 }
-_CACHE = "dxf_sparrow_cache"  # {signature: computed group}
+_CACHE = "dxf_sparrow_cache"    # {signature: computed group}
+_RENEST = "dxf_sparrow_renest"  # {signature} of groups to re-nest on this run
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,32 @@ class _Settings:
     time_limit: int
     seed: int
     margin_pct: float
+
+    def nesting(self) -> dict:
+        """The Sparrow settings a result is saved with. Changing one keeps the
+        saved results (marked as made with other settings) instead of
+        dropping them, so each group can be re-nested on its own."""
+        return {"rankavali_mm": self.rankavali_mm, "clamp_mm": self.clamp_mm,
+                "rotations": self.rotations, "time_limit": self.time_limit,
+                "seed": self.seed}
+
+
+_NESTING_LABELS = {
+    "rankavali_mm": lambda v: f"rankaväli {v} mm",
+    "clamp_mm":     lambda v: f"kynsiraina {v} mm",
+    "rotations":    lambda v: "kierrot " + next(
+        (k for k, r in _ROTATIONS.items() if r == v), str(v)),
+    "time_limit":   lambda v: f"aikaraja {v} s",
+    "seed":         lambda v: f"siemen {v}",
+}
+
+
+def _nesting_diff(saved: dict, current: dict) -> str:
+    """Each setting that differs, as e.g. ``aikaraja 4 s (nyt 10 s)``."""
+    return ", ".join(
+        f"{label(saved[k])} (nyt {label(current[k]).split(' ', 1)[1]})"
+        for k, label in _NESTING_LABELS.items() if saved[k] != current[k]
+    )
 
 
 def render(data: dict) -> None:
@@ -86,10 +113,53 @@ def render(data: dict) -> None:
     st.divider()
     st.markdown("**Levyn käyttö**")
     cache: dict = st.session_state.setdefault(_CACHE, {})
-    if st.button("Laske levykäyttö (Sparrow)", key="dxf_sparrow_run"):
-        cache.clear()
-        _run(groups, lookup, settings, exe, cache)
-    _show(products, groups, settings, cache)
+    # Two buttons that never overlap: the first nests only groups with no
+    # result, the second only results made with other Sparrow settings. A
+    # group's own button re-nests just that group.
+    n_new = n_stale = 0
+    for k, p in groups.items():
+        entry = cache.get(_sig(k, p, settings))
+        if entry is None:
+            n_new += parse_thickness_mm(k[1]) is not None
+        else:
+            n_stale += _is_stale(entry, settings)
+    b1, b2 = st.columns(2)
+    run = b1.button(_run_label(n_new, n_stale, len(groups)), key="dxf_sparrow_run",
+                    disabled=n_new == 0,
+                    help="Laskee vain osat, joilla ei vielä ole tulosta. Jo "
+                         "laskettuihin ei kosketa.")
+    update = b2.button(f"Päivitä eri asetuksilla lasketut ({n_stale})",
+                       key="dxf_sparrow_update", disabled=n_stale == 0,
+                       help="Laskee nykyisillä asetuksilla uudelleen kaikki tulokset, "
+                            "jotka on laskettu eri asetuksilla. Yksittäisen osan voi "
+                            "päivittää sen omasta painikkeesta.")
+    renest = st.session_state.pop(_RENEST, set())
+    _show(products, groups, settings, cache, _nester(lookup, settings, exe),
+          run=run, update=update, renest=renest)
+    if run or update or renest:
+        # The button's count was drawn before these groups were nested:
+        # redraw it with the new count (e.g. "kaikki laskettu").
+        st.rerun()
+
+
+def _is_stale(entry: dict, settings: _Settings) -> bool:
+    """True when a saved result was nested with other Sparrow settings."""
+    return entry.get("nesting", settings.nesting()) != settings.nesting()
+
+
+def _request_renest(sig: str) -> None:
+    """A group's "Laske uudelleen" button: re-nest it on this run."""
+    st.session_state.setdefault(_RENEST, set()).add(sig)
+
+
+def _run_label(n_new: int, n_stale: int, n_groups: int) -> str:
+    """The run button's label: how many new groups a click would nest."""
+    base = "Laske levykäyttö (Sparrow)"
+    if n_new == 0:
+        return f"{base} — " + ("ei uusia osia" if n_stale else "kaikki laskettu")
+    if n_new == n_groups:
+        return base
+    return f"{base} — " + (f"{n_new} uusi" if n_new == 1 else f"{n_new} uutta")
 
 
 def _render_part_cards(parts, materials: list[str], lookup: dict) -> list[dict]:
@@ -119,13 +189,27 @@ def _render_settings(margin_pct: float) -> _Settings:
 
 
 def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
-    """Stable cache key: the group, its parts (quantity, layers) and the settings."""
+    """Stable cache key: the group, its parts (quantity, layers) and the margin.
+
+    The Sparrow settings are left out on purpose: they are saved with the
+    result (``entry["nesting"]``), so changing one doesn't drop every result.
+    """
     prod_sig = ",".join(f"{p['id']}:{p['qty']}:{p['layers']}" for p in products)
-    return f"{key}|{prod_sig}|{settings}"
+    return f"{key}|{prod_sig}|{settings.margin_pct}"
 
 
-def _run(groups, lookup: dict, settings: _Settings, exe, cache: dict) -> None:
-    """Nest every group with Sparrow (behind a progress bar) into ``cache``."""
+def _group_label(key: tuple, prods: list[dict]) -> str:
+    """The group's heading, e.g. ``S235 · 2 mm``, plus the part's name when it
+    is nested on its own."""
+    label = f"{key[0]} · {key[1]} mm"
+    if len(key) > 2:
+        label += " · " + ", ".join(p["name"] for p in prods)
+    return label
+
+
+def _nester(lookup: dict, settings: _Settings, exe):
+    """``nest(key, prods)``: one group nested with Sparrow behind a progress bar,
+    returned as a cache entry (None when its thickness can't be read)."""
     progress = SparrowProgress()
 
     def run_fn(instance, *, seed, time_limit_sec, separation):
@@ -135,14 +219,14 @@ def _run(groups, lookup: dict, settings: _Settings, exe, cache: dict) -> None:
             seed=int(seed), min_item_separation=separation,
         )
 
-    for key, prods in groups.items():
+    def nest(key: tuple, prods: list[dict]) -> dict | None:
         material, thickness = key[0], key[1]
         thickness_mm = parse_thickness_mm(thickness)
         if thickness_mm is None:
-            continue
+            return None
         parts, areas = _parts_for_group(prods, settings.rotations)
         result = run_with_progress(
-            progress, f"{material} · {thickness} mm",
+            progress, _group_label(key, prods),
             sparrow_options,
             lookup, material, thickness, thickness_mm, parts,
             run_fn=run_fn, margin_pct=settings.margin_pct,
@@ -150,26 +234,53 @@ def _run(groups, lookup: dict, settings: _Settings, exe, cache: dict) -> None:
             rankavali_mm=settings.rankavali_mm, seed=settings.seed,
             time_limit_sec=settings.time_limit,
         )
-        cache[_sig(key, prods, settings)] = {
-            "result": result, "parts": parts, "areas": areas,
-            "thickness_mm": thickness_mm,
-        }
+        return {"result": result, "parts": parts, "areas": areas,
+                "thickness_mm": thickness_mm, "nesting": settings.nesting()}
+
+    return nest
 
 
-def _show(products: list[dict], groups, settings: _Settings, cache: dict) -> None:
-    """Render the cached result of every group, then the parts summary."""
+def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest,
+          *, run: bool = False, update: bool = False,
+          renest: set = frozenset()) -> None:
+    """Render every group's result, then the parts summary.
+
+    A group is nested in its own place first — so each result shows as soon
+    as it is ready, not after the whole run — when ``run`` and it has no
+    result, when ``update`` and its result is outdated, or when its signature
+    is in ``renest``.
+    """
     areas: dict[str, float] = {}
+    current = settings.nesting()
 
     def render_one(key, prods):
         sig = _sig(key, prods, settings)
         entry = cache.get(sig)
+        if (sig in renest or (run and entry is None)
+                or (update and entry is not None and _is_stale(entry, settings))):
+            new = nest(key, prods)
+            if new is not None:
+                cache[sig] = entry = new
         if entry is None:
+            st.markdown(f"**{_group_label(key, prods)}**")
+            st.caption("Odottaa laskentaa.")
             return None
         areas.update(entry["areas"])
+        diff = _nesting_diff(entry.get("nesting", current), current)
+
+        def note():
+            # Made with other Sparrow settings: kept as is, re-nested on request.
+            if diff:
+                c1, c2 = st.columns([3, 2])
+                c1.caption(f"Laskettu eri asetuksilla: {diff}.")
+                c2.button("Laske uudelleen nykyisillä asetuksilla",
+                          key=f"dxf_renest::{sig}", on_click=_request_renest, args=(sig,))
+
         return render_group(
             key[0], key[1], entry["thickness_mm"], entry["result"],
             margin_pct=settings.margin_pct, key=f"dxf_su_select::{sig}",
             draw_layout=lambda active: draw_sparrow_layout(active, entry["parts"], sig),
+            heading=f"**{_group_label(key, prods)}**", after_heading=note,
         )
 
     prices, grand_total, missing = render_groups(groups, render_one)
@@ -177,7 +288,9 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict) -> Non
         st.info("Paina **Laske levykäyttö (Sparrow)** laskeaksesi levytarpeen ja hinnan.")
         return
     if missing:
-        st.warning("Asetukset muuttuivat — laske uudelleen päivittääksesi kaikki ryhmät.")
+        st.warning("Yhteissumma sisältää vain lasketut ryhmät — paina **Laske "
+                   "levykäyttö (Sparrow)** laskeaksesi loput. Jo laskettuja ei "
+                   "lasketa uudelleen.")
     render_grand_total(grand_total, len(groups))
 
     ready = [p for p in products if is_ready(p)]
