@@ -97,17 +97,15 @@ def test_sparrow_options_prices_with_the_given_solver():
     assert events[0] == "size" and "sheet" in events
 
 
-def test_parts_that_may_not_turn_are_also_nested_on_the_turned_sheet():
-    part = SparrowPart(part_id="r", quantity=6, outer=[(0, 0), (300, 0), (300, 200), (0, 200)],
-                       allowed_orientations=(0.0,), width_mm=300, height_mm=200)
+def test_the_sheet_is_nested_once_with_the_short_side_as_strip_height():
     nested = set()
-    result = sparrow_options({("2", "S235 | 1000x2000"): 900.0}, "S235", "2", 2.0, [part],
-                             run_fn=fake_solver,
+    result = sparrow_options({("2", "S235 | 1000x2000"): 900.0}, "S235", "2", 2.0,
+                             [square(quantity=6)], run_fn=fake_solver,
                              on_progress=lambda kind, **kw: kind == "sheet" and nested.add(
                                  (kw["w"], kw["h"])))
     packing = result.options[0].packing
     assert (packing.draw_w, packing.draw_h) == (2000, 1000)
-    assert nested == {(2000, 1000), (1000, 2000)}
+    assert nested == {(2000, 1000)}
 
 
 @pytest.mark.sparrow

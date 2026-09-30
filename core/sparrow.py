@@ -10,7 +10,6 @@ import shutil
 import subprocess
 import tempfile
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -468,14 +467,14 @@ def sparrow_options(
 
     ``on_progress``, if given, receives ``("size", index=, count=, w=, h=)``
     before each sheet size and ``("sheet", w=, h=, placed=, total=)`` each time
-    a sheet layout is settled in one orientation.
+    a sheet layout is settled.
     """
     n_pieces = sum(p.quantity for p in parts)
     part_area_mm2 = sum(net_area(p.outer, p.holes) * p.quantity for p in parts)
     separation = float(rankavali_mm) if rankavali_mm else None
 
     def pack_fn(sw: int, sh: int) -> Packing:
-        return _pack_best_orientation(
+        return _pack_on_short_side(
             parts, sw, sh, long_side_clamp_mm,
             run_fn=run_fn, seed=seed, time_limit_sec=time_limit_sec,
             separation=separation, on_progress=on_progress,
@@ -488,54 +487,20 @@ def sparrow_options(
     )
 
 
-def _pack_best_orientation(parts, sw, sh, clamp, *, run_fn, seed, time_limit_sec,
-                           separation, on_progress=None) -> Packing:
-    """Pack the sheet both ways round (portrait / landscape); return the best.
-
-    The best has the fewest sheets (on a tie the long-side strip) and drives
-    the price. When neither fits, the first attempt is returned to surface the
-    failure.
-
-    The turned sheet is skipped when every part may turn a quarter: its layout
-    would just be the first one rotated. Otherwise both nest at the same time —
-    Sparrow's time limit is wall-clock, so the pair takes about as long as one.
-    """
-    def attempt(cw, ch) -> Packing:
-        ew, eh = effective_sheet(cw, ch, clamp)
-        on_sheet = None
-        if on_progress is not None:
-            on_sheet = lambda placed, total: on_progress(  # noqa: E731
-                "sheet", w=cw, h=ch, placed=placed, total=total)
-        pack = greedy_fixed_sheets(parts, ew, eh, run_fn=run_fn, seed=seed,
-                                   time_limit_sec=time_limit_sec, separation=separation,
-                                   on_sheet=on_sheet)
-        return Packing(sheets=pack.sheets, sheets_needed=pack.sheets_needed,
-                       eff_w=ew, eff_h=eh, draw_w=cw, draw_h=ch,
-                       failed=0 if pack.ok else 1, reason=pack.reason)
-
-    # Sparrow's fixed strip height is the sheet's short side; the strip runs
-    # along the long side (listed first, so it also wins a tie).
+def _pack_on_short_side(parts, sw, sh, clamp, *, run_fn, seed, time_limit_sec,
+                        separation, on_progress=None) -> Packing:
+    """Pack the sheet one way only: Sparrow's fixed strip height is the sheet's
+    short side and the strip runs along the long side (e.g. 1000 high, up to
+    2000 long on a 1000 × 2000 sheet)."""
     long_side, short_side = max(sw, sh), min(sw, sh)
-    if sw == sh or _quarter_turn_free(parts):
-        options = [attempt(long_side, short_side)]
-    else:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            options = list(pool.map(lambda d: attempt(*d),
-                                    [(long_side, short_side), (short_side, long_side)]))
-
-    ok = [o for o in options if not o.failed]
-    if not ok:
-        return options[0]
-    return min(ok, key=lambda o: o.sheets_needed)
-
-
-def _quarter_turn_free(parts) -> bool:
-    """True if every part's allowed rotations are closed under +90° (empty =
-    free rotation) — then any layout turned 90° is still valid."""
-    for p in parts:
-        if not p.allowed_orientations:
-            continue
-        angles = {round(float(a)) % 360 for a in p.allowed_orientations}
-        if any((a + 90) % 360 not in angles for a in angles):
-            return False
-    return True
+    ew, eh = effective_sheet(long_side, short_side, clamp)
+    on_sheet = None
+    if on_progress is not None:
+        on_sheet = lambda placed, total: on_progress(  # noqa: E731
+            "sheet", w=long_side, h=short_side, placed=placed, total=total)
+    pack = greedy_fixed_sheets(parts, ew, eh, run_fn=run_fn, seed=seed,
+                               time_limit_sec=time_limit_sec, separation=separation,
+                               on_sheet=on_sheet)
+    return Packing(sheets=pack.sheets, sheets_needed=pack.sheets_needed,
+                   eff_w=ew, eff_h=eh, draw_w=long_side, draw_h=short_side,
+                   failed=0 if pack.ok else 1, reason=pack.reason)
