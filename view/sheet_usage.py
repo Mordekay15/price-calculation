@@ -18,19 +18,16 @@ def render_group(
     margin_pct: float,
     key: str,
     draw_layout,
-    heading: str | None = None,
-    after_heading=None,
+    note=None,
 ) -> tuple[float | None, float | None]:
     """Render one group's sheet-usage table. Returns ``(total_eur, bill_rate_ppt)``.
 
-    ``draw_layout(option)`` draws the chosen sheet size's layout. ``heading``
-    replaces the bold "material · thickness" line; ``after_heading()``, if
-    given, draws extra notes right under it. Returns ``(None, None)`` when no
-    priced sheet size can fulfil the order.
+    ``draw_layout(option)`` draws the chosen sheet size's layout; ``note()``,
+    if given, draws extra notes first. Returns ``(None, None)`` when no priced
+    sheet size can fulfil the order.
     """
-    st.markdown(heading or f"**{material}** · **{thickness} mm**")
-    if after_heading is not None:
-        after_heading()
+    if note is not None:
+        note()
 
     if result is None:
         _render_unpriced(material)
