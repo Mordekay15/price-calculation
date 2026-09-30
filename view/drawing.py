@@ -47,8 +47,9 @@ def _render_sheet_grid(cards: list[tuple[str, str]]) -> None:
 
 
 def _render_layouts(packing, used_area, sheet_svg) -> None:
-    """One card per distinct sheet layout; identical sheets are drawn once
-    with a "×N" count and a sheet-number range (e.g. "Levy 1–4 · ×4").
+    """One card per distinct sheet layout (a program); identical sheets are
+    drawn once with a "×N" count and a sheet-number range (e.g. "Ohjelma 1 ·
+    Levy 1–4 · ×4").
 
     ``used_area(sheet)`` is the real part area on one sheet and
     ``sheet_svg(sheet, scale)`` draws it.
@@ -57,9 +58,10 @@ def _render_layouts(packing, used_area, sheet_svg) -> None:
     scale = _TARGET_PX / max(sw, sh)
     cards = []
     first = 1
-    for sheet in packing.sheets:
+    for n, sheet in enumerate(packing.sheets, start=1):
         last = first + sheet.count - 1
-        label = f"Levy {first}" if sheet.count == 1 else f"Levy {first}–{last} · ×{sheet.count}"
+        sheets = f"Levy {first}" if sheet.count == 1 else f"Levy {first}–{last} · ×{sheet.count}"
+        label = f"Ohjelma {n} · {sheets}"
         first = last + 1
         cards.append((
             f"**{label}** · käyttöaste {utilization(used_area(sheet), sw, sh) * 100:.1f} %",
