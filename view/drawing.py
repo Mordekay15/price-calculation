@@ -78,7 +78,6 @@ def draw_rect_layout(option: SheetOption, products: list[dict], rankavali_mm: in
     packing = option.packing
     sheets = packing.sheets
     sw, sh = packing.draw_w, packing.draw_h
-    st.markdown(f"**Sijoittelu** — {len(sheets)} levyä")
     _render_legend([
         (p["_global_idx"],
          f"{p.get('name') or 'Tuote #' + str(p['_global_idx'] + 1)} "
@@ -141,7 +140,6 @@ def draw_sparrow_layout(option: SheetOption, parts: list) -> None:
     shown = option.packing
     sheets = shown.sheets
     sw, sh = shown.draw_w, shown.draw_h
-    st.markdown(f"**Sijoittelu** — {sum(s.count for s in sheets)} levyä")
 
     used = sorted({pl.part_index for s in sheets for pl in s.placements})
     _render_legend([
