@@ -120,14 +120,15 @@ def render(data: dict) -> None:
             n_stale += _is_stale(entry, settings)
     b1, b2 = st.columns(2)
     run = b1.button(_run_label(n_new, n_stale, len(groups)), key="dxf_sparrow_run",
-                    disabled=n_new == 0,
+                    type="primary", disabled=n_new == 0,
                     help="Laskee vain osat, joilla ei vielä ole tulosta. Jo "
                          "laskettuihin ei kosketa.")
-    update = b2.button(f"Päivitä eri asetuksilla lasketut ({n_stale})",
-                       key="dxf_sparrow_update", disabled=n_stale == 0,
-                       help="Laskee nykyisillä asetuksilla uudelleen kaikki tulokset, "
-                            "jotka on laskettu eri asetuksilla. Yksittäisen osan voi "
-                            "päivittää sen omasta painikkeesta.")
+    # Shown only when there is something to update.
+    update = n_stale > 0 and b2.button(
+        f"Päivitä eri asetuksilla lasketut ({n_stale})", key="dxf_sparrow_update",
+        help="Laskee nykyisillä asetuksilla uudelleen kaikki tulokset, jotka on "
+             "laskettu eri asetuksilla. Yksittäisen osan voi päivittää sen omasta "
+             "painikkeesta.")
     renest = st.session_state.pop(_RENEST, set())
     _show(products, groups, settings, cache, _nester(lookup, settings, exe),
           run=run, update=update, renest=renest)
