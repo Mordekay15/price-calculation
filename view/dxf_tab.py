@@ -423,15 +423,17 @@ def _checked_size(fid: str, dxf: DxfFile, report: DxfReport, badge) -> tuple | N
     height = round(report.outline.height_mm, 1)
 
     # No unit in the file: show the size the guess gives and price only once
-    # the user confirms it.
+    # the user confirms it. The warning goes above the checkbox and only
+    # while it is unticked.
     if dxf.unit_guessed:
-        st.warning(
-            "Piirustuksesta puuttuu mittayksikkö. Oletimme yksiköksi "
-            f"**{report.unit_label}**, jolloin osan koko on "
-            f"**{width:g} × {height:g} mm**. Tarkista mitat piirustuksesta."
-        )
+        note = st.empty()
         if not st.checkbox(f"Koko {width:g} × {height:g} mm on oikein",
                            key=f"dxf_unit_ok_{fid}"):
+            note.warning(
+                "Piirustuksesta puuttuu mittayksikkö. Oletimme yksiköksi "
+                f"**{report.unit_label}**, jolloin osan koko on "
+                f"**{width:g} × {height:g} mm**. Tarkista mitat piirustuksesta."
+            )
             badge.markdown(":orange[vahvista yksikkö]")
             return None
 
