@@ -4,7 +4,7 @@ shapes), the edge-gap diagram and the DXF part preview on a card."""
 import streamlit as st
 
 from core.dxf import DxfReport
-from core.sheet_cost import SheetOption, utilization
+from core.sheet_cost import SheetOption, product_label, utilization
 
 
 # ── Shared pieces ─────────────────────────────────────────────
@@ -146,9 +146,7 @@ def draw_rect_layout(option: SheetOption, products: list[dict], rankavali_mm: in
     """
     packing = option.packing
     _render_legend([
-        (p["_global_idx"],
-         f"{p.get('name') or 'Tuote #' + str(p['_global_idx'] + 1)} "
-         f"({p['width']:g}×{p['height']:g})")
+        (p["_global_idx"], f"{product_label(p)} ({p['width']:g}×{p['height']:g})")
         for p in products
     ])
 

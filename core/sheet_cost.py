@@ -221,6 +221,12 @@ def cheapest_index(options: list[SheetOption]) -> int | None:
 
 # ── Products: grouping and per-piece cost ─────────────────────────────────────
 
+def product_label(product: dict) -> str:
+    """A product as the layout legend and messages name it: its name, or its
+    running number (``Tuote #3``) when it has none."""
+    return product.get("name") or f"Tuote #{product['_global_idx'] + 1}"
+
+
 def is_ready(prod: dict) -> bool:
     """A product can be priced once it has a material, thickness and size."""
     return bool(prod["material"] and prod["thickness"]

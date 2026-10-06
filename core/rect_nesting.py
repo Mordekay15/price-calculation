@@ -10,6 +10,7 @@ from core.sheet_cost import (
     GroupCost,
     Packing,
     compute_options,
+    product_label,
     too_big,
     usable_area,
 )
@@ -164,11 +165,6 @@ def _turned(sheet: Sheet) -> Sheet:
     ], [(y, x, h, w) for x, y, w, h in sheet.free_rects], sheet.count)
 
 
-def _label(product: dict) -> str:
-    """A product as the layout legend names it."""
-    return product.get("name") or f"Tuote #{product['_global_idx'] + 1}"
-
-
 def _one_sheet(sheets: list[Sheet], failed: int) -> Sheet | None:
     """The layout, when every piece went on a single sheet."""
     return sheets[0] if not failed and sheets_used(sheets) == 1 else None
@@ -228,7 +224,7 @@ def rect_options(
 
         greedy, failed = pack_sheets(quantities)
         if failed:
-            reason = too_big([(_label(p), p["width"], p["height"]) for p in products],
+            reason = too_big([(product_label(p), p["width"], p["height"]) for p in products],
                              eff_w, eff_h)
             return [replace(packing(greedy, failed), reason=reason)]
         kit = kit_plan(quantities, greedy, lambda kit: _one_sheet(*pack_sheets(kit)),
