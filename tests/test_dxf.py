@@ -5,6 +5,7 @@ import math
 import pytest
 
 from core.dxf import read_dxf
+from core.geometry import min_area_angle, point_in_polygon, rotate_translate
 from tests.conftest import dxf_bytes, rect
 
 
@@ -220,6 +221,35 @@ def test_a_nearly_straight_tiny_arc_does_not_cross_itself(drawing):
                         (1378.1138565258350, 300, 0),
                         (1358.1120566320319, 300, 0)], format="xyb", close=True)
     assert part_of(doc).problems == []
+
+
+def test_a_part_drawn_diagonally_is_laid_along_its_length(drawing):
+    # A 2900 × 80 bar with a hole, drawn at 45°: 2108 × 2108 as drawn
+    doc, msp = drawing()
+    bar = rotate_translate([(0, 0), (2900, 0), (2900, 80), (0, 80)], 45, (0, 0))
+    msp.add_lwpolyline(bar, close=True)
+    msp.add_circle(rotate_translate([(1450, 40)], 45, (0, 0))[0], 20)
+    report = part_of(doc)
+    assert report.problems == []
+    assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (2900, 80)
+    assert point_in_polygon(report.holes[0].points[0], report.outline.points)
+
+
+def test_a_straight_part_is_left_as_drawn(drawing):
+    doc, msp = drawing()
+    rect(msp, 10, 20, 80, 300)          # standing: Sparrow turns it a quarter itself
+    report = part_of(doc)
+    assert report.outline.points[0] == (10, 20)
+    assert (report.outline.width_mm, report.outline.height_mm) == (80, 300)
+
+
+def test_min_area_angle_lays_the_long_side_horizontal():
+    for angle in (0, 30, 45, 120):
+        bar = rotate_translate([(0, 0), (500, 0), (500, 40), (0, 40)], angle, (0, 0))
+        turned = rotate_translate(bar, min_area_angle(bar), (0, 0))
+        xs, ys = [p[0] for p in turned], [p[1] for p in turned]
+        assert math.isclose(max(xs) - min(xs), 500, abs_tol=1e-6)
+        assert math.isclose(max(ys) - min(ys), 40, abs_tol=1e-6)
 
 
 # ── Refused, with a reason ────────────────────────────────────────────────────

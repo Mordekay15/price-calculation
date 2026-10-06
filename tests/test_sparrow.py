@@ -8,7 +8,7 @@ from collections import Counter
 import pytest
 
 from core.dxf import read_dxf
-from core.geometry import bbox, signed_area
+from core.geometry import bbox, rotate_translate, signed_area
 from core.sheet_cost import EdgeGaps
 from core.sparrow import (
     SparrowPart,
@@ -112,6 +112,17 @@ def test_a_kit_plan_as_good_in_sheets_replaces_the_greedy_one():
     [option] = result.options
     assert (option.sheets_needed, option.programs) == (3, 2)
     assert made(option.packing) == {"a": 7, "b": 3}
+
+
+def test_a_long_part_drawn_diagonally_fits_once_laid_along_its_length(drawing):
+    # 2900 × 80 at 45° is 2108 × 2108 as drawn: too big for 1500 × 3000 until
+    # the reader lays it flat
+    doc, msp = drawing()
+    msp.add_lwpolyline(rotate_translate([(0, 0), (2900, 0), (2900, 80), (0, 80)], 45, (0, 0)),
+                       close=True)
+    part = part_from_report(read_dxf(dxf_bytes(doc), "strip.dxf").part(), 3)
+    pack = greedy_fixed_sheets([part], 3000, 1500, run_fn=fake_solver)
+    assert pack.ok and pack.sheets_needed == 1
 
 
 def test_greedy_reports_a_part_too_big_for_the_sheet():

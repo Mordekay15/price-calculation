@@ -12,7 +12,15 @@ from dataclasses import dataclass, field
 
 from ezdxf import path, recover
 
-from core.geometry import area, bbox, bbox_wh, point_in_polygon, representative_point
+from core.geometry import (
+    area,
+    bbox,
+    bbox_wh,
+    min_area_angle,
+    point_in_polygon,
+    representative_point,
+    rotate_translate,
+)
 
 Point = tuple[float, float]
 
@@ -222,7 +230,30 @@ class DxfFile:
                 report.open_lines.append(c.points)
 
         report.problems += _part_problems(report)
+        _lay_along_length(report)
         return report
+
+
+# A part already within this many degrees of a quarter turn is left as drawn.
+_STRAIGHT_TOL_DEG = 0.5
+
+
+def _lay_along_length(report: DxfReport) -> None:
+    """Turn the whole drawing so the part lies along its length, as a designer
+    lays it before nesting: a strip drawn diagonally is then 2936 × 446 mm, not
+    2120 × 2061. The card, the price and Sparrow all use the turned part."""
+    turn = min_area_angle(report.outline.points)
+    off = turn % 90.0
+    if min(off, 90.0 - off) <= _STRAIGHT_TOL_DEG:
+        return
+
+    def turned(points):
+        return rotate_translate(points, turn, (0.0, 0.0))
+
+    for c in (report.outline, *report.holes):
+        c.points = turned(c.points)
+    for lines in (report.reference_lines, report.open_lines, report.dropped):
+        lines[:] = [turned(line) for line in lines]
 
 
 # ── Reading ──────────────────────────────────────────────────────────────────

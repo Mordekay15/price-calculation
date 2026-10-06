@@ -50,6 +50,39 @@ def rotate_translate(points, rotation_deg: float, t: tuple[float, float]) -> lis
     return [(x * c - y * s + tx, x * s + y * c + ty) for x, y in points]
 
 
+def convex_hull(points) -> list[Point]:
+    """Counter-clockwise convex hull (monotone chain)."""
+    pts = sorted(set(points))
+    if len(pts) < 3:
+        return pts
+
+    def half(seq):
+        out: list[Point] = []
+        for p in seq:
+            while len(out) >= 2 and ((out[-1][0] - out[-2][0]) * (p[1] - out[-2][1])
+                                     - (out[-1][1] - out[-2][1]) * (p[0] - out[-2][0])) <= 0:
+                out.pop()
+            out.append(p)
+        return out
+
+    lower, upper = half(pts), half(reversed(pts))
+    return lower[:-1] + upper[:-1]
+
+
+def min_area_angle(points) -> float:
+    """The turn (degrees, counter-clockwise) that lays a shape along its length:
+    its smallest bounding rectangle straight, long side horizontal. That
+    rectangle always has a side on a convex-hull edge, so only those are tried."""
+    hull = convex_hull(points)
+    best = (math.inf, 0.0)
+    for (x1, y1), (x2, y2) in zip(hull, hull[1:] + hull[:1]):
+        turn = -math.degrees(math.atan2(y2 - y1, x2 - x1))
+        w, h = bbox_wh(rotate_translate(hull, turn, (0.0, 0.0)))
+        if w * h < best[0]:
+            best = (w * h, turn if w >= h else turn + 90.0)
+    return best[1]
+
+
 def point_in_polygon(pt: Point, poly: list[Point]) -> bool:
     """Ray-casting point-in-polygon test (even–odd rule)."""
     x, y = pt

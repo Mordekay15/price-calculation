@@ -150,6 +150,11 @@ the price all use the same result.
 - **The part** is the largest closed outline. Outlines directly inside it are
   its holes, and anything outside it (detail views, sketches, stray lines) is
   dropped.
+- **Laid along its length**: the part is turned so its smallest bounding
+  rectangle lies straight, long side horizontal, as a designer lays it before
+  nesting. A curved strip drawn diagonally (2120 × 2061 mm as drawn) is then
+  2936 × 437 mm. The card size, the price and the nesting all use the turned
+  part; a part already straight (within 0.5°) stays as drawn.
 - **Drawn but not cut**: bend and centre lines, dashed lines, countersinks and
   threads drawn as circles inside a hole, and the ISO thread symbol (a thin
   ¾-circle around a hole).
