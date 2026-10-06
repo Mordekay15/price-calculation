@@ -3,11 +3,11 @@ grouped by material + thickness and Sparrow nests the real shapes on every
 priced sheet size, behind a button and a progress bar, cached until an input
 changes."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import streamlit as st
 
-from core.pricing import build_lookup, parse_thickness_mm
+from core.pricing import build_lookup, get_sizes_for_material, parse_thickness_mm
 from core.dxf import DxfFile, DxfReport, read_dxf
 from core.geometry import net_area
 from core.sheet_cost import group_products, is_ready
@@ -60,12 +60,14 @@ _DROPZONE_CSS = """
 
 @dataclass(frozen=True)
 class _Settings:
-    """Every input besides the parts that changes a Sparrow result."""
+    """Every input besides the parts that changes a Sparrow result, the
+    price list (``lookup``) included."""
 
     nest_mode: str
     sheet: SheetSettings
     time_limit: int
     margin_pct: float
+    lookup: dict = field(default_factory=dict)
 
     def nesting(self) -> dict:
         """The Sparrow settings a result is saved with. Changing one keeps the
@@ -129,7 +131,7 @@ def render(data: dict) -> None:
     if shared is not None:
         products = [{**p, "angles": shared} for p in products]
     groups = group_products(products, nest_mode)
-    settings = _Settings(nest_mode, sheet, int(time_limit), margin_pct)
+    settings = _Settings(nest_mode, sheet, int(time_limit), margin_pct, lookup)
     cache: dict = st.session_state.setdefault(_CACHE, {})
     n_new, n_stale = _count_pending(groups, settings, cache)
     run, update = _render_run_buttons(c_run, c_update, n_new, n_stale, len(groups))
@@ -242,7 +244,10 @@ def _render_settings() -> tuple[float, str, SheetSettings]:
 
 def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
     """Stable cache key: material + thickness, the parts (quantity, nesting
-    angles) and the margin — what decides the nesting and its price.
+    angles), the margin and the prices — what decides the nesting and its
+    price. With the prices in it, a price set or changed later (say copper's,
+    first left empty) makes the group new again instead of keeping the result
+    made without it.
 
     The nesting mode is left out: a part nested alone is the same nesting in
     either mode, so switching to "separate" keeps a group of one part, and
@@ -253,7 +258,9 @@ def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
     material, thickness = key[0], key[1]
     prod_sig = ",".join(f"{p['id']}:{p['qty']}:{'/'.join(map(str, p['angles']))}"
                         for p in products)
-    return f"{material}|{thickness}|{prod_sig}|{settings.margin_pct}"
+    prices = [(size, settings.lookup.get((thickness, f"{material} | {size}")))
+              for size in get_sizes_for_material(settings.lookup, material)]
+    return f"{material}|{thickness}|{prod_sig}|{settings.margin_pct}|{prices}"
 
 
 def _group_label(key: tuple, prods: list[dict]) -> str:
