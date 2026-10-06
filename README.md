@@ -5,7 +5,9 @@ A Streamlit app that prices sheet-metal parts from supplier price lists.
 - **Hintalaskuri** (manual tab): enter rectangular parts. Parts are nested with
   a fast bounding-box packer.
 - **DXF-nestaus** (DXF tab): upload one DXF per part. The real shapes are
-  nested with the [Sparrow](https://github.com/JeroenGar/sparrow) solver.
+  nested with the [Sparrow](https://github.com/JeroenGar/sparrow) solver. A
+  part's **Poista** button takes it off the page; the file stays listed in the
+  uploader until it is removed there, and uploading it again brings it back.
 
 Both tabs compare every priced sheet size and pick the cheapest. Parts of the
 same material and thickness share sheets, and the app also looks for a plan
@@ -100,7 +102,9 @@ For each group of parts that share a material and thickness,
    given as the bottom one) are not usable, and the cut gap (*rankaväli*)
    keeps parts apart.
 2. For each size, price up to two plans (see below): the fewest sheets, and
-   the fewest programs. Each is one row in the sheet-size table.
+   the fewest programs. Each is one row in the sheet-size table. A size the
+   parts don't fit says which part is too big, e.g. *ITM-072558 (3059 mm) ei
+   mahdu*.
 3. Charge whole sheets: sheets × sheet weight × price per tonne × (1 + margin).
    The cheapest row is chosen; at the same price, the one with fewer programs.
 4. Spread that cost over the parts by their real weight, which is the
