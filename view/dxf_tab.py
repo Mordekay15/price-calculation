@@ -127,17 +127,17 @@ def render(data: dict) -> None:
         return
 
     st.divider()
-    # The search time and the nesting angle sit with the button they apply to.
-    c_time, c_angle, c_run, c_update = st.columns([1, 2, 2, 2], vertical_alignment="bottom")
+    # Two rows above the button they apply to: the nesting angle, then the
+    # search time with the buttons.
+    shared = _render_angle_controls(len(parts))
+    if shared == ():
+        return  # no angle ticked: the warning says so
+    c_time, c_run, c_update = st.columns([1, 2, 2], vertical_alignment="bottom")
     time_limit = c_time.number_input(
         "Sijoittelun hakuaika (s)", min_value=1, value=4, step=1, key="dxf_sparrow_t",
         help="Aikaraja yhdelle sijoitteluyritykselle (levyä kohden tehdään "
              "yksi tai useampi). Pidempi aika voi löytää tiiviimmän sijoittelun, "
              "mutta laskenta kestää kauemmin.")
-    with c_angle:
-        shared = _render_angle_controls(len(parts))
-    if shared == ():
-        return  # no angle ticked: the warning says so
     if shared is not None:
         products = [{**p, "angles": shared} for p in products]
     groups = group_products(products, nest_mode)
@@ -531,13 +531,19 @@ def _render_nesting_angles(fid: str = "") -> tuple[int, ...]:
 
 
 def _render_angle_controls(n_parts: int) -> tuple[int, ...] | None:
-    """The run row's nesting angle: the angles every part gets, or None when
-    they are chosen per part on the cards (only offered for several parts)."""
-    if n_parts > 1 and st.radio("Nestauskulma", (_SHARED, _PER_PART), horizontal=True,
-                                key=_ANGLE_MODE) == _PER_PART:
-        st.caption("Sallittu nestauskulma valitaan osakorteilla.")
+    """The nesting-angle row above the run button: the angles every part gets,
+    or None when they are chosen per part on the cards (a switch offered only
+    for several parts, left of the angles)."""
+    if n_parts == 1:
+        with st.columns([3, 2])[0]:
+            return _render_nesting_angles()
+    switch, angles = st.columns([2, 3], vertical_alignment="center")
+    if switch.radio("Nestauskulma", (_SHARED, _PER_PART), horizontal=True,
+                    key=_ANGLE_MODE) == _PER_PART:
+        angles.caption("Sallittu nestauskulma valitaan osakorteilla.")
         return None
-    return _render_nesting_angles()
+    with angles:
+        return _render_nesting_angles()
 
 
 def _part(fid: str, dxf: DxfFile) -> DxfReport:
