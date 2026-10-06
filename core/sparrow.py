@@ -1,6 +1,6 @@
 """Sparrow shape nesting, from a DXF part to a priced sheet size: parts, running
-the solver, fixed-sheet packing (Sparrow only knows an endless strip) and
-costing. The solver is passed in as ``run_fn``, so tests need no binary."""
+the solver, fixed-sheet packing (Sparrow only knows an endless strip), the
+repeatable-program plan (``core.programs``) and costing. The solver is passed in as ``run_fn``, so tests need no binary."""
 
 from __future__ import annotations
 
@@ -10,20 +10,34 @@ import shutil
 import subprocess
 import tempfile
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from core.dxf import DxfReport
 from core.geometry import bbox, bbox_wh, net_area, rotate_translate, signed_area
-from core.sheet_cost import EdgeGaps, GroupCost, Packing, compute_options, usable_area
+from core.programs import choose_plans, kit_plan
+from core.sheet_cost import (
+    EdgeGaps,
+    GroupCost,
+    Packing,
+    compute_options,
+    too_big,
+    usable_area,
+)
 
 Point = tuple[float, float]
 
 
 # ── 1. Parts ──────────────────────────────────────────────────────────────────
 
-# The rotations every part may take (degrees): the four quarter turns.
+# The rotations a part may take (degrees): the four quarter turns, unless its
+# nesting angle is fixed (see ``part_from_report``).
 ORIENTATIONS: tuple[float, ...] = (0.0, 90.0, 180.0, 270.0)
+
+# The nesting angles a part card offers, counted from the part as drawn: 0
+# (0/180) keeps the drawing's X axis along the sheet's long side, which is the
+# rolling direction; 90 (90/270) lays it across.
+NESTING_ANGLES: tuple[int, ...] = (0, 90)
 
 # Points closer than this (mm) are treated as the same vertex when cleaning a
 # ring. Guards against jagua-rs bailing on duplicate vertices, including f32
@@ -38,6 +52,7 @@ class SparrowPart:
     ``outer`` is the placement outline; ``holes`` are kept for the drawing and
     the real part area (Sparrow places a part by its outer boundary).
     ``construction`` holds the bend / reference lines drawn on the layout.
+    ``orientations`` are the rotations Sparrow may give it.
     """
 
     part_id: str
@@ -47,6 +62,17 @@ class SparrowPart:
     width_mm: float = 0.0
     height_mm: float = 0.0
     construction: list[list[Point]] = field(default_factory=list)
+    orientations: tuple[float, ...] = ORIENTATIONS
+
+    @property
+    def turns(self) -> bool:
+        """May the part take any quarter turn (its nesting angle is free)?"""
+        return self.orientations == ORIENTATIONS
+
+    def sheet_size(self) -> tuple[float, float]:
+        """Its bounding box at its first allowed rotation, as it lies on the
+        sheet (the other allowed rotation is half a turn: the same box)."""
+        return bbox_wh(rotate_translate(self.outer, self.orientations[0], (0.0, 0.0)))
 
     def shape_dict(self) -> dict:
         """The jagua-rs ``shape`` object for this part."""
@@ -58,13 +84,22 @@ class SparrowPart:
         return {"type": "polygon", "data": {"outer": outer, "inner": inner}}
 
 
-def part_from_report(report: DxfReport, quantity: int = 1) -> SparrowPart:
+def part_from_report(report: DxfReport, quantity: int = 1,
+                     angles: tuple[int, ...] = NESTING_ANGLES) -> SparrowPart:
     """The SparrowPart for a priceable DXF part, with its holes attached.
 
-    Outer rings come out counter-clockwise and holes clockwise (standard
-    convention; the solver re-derives winding, but this keeps the JSON tidy).
+    ``angles`` are the allowed nesting angles (see ``NESTING_ANGLES``). With
+    both the part takes any quarter turn; with one, only that angle and half a
+    turn more, counted from the drawing: the turn that laid the part along its
+    length is undone. Outer rings come out counter-clockwise and holes
+    clockwise (standard convention; the solver re-derives winding, but this
+    keeps the JSON tidy).
     """
     outline = report.outline
+    orientations = ORIENTATIONS
+    if set(angles) != set(NESTING_ANGLES):
+        orientations = tuple(sorted({round((a + k - report.turned_deg) % 360.0, 6)
+                                     for a in angles for k in (0, 180)}))
     return SparrowPart(
         part_id=_stem(report.name),
         quantity=int(quantity),
@@ -73,6 +108,7 @@ def part_from_report(report: DxfReport, quantity: int = 1) -> SparrowPart:
         width_mm=outline.width_mm,
         height_mm=outline.height_mm,
         construction=list(report.reference_lines),
+        orientations=orientations,
     )
 
 
@@ -251,7 +287,6 @@ class Placed:
     part_index: int                 # index into the parts list passed in
     part_id: str
     rotation_deg: float
-    translation: tuple[float, float]
     outer: list[Point]
     holes: list[list[Point]] = field(default_factory=list)
     construction: list[list[Point]] = field(default_factory=list)
@@ -293,13 +328,14 @@ def greedy_fixed_sheets(
     sheet_h: float,
     *,
     run_fn,
-    seed: int = 0,
-    time_limit_sec: int = 4,
     separation: float | None = None,
     max_sheets: int = 400,
     on_sheet=None,
 ) -> PackResult:
     """Nest every part's ``quantity`` onto fixed ``sheet_w`` × ``sheet_h`` sheets.
+
+    ``run_fn(instance, separation=)`` runs the solver on a strip instance and
+    returns a ``SparrowResult`` (the caller binds its time limit).
 
     ``on_sheet(placed, total)``, if given, is called after each sheet layout is
     settled — for a progress display. Not ok (with a reason) when a part is
@@ -309,11 +345,10 @@ def greedy_fixed_sheets(
         return PackResult(ok=False, reason="virheellinen levykoko")
 
     remaining = [int(p.quantity) for p in parts]
-    for i, p in enumerate(parts):
-        w, h = bbox_wh(p.outer)
-        if remaining[i] > 0 and not _fits(w, h, sheet_w, sheet_h):
-            return PackResult(ok=False, reason=f"osa {p.part_id} ei mahdu levylle "
-                                               f"({w:.0f}×{h:.0f} mm)")
+    reason = too_big([(p.part_id, *p.sheet_size(), p.turns) for p in parts if p.quantity > 0],
+                     sheet_w, sheet_h, _TOL)
+    if reason:
+        return PackResult(ok=False, reason=reason)
 
     n_total = sum(remaining)
     sheets: list[PackedSheet] = []
@@ -323,7 +358,7 @@ def greedy_fixed_sheets(
 
         def probe(n: int):
             return _probe(parts, _mix(remaining, n), sheet_w, sheet_h, run_fn=run_fn,
-                          seed=seed, time_limit_sec=time_limit_sec, separation=separation)
+                          separation=separation)
 
         total = sum(remaining)
         err, best, strip_len = probe(total)
@@ -363,12 +398,17 @@ def greedy_fixed_sheets(
         count = min(remaining[i] // n for i, n in per_sheet.items())
         for i, n in per_sheet.items():
             remaining[i] -= count * n
-        used_area = sum(net_area(pl.outer, pl.holes) for pl in best)
-        sheets.append(PackedSheet(best, sheet_w, sheet_h, used_area, count))
+        sheets.append(_sheet(best, sheet_w, sheet_h, count))
         if on_sheet is not None:
             on_sheet(n_total - sum(remaining), n_total)
 
     return PackResult(ok=True, sheets=sheets)
+
+
+def _sheet(placements: list[Placed], sheet_w: float, sheet_h: float,
+           count: int = 1) -> PackedSheet:
+    return PackedSheet(placements, sheet_w, sheet_h,
+                       sum(net_area(pl.outer, pl.holes) for pl in placements), count)
 
 
 def _mix(remaining: list[int], n: int) -> dict[int, int]:
@@ -386,7 +426,7 @@ def _mix(remaining: list[int], n: int) -> dict[int, int]:
 
 
 def _probe(parts, demand: dict[int, int], sheet_w: float, sheet_h: float,
-           *, run_fn, seed, time_limit_sec, separation):
+           *, run_fn, separation):
     """Nest ``demand`` in a strip ``sheet_h`` high.
 
     Returns ``(error, placed_on_sheet, strip_len)``: error is None on success;
@@ -399,7 +439,7 @@ def _probe(parts, demand: dict[int, int], sheet_w: float, sheet_h: float,
     pad = separation or 0.0
     active = list(demand)
     instance = _build_instance(parts, demand, sheet_h + 2 * pad)
-    res = run_fn(instance, seed=seed, time_limit_sec=time_limit_sec, separation=separation)
+    res = run_fn(instance, separation=separation)
     if not res.ok:
         return res.message or "Sparrow-ajo epäonnistui", [], None
 
@@ -417,7 +457,7 @@ def _probe(parts, demand: dict[int, int], sheet_w: float, sheet_h: float,
             continue  # spills past this sheet
         if left[orig_i] <= 0:
             continue
-        kept.append(Placed(orig_i, part.part_id, rot, trans, outer,
+        kept.append(Placed(orig_i, part.part_id, rot, outer,
                            [rotate_translate(h, rot, trans) for h in part.holes],
                            [rotate_translate(c, rot, trans) for c in part.construction]))
         left[orig_i] -= 1
@@ -431,15 +471,10 @@ def _build_instance(parts, demand: dict[int, int], strip_height: float) -> dict:
     for local_id, (orig_i, n) in enumerate(demand.items()):
         part = parts[orig_i]
         item = {"id": local_id, "demand": int(n), "part_id": part.part_id,
-                "allowed_orientations": list(ORIENTATIONS)}
+                "allowed_orientations": list(part.orientations)}
         item["shape"] = part.shape_dict()
         items.append(item)
     return {"name": "pack", "strip_height": float(strip_height), "items": items}
-
-
-def _fits(w: float, h: float, sw: float, sh: float) -> bool:
-    """True if a w×h part fits an sw×sh sheet as is or turned a quarter."""
-    return (w <= sw + _TOL and h <= sh + _TOL) or (h <= sw + _TOL and w <= sh + _TOL)
 
 
 # ── 4. Costing ────────────────────────────────────────────────────────────────
@@ -455,8 +490,6 @@ def sparrow_options(
     margin_pct: float = 0.0,
     edges: EdgeGaps = EdgeGaps(),
     rankavali_mm: int = 0,
-    seed: int = 0,
-    time_limit_sec: int = 4,
     on_progress=None,
 ) -> GroupCost | None:
     """``core.sheet_cost.compute_options`` with Sparrow shape nesting.
@@ -469,11 +502,10 @@ def sparrow_options(
     part_area_mm2 = sum(net_area(p.outer, p.holes) * p.quantity for p in parts)
     separation = float(rankavali_mm) if rankavali_mm else None
 
-    def pack_fn(sw: int, sh: int) -> Packing:
+    def pack_fn(sw: int, sh: int) -> list[Packing]:
         return _pack_on_short_side(
             parts, sw, sh, edges,
-            run_fn=run_fn, seed=seed, time_limit_sec=time_limit_sec,
-            separation=separation, on_progress=on_progress,
+            run_fn=run_fn, separation=separation, on_progress=on_progress,
         )
 
     return compute_options(
@@ -483,20 +515,56 @@ def sparrow_options(
     )
 
 
-def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, seed, time_limit_sec,
-                        separation, on_progress=None) -> Packing:
+def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
+                        on_progress=None) -> list[Packing]:
     """Pack the sheet one way only: Sparrow's fixed strip height is the sheet's
     short side and the strip runs along the long side (e.g. 1000 high, up to
-    2000 long on a 1000 × 2000 sheet), both less the edge gaps."""
+    2000 long on a 1000 × 2000 sheet), both less the edge gaps.
+
+    Returns the fewest-sheets packing and, when it is worth showing, the
+    repeatable-program one (see ``core.programs``)."""
     long_side, short_side = max(sw, sh), min(sw, sh)
     x0, y0, ew, eh = usable_area(sw, sh, edges)
     on_sheet = None
     if on_progress is not None:
         on_sheet = lambda placed, total: on_progress(  # noqa: E731
             "sheet", w=long_side, h=short_side, placed=placed, total=total)
-    pack = greedy_fixed_sheets(parts, ew, eh, run_fn=run_fn, seed=seed,
-                               time_limit_sec=time_limit_sec, separation=separation,
+    pack = greedy_fixed_sheets(parts, ew, eh, run_fn=run_fn, separation=separation,
                                on_sheet=on_sheet)
-    return Packing(sheets=pack.sheets, sheets_needed=pack.sheets_needed,
-                   eff_w=ew, eff_h=eh, draw_w=long_side, draw_h=short_side,
-                   failed=0 if pack.ok else 1, reason=pack.reason, x0=x0, y0=y0)
+
+    def packing(sheets: list[PackedSheet]) -> Packing:
+        return Packing(sheets=sheets, sheets_needed=sum(s.count for s in sheets),
+                       eff_w=ew, eff_h=eh, draw_w=long_side, draw_h=short_side,
+                       failed=0 if pack.ok else 1, reason=pack.reason, x0=x0, y0=y0)
+
+    if not pack.ok:
+        return [packing(pack.sheets)]
+    kit = _kit(parts, pack.sheets, ew, eh, run_fn=run_fn, separation=separation)
+    return [packing(sheets) for sheets in choose_plans(pack.sheets, kit)]
+
+
+# Sparrow runs spent looking for a one-program kit on one sheet size; each run
+# takes the search time.
+_KIT_BUDGET = 4
+
+
+def _kit(parts, greedy_sheets, sheet_w, sheet_h, *, run_fn,
+         separation) -> list[PackedSheet] | None:
+    """``core.programs.kit_plan`` with Sparrow: a kit fits when one probe puts
+    every piece of it on the sheet; the remainder is packed greedily."""
+    def fits_kit(kit):
+        demand = {i: n for i, n in enumerate(kit) if n > 0}
+        err, kept, _ = _probe(parts, demand, sheet_w, sheet_h, run_fn=run_fn,
+                              separation=separation)
+        if err is not None or len(kept) < sum(kit):
+            return None
+        return _sheet(kept, sheet_w, sheet_h)
+
+    def pack_rest(rest):
+        pack = greedy_fixed_sheets(
+            [replace(p, quantity=q) for p, q in zip(parts, rest)], sheet_w, sheet_h,
+            run_fn=run_fn, separation=separation)
+        return pack.sheets if pack.ok else None
+
+    return kit_plan([p.quantity for p in parts], greedy_sheets, fits_kit, pack_rest,
+                    budget=_KIT_BUDGET)

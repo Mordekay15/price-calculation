@@ -4,7 +4,7 @@ shapes), the edge-gap diagram and the DXF part preview on a card."""
 import streamlit as st
 
 from core.dxf import DxfReport
-from core.sheet_cost import SheetOption, utilization
+from core.sheet_cost import SheetOption, product_label, utilization
 
 
 # ── Shared pieces ─────────────────────────────────────────────
@@ -44,6 +44,30 @@ def _render_sheet_grid(cards: list[tuple[str, str]]) -> None:
             with col:
                 st.markdown(caption)
                 st.markdown(svg, unsafe_allow_html=True)
+
+
+def _render_layouts(packing, used_area, sheet_svg) -> None:
+    """One card per distinct sheet layout (a program); identical sheets are
+    drawn once with a "×N" count and a sheet-number range (e.g. "Ohjelma 1 ·
+    Levy 1–4 · ×4").
+
+    ``used_area(sheet)`` is the real part area on one sheet and
+    ``sheet_svg(sheet, scale)`` draws it.
+    """
+    sw, sh = packing.draw_w, packing.draw_h
+    scale = _TARGET_PX / max(sw, sh)
+    cards = []
+    first = 1
+    for n, sheet in enumerate(packing.sheets, start=1):
+        last = first + sheet.count - 1
+        sheets = f"Levy {first}" if sheet.count == 1 else f"Levy {first}–{last} · ×{sheet.count}"
+        label = f"Ohjelma {n} · {sheets}"
+        first = last + 1
+        cards.append((
+            f"**{label}** · käyttöaste {utilization(used_area(sheet), sw, sh) * 100:.1f} %",
+            sheet_svg(sheet, scale),
+        ))
+    _render_sheet_grid(cards)
 
 
 def _svg_open(vb_w: float, vb_h: float, scale: float) -> str:
@@ -115,33 +139,24 @@ def edge_gaps_svg(edges_mm: tuple[int, int, int, int]) -> str:
 # ── Manual calculator: rectangles ─────────────────────────────────────────────
 
 def draw_rect_layout(option: SheetOption, products: list[dict], rankavali_mm: int) -> None:
-    """Every sheet of the chosen size, each piece a labelled rectangle.
+    """Each sheet layout of the chosen size, each piece a labelled rectangle.
 
     ``products`` is the group's product list (placements index into it); each
     product's ``_global_idx`` picks its colour and ``#N`` label.
     """
     packing = option.packing
-    sheets = packing.sheets
-    sw, sh = packing.draw_w, packing.draw_h
     _render_legend([
-        (p["_global_idx"],
-         f"{p.get('name') or 'Tuote #' + str(p['_global_idx'] + 1)} "
-         f"({p['width']:g}×{p['height']:g})")
+        (p["_global_idx"], f"{product_label(p)} ({p['width']:g}×{p['height']:g})")
         for p in products
     ])
 
-    scale = _TARGET_PX / max(sw, sh)
-    cards = []
-    for n, sheet in enumerate(sheets, start=1):
-        part_area = sum(
-            products[p.product_idx]["width"] * products[p.product_idx]["height"]
-            for p in sheet.placements
-        )
-        cards.append((
-            f"**Levy {n}** · käyttöaste {utilization(part_area, sw, sh) * 100:.1f} %",
-            _rect_sheet_svg(sheet, packing, scale, products, rankavali_mm),
-        ))
-    _render_sheet_grid(cards)
+    def used_area(sheet):
+        return sum(products[p.product_idx]["width"] * products[p.product_idx]["height"]
+                   for p in sheet.placements)
+
+    _render_layouts(packing, used_area,
+                    lambda sheet, scale: _rect_sheet_svg(sheet, packing, scale, products,
+                                                         rankavali_mm))
 
 
 def _rect_sheet_svg(sheet, packing, scale, products, rankavali_mm) -> str:
@@ -177,14 +192,9 @@ def _rect_sheet_svg(sheet, packing, scale, products, rankavali_mm) -> str:
 # ── DXF tab: Sparrow's real shapes and the part preview ────────────────────────────────────────────
 
 def draw_sparrow_layout(option: SheetOption, parts: list) -> None:
-    """One SVG per distinct sheet layout for the chosen size.
-
-    Identical sheets are drawn once with a "×N" count and a sheet-number range
-    (e.g. "Levy 1–4 · ×4").
-    """
+    """Each sheet layout of the chosen size with the parts' real shapes."""
     shown = option.packing
     sheets = shown.sheets
-    sw, sh = shown.draw_w, shown.draw_h
 
     used = sorted({pl.part_index for s in sheets for pl in s.placements})
     _render_legend([
@@ -192,19 +202,12 @@ def draw_sparrow_layout(option: SheetOption, parts: list) -> None:
             if i < len(parts) else f"#{i + 1}")
         for i in used
     ])
+    # A part with a fixed nesting angle lies to the rolling direction.
+    if any(not parts[i].turns for i in used if i < len(parts)):
+        st.caption("Valssaussuunta → levyn pitkä sivu (kuvissa vaakasuunta)")
 
-    scale = _TARGET_PX / max(sw, sh)
-    cards = []
-    first = 1
-    for sheet in sheets:
-        last = first + sheet.count - 1
-        label = f"Levy {first}" if sheet.count == 1 else f"Levy {first}–{last} · ×{sheet.count}"
-        first = last + 1
-        cards.append((
-            f"**{label}** · käyttöaste {utilization(sheet.used_area, sw, sh) * 100:.1f} %",
-            _shape_sheet_svg(sheet, shown, scale),
-        ))
-    _render_sheet_grid(cards)
+    _render_layouts(shown, lambda sheet: sheet.used_area,
+                    lambda sheet, scale: _shape_sheet_svg(sheet, shown, scale))
 
 
 def _shape_sheet_svg(sheet, packing, scale) -> str:

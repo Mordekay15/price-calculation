@@ -1,6 +1,7 @@
 """Sheet-usage costing, pure (no Streamlit): for one group of pieces that share
 a material and thickness, price every sheet size. The nesting is passed in as
-``pack(sheet_w, sheet_h) -> Packing`` (``rect_nesting`` or ``sparrow``)."""
+``pack(sheet_w, sheet_h) -> list[Packing]`` (``rect_nesting`` or ``sparrow``):
+one Packing per plan worth pricing (see ``core.programs``)."""
 
 from __future__ import annotations
 
@@ -27,10 +28,11 @@ class EdgeGaps:
 class Packing:
     """How one sheet size was packed, as reported by a packer.
 
-    ``draw_w × draw_h`` is the sheet laid long side horizontal. Parts may use
-    the ``eff_w × eff_h`` area whose top-left corner is at ``(x0, y0)`` (see
-    ``usable_area``); placements are relative to that corner. ``failed``
-    counts pieces that did not fit.
+    ``sheets`` holds one entry per distinct layout (a program), each with the
+    ``count`` of sheets cut from it. ``draw_w × draw_h`` is the sheet laid long
+    side horizontal. Parts may use the ``eff_w × eff_h`` area whose top-left
+    corner is at ``(x0, y0)`` (see ``usable_area``); placements are relative to
+    that corner. ``failed`` counts pieces that did not fit.
     """
 
     sheets: list
@@ -43,6 +45,11 @@ class Packing:
     reason: str = ""
     x0: int = 0
     y0: int = 0
+
+    @property
+    def programs(self) -> int:
+        """Distinct sheet layouts: the programs the designer makes."""
+        return len(self.sheets)
 
 
 @dataclass
@@ -70,6 +77,10 @@ class SheetOption:
     @property
     def sheet_kg(self) -> float:
         return self.sheet_weight_kg * self.sheets_needed
+
+    @property
+    def programs(self) -> int:
+        return self.packing.programs
 
 
 @dataclass
@@ -116,6 +127,28 @@ def utilization(part_area_mm2: float, sheet_w: float, sheet_h: float, n_sheets: 
     return part_area_mm2 / total if total else 0.0
 
 
+def too_big(parts, sheet_w: float, sheet_h: float, tol: float = 0.0) -> str:
+    """Why parts don't fit a ``sheet_w`` × ``sheet_h`` usable area, as the
+    sheet-size table shows it: ``ITM-072558 (3059 mm) ei mahdu``. ``parts`` are
+    ``(name, w, h)`` or ``(name, w, h, turns)``: a part fits as is or, unless
+    ``turns`` is False (its nesting angle is fixed), turned a quarter. Names
+    the length when that is what's too long, else both sides. "" when every
+    part fits."""
+    long_cap, short_cap = max(sheet_w, sheet_h) + tol, min(sheet_w, sheet_h) + tol
+    out = []
+    for name, w, h, *turns in parts:
+        if turns and not turns[0]:
+            if w > sheet_w + tol or h > sheet_h + tol:
+                out.append(f"{name} ({w:.0f} × {h:.0f} mm)")
+            continue
+        long_side, short_side = max(w, h), min(w, h)
+        if long_side > long_cap:
+            out.append(f"{name} ({long_side:.0f} mm)")
+        elif short_side > short_cap:
+            out.append(f"{name} ({long_side:.0f} × {short_side:.0f} mm)")
+    return ", ".join(out) + " ei mahdu" if out else ""
+
+
 def fmt_m(mm: int) -> str:
     """Format a mm value as metres: 1000 -> '1.0', 1250 -> '1.25', 1500 -> '1.5'."""
     s = f"{mm / 1000:.2f}".rstrip("0")
@@ -141,7 +174,8 @@ def compute_options(
     ``utilization``); the piece weight the sheet cost is spread over is derived
     from it, as ``piece_costs`` does, so the two totals reconcile.
     ``on_progress``, if given, is called as ``on_progress("size", index=i,
-    count=n, w=sw, h=sh)`` before each sheet size is packed.
+    count=n, w=sw, h=sh)`` before each sheet size is packed. A size packed
+    with more than one plan gives one option per plan.
     """
     candidates: list[tuple[int, int, float]] = []
     for size_label in get_sizes_for_material(lookup, material):
@@ -158,31 +192,40 @@ def compute_options(
     for index, (sw, sh, price_per_tonne) in enumerate(candidates):
         if on_progress is not None:
             on_progress("size", index=index, count=len(candidates), w=sw, h=sh)
-        packing = pack(sw, sh)
-        option = SheetOption(sw, sh, price_per_tonne, price_per_tonne * (1 + margin_pct / 100),
-                             packing, failed=packing.failed, reason=packing.reason)
-        if option.ok:
-            option.sheet_weight_kg = weight_kg(sw * sh, thickness_mm, material)
-            option.sheets_needed = packing.sheets_needed
-            option.utilization = utilization(part_area_mm2, sw, sh, packing.sheets_needed)
-            option.total_eur = option.adjusted_ppt * (option.sheet_kg / 1000)
-            # Effective rate against piece weight, so the pieces summary adds
-            # up to the sheet total.
-            option.bill_rate_ppt = (option.adjusted_ppt * (option.sheet_kg / pieces_kg)
-                                    if pieces_kg else option.adjusted_ppt)
-        options.append(option)
+        for packing in pack(sw, sh):
+            option = SheetOption(sw, sh, price_per_tonne,
+                                 price_per_tonne * (1 + margin_pct / 100), packing,
+                                 failed=packing.failed, reason=packing.reason)
+            if option.ok:
+                option.sheet_weight_kg = weight_kg(sw * sh, thickness_mm, material)
+                option.sheets_needed = packing.sheets_needed
+                option.utilization = utilization(part_area_mm2, sw, sh, packing.sheets_needed)
+                option.total_eur = option.adjusted_ppt * (option.sheet_kg / 1000)
+                # Effective rate against piece weight, so the pieces summary adds
+                # up to the sheet total.
+                option.bill_rate_ppt = (option.adjusted_ppt * (option.sheet_kg / pieces_kg)
+                                        if pieces_kg else option.adjusted_ppt)
+            options.append(option)
     return GroupCost(options, n_pieces, pieces_kg)
 
 
 def cheapest_index(options: list[SheetOption]) -> int | None:
-    """Index of the cheapest fully-fitting option, tie-broken by utilisation."""
+    """Index of the cheapest fully-fitting option; on a tie the one with fewer
+    programs, then the better utilisation."""
     valid = [i for i, o in enumerate(options) if o.ok]
     if not valid:
         return None
-    return min(valid, key=lambda i: (options[i].total_eur, -options[i].utilization))
+    return min(valid, key=lambda i: (options[i].total_eur, options[i].programs,
+                                     -options[i].utilization))
 
 
 # ── Products: grouping and per-piece cost ─────────────────────────────────────
+
+def product_label(product: dict) -> str:
+    """A product as the layout legend and messages name it: its name, or its
+    running number (``Tuote #3``) when it has none."""
+    return product.get("name") or f"Tuote #{product['_global_idx'] + 1}"
+
 
 def is_ready(prod: dict) -> bool:
     """A product can be priced once it has a material, thickness and size."""

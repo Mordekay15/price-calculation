@@ -5,13 +5,22 @@ priced (see "How a DXF file is read" in the README)."""
 from __future__ import annotations
 
 import io
+import math
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
 from ezdxf import path, recover
 
-from core.geometry import area, bbox, bbox_wh, point_in_polygon, representative_point
+from core.geometry import (
+    area,
+    bbox,
+    bbox_wh,
+    min_area_angle,
+    point_in_polygon,
+    representative_point,
+    rotate_translate,
+)
 
 Point = tuple[float, float]
 
@@ -134,6 +143,9 @@ class DxfReport:
     dropped: list[list[Point]] = field(default_factory=list)      # outside the part
     # Why this part cannot be priced (empty = it can).
     problems: list[str] = field(default_factory=list)
+    # How far the part was turned from the drawing to lie along its length
+    # (degrees, counter-clockwise): the drawing's X axis is now at this angle.
+    turned_deg: float = 0.0
 
 
 @dataclass
@@ -142,7 +154,6 @@ class DxfFile:
 
     name: str
     unit_label: str = ""
-    unit_note: str = ""          # how the unit was found, when not from the header
     # No unit anywhere: unit_label is only a guess, which the user must confirm
     # before the part is priced.
     unit_guessed: bool = False
@@ -221,7 +232,31 @@ class DxfFile:
                 report.open_lines.append(c.points)
 
         report.problems += _part_problems(report)
+        _lay_along_length(report)
         return report
+
+
+# A part already within this many degrees of a quarter turn is left as drawn.
+_STRAIGHT_TOL_DEG = 0.5
+
+
+def _lay_along_length(report: DxfReport) -> None:
+    """Turn the whole drawing so the part lies along its length, as a designer
+    lays it before nesting: a strip drawn diagonally is then 2936 × 446 mm, not
+    2120 × 2061. The card, the price and Sparrow all use the turned part."""
+    turn = min_area_angle(report.outline.points)
+    off = turn % 90.0
+    if min(off, 90.0 - off) <= _STRAIGHT_TOL_DEG:
+        return
+
+    def turned(points):
+        return rotate_translate(points, turn, (0.0, 0.0))
+
+    report.turned_deg = turn
+    for c in (report.outline, *report.holes):
+        c.points = turned(c.points)
+    for lines in (report.reference_lines, report.open_lines, report.dropped):
+        lines[:] = [turned(line) for line in lines]
 
 
 # ── Reading ──────────────────────────────────────────────────────────────────
@@ -242,8 +277,6 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
     unit_code = int(getattr(doc, "units", 0) or 0)
     if unit_code not in _UNITS:
         unit_code = _unit_from_texts(f.texts)
-        if unit_code is not None:
-            f.unit_note = "luettu piirustuksen tekstistä"
     # Without a unit, read in drawing units; a standard sheet size below may
     # still show they are millimetres.
     factor, f.unit_label = _UNITS.get(unit_code, (1.0, "ei yksikköä"))
@@ -263,13 +296,11 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
             f.pieces.append(_Piece(pts, closed, layer, not _is_dashed(entity, doc)))
 
     if unit_code is None:
-        sheet = _iso_sheet([pt for p in f.pieces for pt in p.points])
-        if sheet:
-            f.unit_label, f.unit_note = "mm", f"päätelty piirustusarkin koosta ({sheet})"
+        if _iso_sheet([pt for p in f.pieces for pt in p.points]):
+            f.unit_label = "mm"
         else:
             # Guess: mm, unless the header says the drawing is imperial.
             f.unit_guessed = True
-            f.unit_note = "arvattu — piirustuksessa ei ole mittayksikköä"
             if doc.header.get("$MEASUREMENT", 1) == 0:
                 factor, f.unit_label = _UNITS[1]
                 for p in f.pieces:
@@ -414,6 +445,10 @@ def _entity_polyline(entity, factor: float) -> tuple[list[Point], bool] | None:
     if len(pts) < 2:
         return None
     closed = p.start.isclose(p.end, abs_tol=_JOIN_TOL_MM / max(factor, 1e-9))
+    # A line shorter than the join tolerance (CAD exports leave 0.004 mm stubs
+    # between outline segments) is a stub to chain through, not a loop.
+    if max(bbox_wh(pts)) <= _JOIN_TOL_MM:
+        closed = False
     if closed and (pts[0][0] != pts[-1][0] or pts[0][1] != pts[-1][1]):
         pts.append(pts[0])  # make the closing edge explicit
     return pts, closed
@@ -424,42 +459,68 @@ def _entity_polyline(entity, factor: float) -> tuple[list[Point], bool] | None:
 def _chain_open_segments(segments: list[list[Point]], tol: float) -> list[Contour]:
     """Chain open segments end-to-end into closed loops / open chains.
 
-    Endpoints within `tol` mm are treated as the same vertex. A chain whose two
-    ends meet is a closed contour; otherwise it stays open.
+    Endpoints within `tol` mm are one vertex, and every end is moved onto it, so
+    a line that overshoots its corner by a few hundredths leaves no spike. A
+    chain whose two ends meet is a closed contour; otherwise it stays open.
     """
-    def key(pt: Point) -> tuple[int, int]:
-        return (round(pt[0] / tol), round(pt[1] / tol))
+    # Vertices: an endpoint joins the nearest vertex within `tol` (searched in
+    # the neighbouring grid cells too, so two ends on either side of a cell
+    # border still meet), else starts a new one.
+    vertices: list[Point] = []
+    grid: dict[tuple[int, int], list[int]] = defaultdict(list)
 
-    adj: dict[tuple[int, int], list[int]] = defaultdict(list)
-    for i, pts in enumerate(segments):
-        adj[key(pts[0])].append(i)
-        adj[key(pts[-1])].append(i)
+    def vertex(pt: Point) -> int:
+        cx, cy = math.floor(pt[0] / tol), math.floor(pt[1] / tol)
+        near = [(math.dist(vertices[v], pt), v)
+                for dx in (-1, 0, 1) for dy in (-1, 0, 1)
+                for v in grid.get((cx + dx, cy + dy), ())]
+        near = [n for n in near if n[0] <= tol]
+        if near:
+            return min(near)[1]
+        vertices.append(pt)
+        grid[(cx, cy)].append(len(vertices) - 1)
+        return len(vertices) - 1
 
-    used = [False] * len(segments)
+    contours: list[Contour] = []
+    segs: list[tuple[list[Point], int, int]] = []
+    for pts in segments:
+        a, b = vertex(pts[0]), vertex(pts[-1])
+        pts = [vertices[a], *pts[1:-1], vertices[b]]
+        if a == b:
+            if max(bbox_wh(pts)) > tol:     # a loop on its own
+                contours.append(Contour(points=pts, closed=True))
+            continue                        # else a zero-length stub
+        segs.append((pts, a, b))
 
-    def next_unused(node: tuple[int, int]) -> int | None:
-        for j in adj.get(node, ()):
+    adj: dict[int, list[int]] = defaultdict(list)
+    for i, (_, a, b) in enumerate(segs):
+        adj[a].append(i)
+        adj[b].append(i)
+
+    used = [False] * len(segs)
+
+    def next_unused(v: int) -> int | None:
+        for j in adj.get(v, ()):
             if not used[j]:
                 return j
         return None
 
-    contours: list[Contour] = []
-    for start in range(len(segments)):
+    for start in range(len(segs)):
         if used[start]:
             continue
         used[start] = True
-        chain = list(segments[start])
-        while (j := next_unused(key(chain[-1]))) is not None:   # extend the tail
+        chain, head, tail = list(segs[start][0]), segs[start][1], segs[start][2]
+        while (j := next_unused(tail)) is not None:     # extend the tail
             used[j] = True
-            seg = segments[j]
-            seg = seg if key(seg[0]) == key(chain[-1]) else seg[::-1]
+            seg, a, b = segs[j]
+            seg, tail = (seg, b) if a == tail else (seg[::-1], a)
             chain.extend(seg[1:])
-        while (j := next_unused(key(chain[0]))) is not None:    # extend the head
+        while (j := next_unused(head)) is not None:     # extend the head
             used[j] = True
-            seg = segments[j]
-            seg = seg if key(seg[-1]) == key(chain[0]) else seg[::-1]
+            seg, a, b = segs[j]
+            seg, head = (seg, a) if b == head else (seg[::-1], b)
             chain = seg[:-1] + chain
-        closed = len(chain) >= 4 and key(chain[0]) == key(chain[-1])
+        closed = len(chain) >= 4 and head == tail
         contours.append(Contour(points=chain, closed=closed))
     return contours
 
@@ -480,7 +541,10 @@ def _segments_cross(p1: Point, p2: Point, p3: Point, p4: Point) -> bool:
     """True if segment p1p2 properly crosses p3p4 (shared endpoints ignored)."""
     def orient(a, b, c):
         v = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
-        if abs(v) < 1e-9:
+        # c within 1e-6 mm of the line ab counts as on it. The tolerance is a
+        # distance, not a raw cross product: on a 2 m edge float noise of
+        # 1e-12 mm would otherwise turn two collinear edges into a "crossing".
+        if abs(v) <= 1e-6 * math.hypot(b[0] - a[0], b[1] - a[1]):
             return 0
         return 1 if v > 0 else -1
 
@@ -489,8 +553,11 @@ def _segments_cross(p1: Point, p2: Point, p3: Point, p4: Point) -> bool:
         for b in (p3, p4):
             if abs(a[0] - b[0]) < 1e-9 and abs(a[1] - b[1]) < 1e-9:
                 return False
-    return (orient(p3, p4, p1) != orient(p3, p4, p2)
-            and orient(p1, p2, p3) != orient(p1, p2, p4))
+    # Properly: each segment's ends on strictly opposite sides of the other. A
+    # point on the other line (orient 0) only touches it — a nearly straight
+    # arc flattened into tiny collinear segments touches itself everywhere.
+    return (orient(p3, p4, p1) * orient(p3, p4, p2) < 0
+            and orient(p1, p2, p3) * orient(p1, p2, p4) < 0)
 
 
 def _self_intersects(points: list[Point]) -> bool:

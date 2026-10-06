@@ -5,12 +5,17 @@ import re
 import pandas as pd
 import pyarrow as pa
 
-from core.sheet_cost import SheetOption
+from core.sheet_cost import Packing, SheetOption
 from view.sheet_usage import _styled_table, _table_rows
 
 
+TWO_PROGRAMS = Packing(sheets=["a", "b"], sheets_needed=2, eff_w=3000, eff_h=1500,
+                       draw_w=3000, draw_h=1500)
+
+
 def test_table_with_a_size_that_does_not_fit_converts_to_arrow():
-    fits = SheetOption(sw=3000, sh=1500, base_ppt=1000, adjusted_ppt=1100, packing=None,
+    fits = SheetOption(sw=3000, sh=1500, base_ppt=1000, adjusted_ppt=1100,
+                       packing=TWO_PROGRAMS,
                        sheet_weight_kg=100, sheets_needed=2, total_eur=220, utilization=0.6)
     too_small = SheetOption(sw=1000, sh=500, base_ppt=1000, adjusted_ppt=1100, packing=None,
                             failed=3, reason="ei mahdu")
@@ -19,10 +24,12 @@ def test_table_with_a_size_that_does_not_fit_converts_to_arrow():
     # text cell fails this and gets logged as a traceback.
     pa.Table.from_pandas(pd.DataFrame(rows))
     assert rows[1]["€/kpl"] is None and rows[0]["€/kpl"] == 55.0
+    assert rows[0]["Ohjelmia"] == 2 and rows[1]["Ohjelmia"] is None
 
 
 def test_only_the_cheapest_row_is_coloured():
-    fits = SheetOption(sw=3000, sh=1500, base_ppt=1000, adjusted_ppt=1100, packing=None,
+    fits = SheetOption(sw=3000, sh=1500, base_ppt=1000, adjusted_ppt=1100,
+                       packing=TWO_PROGRAMS,
                        sheet_weight_kg=100, sheets_needed=2, total_eur=220, utilization=0.6)
     too_small = SheetOption(sw=1000, sh=500, base_ppt=1000, adjusted_ppt=1100, packing=None,
                             failed=3, reason="ei mahdu")

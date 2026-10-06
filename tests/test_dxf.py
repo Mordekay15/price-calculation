@@ -5,6 +5,7 @@ import math
 import pytest
 
 from core.dxf import read_dxf
+from core.geometry import min_area_angle, point_in_polygon, rotate_translate
 from tests.conftest import dxf_bytes, rect
 
 
@@ -127,7 +128,7 @@ def test_unit_from_a_text_label(drawing):
     rect(msp, 0, 0, 12, 8)
     msp.add_text('Un="inch"')
     dxf = read_dxf(dxf_bytes(doc), "part.dxf")
-    assert dxf.problems == [] and dxf.unit_note
+    assert dxf.problems == [] and not dxf.unit_guessed
     assert math.isclose(dxf.part().outline.width_mm, 12 * 25.4)
 
 
@@ -137,7 +138,7 @@ def test_unit_from_an_iso_sheet_size(drawing):
     rect(msp, 0, 0, 840, 594, layer="FORMAT")      # an A1 drawing sheet
     rect(msp, 100, 100, 300, 200)
     dxf = read_dxf(dxf_bytes(doc), "part.dxf")
-    assert dxf.problems == [] and "A1" in dxf.unit_note
+    assert dxf.problems == [] and not dxf.unit_guessed and dxf.unit_label == "mm"
     assert round(dxf.part().outline.width_mm) == 300
 
 
@@ -156,6 +157,101 @@ def test_no_unit_in_an_imperial_drawing_is_guessed_as_inch(drawing):
     dxf = read_dxf(dxf_bytes(doc), "part.dxf")
     assert dxf.unit_guessed and dxf.unit_label == "tuuma"
     assert math.isclose(dxf.part().outline.width_mm, 254)
+
+
+# ── CAD export noise (from real Inventor flat patterns) ──────────────────────
+
+def test_zero_length_stubs_in_the_outline_are_chained_through(drawing):
+    # Inventor leaves 0.004 mm lines between outline segments; each one used to
+    # be read as a closed loop and, the outline broken there, picked as a
+    # zero-area outline.
+    doc, msp = drawing()
+    for a, b in [((0, 0), (300, 0)), ((300, 0), (300, 200)), ((300, 200), (150.0264, 200)),
+                 ((150.0264, 200), (150.022, 200)), ((150.022, 200), (0, 200)), ((0, 200), (0, 0))]:
+        msp.add_line(a, b)
+    report = part_of(doc)
+    assert report.problems == []
+    assert math.isclose(report.outline.area_mm2, 60_000, rel_tol=1e-6)
+
+
+def test_ends_a_hair_apart_across_a_grid_border_still_meet(drawing):
+    # 1578.023 and 1578.047 are 0.024 mm apart but round to different 0.05 mm cells.
+    doc, msp = drawing()
+    rect(msp, 1500, 0, 200, 100)
+    for a, b in [((1578.023, 57.267), (1578.023, 59.767)), ((1578.023, 59.767), (1556.036, 59.765)),
+                 ((1556.036, 59.765), (1556.036, 57.265)), ((1556.036, 57.265), (1578.047, 57.267))]:
+        msp.add_line(a, b)
+    report = part_of(doc)
+    assert report.problems == []
+    assert len(report.holes) == 1
+
+
+def test_a_hole_edge_overshooting_its_corner_is_not_a_self_crossing(drawing):
+    # The bottom edge runs 0.023 mm past the right edge: snapped onto the corner.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 400, 100)
+    for a, b in [((305.13070048986242, 57.2667633604561317), (305.1305034145744912, 59.7667633527499618)),
+                 ((305.1305034145744912, 59.7667633527499618), (283.1429760329447731, 59.7650273349572032)),
+                 ((283.1429760329447731, 59.7650273349572032), (283.143173088236324, 57.2650273426273628)),
+                 ((305.153761142550195, 57.2667764654256288), (283.1345494911570881, 57.2650404462652602))]:
+        msp.add_line(a, b)
+    report = part_of(doc)
+    assert report.problems == []
+    assert len(report.holes) == 1
+
+
+def test_collinear_edges_of_a_long_outline_do_not_cross(drawing):
+    # Two top edges on the same line, a picometre apart in y, 2 m long.
+    doc, msp = drawing()
+    msp.add_lwpolyline([(2251.25, 206.2746068139259), (2251.25, 0.96), (0.09, 0.96),
+                        (0.09, 206.2746068139328), (287.13, 206.2746068139281),
+                        (288.63, 207.77), (295.63, 207.77),
+                        (297.13, 206.2746068139281)], close=True)
+    assert part_of(doc).problems == []
+
+
+def test_a_nearly_straight_tiny_arc_does_not_cross_itself(drawing):
+    # An Inventor bulge of 1e-5 over a 0.065 mm chord flattens into four
+    # 0.016 mm segments on almost one line; non-neighbours touch that line
+    # but cannot cross (ITM-072574).
+    doc, msp = drawing()
+    msp.add_lwpolyline([(1358.1120566320319, 41.6609813251880, 1.21656677019e-05),
+                        (1358.1109486234379, 41.5956124246452, 0),
+                        (1378.1138565258350, 41.5956124246448, 0),
+                        (1378.1138565258350, 300, 0),
+                        (1358.1120566320319, 300, 0)], format="xyb", close=True)
+    assert part_of(doc).problems == []
+
+
+def test_a_part_drawn_diagonally_is_laid_along_its_length(drawing):
+    # A 2900 × 80 bar with a hole, drawn at 45°: 2108 × 2108 as drawn
+    doc, msp = drawing()
+    bar = rotate_translate([(0, 0), (2900, 0), (2900, 80), (0, 80)], 45, (0, 0))
+    msp.add_lwpolyline(bar, close=True)
+    msp.add_circle(rotate_translate([(1450, 40)], 45, (0, 0))[0], 20)
+    report = part_of(doc)
+    assert report.problems == []
+    assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (2900, 80)
+    assert point_in_polygon(report.holes[0].points[0], report.outline.points)
+    assert math.isclose(report.turned_deg % 180, 135)        # −45°: laid flat
+
+
+def test_a_straight_part_is_left_as_drawn(drawing):
+    doc, msp = drawing()
+    rect(msp, 10, 20, 80, 300)          # standing: Sparrow turns it a quarter itself
+    report = part_of(doc)
+    assert report.outline.points[0] == (10, 20)
+    assert (report.outline.width_mm, report.outline.height_mm) == (80, 300)
+    assert report.turned_deg == 0
+
+
+def test_min_area_angle_lays_the_long_side_horizontal():
+    for angle in (0, 30, 45, 120):
+        bar = rotate_translate([(0, 0), (500, 0), (500, 40), (0, 40)], angle, (0, 0))
+        turned = rotate_translate(bar, min_area_angle(bar), (0, 0))
+        xs, ys = [p[0] for p in turned], [p[1] for p in turned]
+        assert math.isclose(max(xs) - min(xs), 500, abs_tol=1e-6)
+        assert math.isclose(max(ys) - min(ys), 40, abs_tol=1e-6)
 
 
 # ── Refused, with a reason ────────────────────────────────────────────────────

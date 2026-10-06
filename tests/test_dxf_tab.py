@@ -10,7 +10,7 @@ def settings(**kw) -> _Settings:
     return _Settings(**{**base, **kw})
 
 
-PRODS = [{"id": "a", "qty": 2}]
+PRODS = [{"id": "a", "qty": 2, "angles": (0, 90)}]
 KEY = ("S235", "2", "a")
 
 
@@ -22,13 +22,18 @@ def test_sparrow_settings_do_not_change_the_cache_key():
 def test_a_single_part_keeps_its_result_when_the_nesting_mode_changes():
     combined, separate = ("S235", "2"), ("S235", "2", "a")
     assert _sig(combined, PRODS, settings()) == _sig(separate, PRODS, settings())
-    two = PRODS + [{"id": "b", "qty": 1}]
+    two = PRODS + [{"id": "b", "qty": 1, "angles": (0, 90)}]
     assert _sig(combined, two, settings()) != _sig(separate, PRODS, settings())
 
 
 def test_margin_and_quantity_change_the_cache_key():
     assert _sig(KEY, PRODS, settings()) != _sig(KEY, PRODS, settings(margin_pct=20.0))
     assert _sig(KEY, PRODS, settings()) != _sig(KEY, [{**PRODS[0], "qty": 3}], settings())
+
+
+def test_a_nesting_angle_change_re_nests_the_group():
+    fixed = [{**PRODS[0], "angles": (0,)}]
+    assert _sig(KEY, PRODS, settings()) != _sig(KEY, fixed, settings())
 
 
 def test_nesting_diff_names_only_the_changed_settings():
@@ -57,3 +62,104 @@ def test_run_label_counts_only_new_groups():
     assert _run_label(1, 2, 4) == "Laske levykäyttö — 1 uusi"
     assert _run_label(0, 1, 2) == "Laske levykäyttö — ei uusia osia"
     assert _run_label(0, 0, 2) == "Laske levykäyttö — kaikki laskettu"
+
+
+def test_dropped_files_become_cards_and_poista_removes_one():
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        from types import SimpleNamespace
+
+        import ezdxf
+        import streamlit as st
+
+        from tests.conftest import dxf_bytes
+        from view.dxf_tab import _STORE, _evict, _ingest
+
+        doc = ezdxf.new()
+        doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 50), (0, 50)], close=True)
+        data = dxf_bytes(doc)
+        drop = st.session_state.pop("drop", [])
+        files = [SimpleNamespace(file_id=i, name=f"{i}.dxf", getvalue=lambda: data) for i in drop]
+        if st.session_state.get("remove"):
+            _evict(st.session_state.pop("remove"))
+        st.session_state["new"] = _ingest(files)
+        st.session_state["shown"] = list(st.session_state.get(_STORE, {}))
+
+    at = AppTest.from_function(page)
+    at.session_state["drop"] = ["a", "b"]
+    at.run()
+    assert at.session_state["new"] and at.session_state["shown"] == ["a", "b"]
+    assert at.session_state["dxf_inbox"] == 1                # the drop area starts over
+    at.session_state["remove"] = "a"
+    at.run()
+    assert at.session_state["shown"] == ["b"]
+    assert not at.session_state["new"]
+    at.session_state["drop"] = ["a2"]                        # dropped again
+    at.run()
+    assert at.session_state["shown"] == ["b", "a2"]
+
+
+def dxf_page(n):
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("dxf_page.py")
+    at.session_state["n"] = n
+    return at.run()
+
+
+def test_one_part_takes_its_nesting_angle_from_the_run_row():
+    at = dxf_page(1)
+    assert [c.key for c in at.checkbox] == ["dxf_angle_0", "dxf_angle_90"]   # none on the card
+    assert not at.radio
+    at.checkbox(key="dxf_angle_90").uncheck().run()
+    assert at.session_state["angles"] == [(0,)]
+
+
+def test_several_parts_share_one_angle_or_choose_per_part():
+    at = dxf_page(2)
+    assert at.radio(key="dxf_angle_mode").value == "Sama kaikille"
+    at.checkbox(key="dxf_angle_0").uncheck().run()
+    assert at.session_state["angles"] == [(90,), (90,)]
+    at.radio(key="dxf_angle_mode").set_value("Osakohtainen").run()
+    assert {c.key for c in at.checkbox} == {"dxf_angle_0_f0", "dxf_angle_90_f0",
+                                            "dxf_angle_0_f1", "dxf_angle_90_f1"}
+    at.checkbox(key="dxf_angle_90_f1").uncheck().run()
+    assert at.session_state["angles"] == [(0, 90), (0,)]
+
+
+def fill_first_card(at):
+    at.selectbox(key="dxf_mat_f0").set_value("S235").run()
+    return at.selectbox(key="dxf_th_f0").set_value("2").run()
+
+
+def test_the_first_material_can_be_given_to_the_other_parts(caplog):
+    import logging
+
+    import streamlit.elements.lib.policies as policies
+
+    at = fill_first_card(dxf_page(3))
+    assert any("sama materiaali" in m.value for m in at.markdown)
+    policies._LOGGER.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.WARNING):
+            at.button(key="dxf_fill_yes_f0").click().run()
+    finally:
+        policies._LOGGER.removeHandler(caplog.handler)
+    assert at.session_state["materials"] == [("S235", "2")] * 3
+    assert not any("sama materiaali" in m.value for m in at.markdown)   # gone
+    # the other cards' selectboxes are rebuilt, not set: no Streamlit warning
+    assert not [r for r in caplog.records if "Session State" in r.getMessage()]
+
+
+def test_no_keeps_the_others_empty_and_stops_asking():
+    at = fill_first_card(dxf_page(2))
+    at.button(key="dxf_fill_no_f0").click().run()
+    assert at.session_state["materials"] == [("S235", "2"), (None, None)]
+    at.selectbox(key="dxf_mat_f1").set_value("S235").run()
+    assert not any("sama materiaali" in m.value for m in at.markdown)
+
+
+def test_one_part_is_never_asked():
+    at = fill_first_card(dxf_page(1))
+    assert not any("sama materiaali" in m.value for m in at.markdown)

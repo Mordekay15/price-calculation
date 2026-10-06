@@ -1,7 +1,8 @@
 """The "sheet usage" section of both tabs: for one material + thickness group,
 the chosen size's layout (drawn by the caller, with the parts' names and
 colours) and its metrics first, then the priced sheet sizes to pick from and
-the step-by-step price breakdown."""
+the step-by-step price breakdown. A size can have two rows: the fewest sheets
+and the fewest programs (see ``core.programs``)."""
 
 import pandas as pd
 import streamlit as st
@@ -100,11 +101,18 @@ def _selected_index(event, options: list[SheetOption], cheapest_idx: int) -> int
 
 def _render_summary(active: SheetOption, n_pieces: int) -> None:
     """Headline metrics for the chosen size — big "€/kpl" is the visual anchor."""
-    m = st.columns([2, 1, 1, 1])
+    m = st.columns([2, 1, 1, 1, 1])
     m[0].metric("Materiaalikulu €/kpl (ka.)", f"{active.total_eur / n_pieces:,.2f} €")
     m[1].metric("Yhteensä €", f"{active.total_eur:,.2f}")
     m[2].metric("Levyjä", str(active.sheets_needed))
-    m[3].metric("Käyttöaste", f"{active.utilization * 100:.1f} %")
+    m[3].metric("Ohjelmia", str(active.programs), help=_PROGRAMS_HELP)
+    m[4].metric("Käyttöaste", f"{active.utilization * 100:.1f} %")
+
+
+_PROGRAMS_HELP = (
+    "Erilaisten levyjen määrä eli leikkausohjelmat, jotka suunnittelija tekee. "
+    "Tuotanto ajaa saman ohjelman niin monta kertaa kuin levyjä tarvitaan."
+)
 
 
 def _size_label(o: SheetOption) -> str:
@@ -121,15 +129,17 @@ def _table_rows(options: list[SheetOption], n_pieces: int, cheapest_idx: int | N
             # None, not "": a number column with a text cell can't be sent
             # to the browser as Arrow and Streamlit logs a traceback.
             "Tarvittavat levyt": None,
+            "Ohjelmia":          None,
             "Käyttöaste":        "",
             "Levyn kg":          None,
             "Yhteensä €":        None,
             "€/kpl":             None,
-            "Paras":             "ei mahdu",
+            "Paras":             o.reason or "ei mahdu",
         }
         if o.ok:
             row.update({
                 "Tarvittavat levyt": o.sheets_needed,
+                "Ohjelmia":          o.programs,
                 "Käyttöaste":        f"{o.utilization * 100:.1f} %",
                 "Levyn kg":          round(o.sheet_kg, 2),
                 "Yhteensä €":        round(o.total_eur, 2),
@@ -148,6 +158,7 @@ _CHEAPEST_ROW = "background-color: rgba(34, 197, 94, 0.22)"
 # gets its format here ("" for a size the pieces don't fit).
 _NUMBER_FORMATS = {
     "Tarvittavat levyt": "{:.0f}",
+    "Ohjelmia":          "{:.0f}",
     "Levyn kg":          "{:,.2f}",
     "Yhteensä €":        "{:,.2f}",
     "€/kpl":             "{:,.2f}",
@@ -193,7 +204,8 @@ def _render_breakdown(
          f"{o.sw} × {o.sh} × {thickness_mm:g} mm × {density_g_cm3:.2f} g/cm³",
          f"{o.sheet_weight_kg:,.2f} kg"),
         ("5. Tarvittavat levyt (sijoittelusta)",
-         f"{n_pieces} kpl sijoitettu {_size_label(o)} levylle",
+         f"{n_pieces} kpl sijoitettu {_size_label(o)} levylle, "
+         f"{o.programs} ohjelmalla",
          f"{o.sheets_needed}"),
         ("6. Levyjen kokonaispaino",
          f"{o.sheet_weight_kg:,.2f} × {o.sheets_needed}",

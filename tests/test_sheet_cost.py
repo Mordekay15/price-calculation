@@ -10,6 +10,7 @@ from core.sheet_cost import (
     group_products,
     parse_size,
     piece_costs,
+    too_big,
     usable_area,
     utilization,
 )
@@ -19,6 +20,15 @@ LOOKUP = {
     ("2", "S235 | 1250x2500"): 870.0,
     ("2", "S235 | 1500x3000"): 850.0,
 }
+
+
+def test_too_big_names_each_part_and_the_side_that_does_not_fit():
+    parts = [("long", 3059, 18.5), ("wide", 1600, 1700), ("ok", 2900, 400)]
+    assert too_big(parts, 3000, 1500) == "long (3059 mm), wide (1700 × 1600 mm) ei mahdu"
+    assert too_big(parts[2:], 3000, 1500) == ""
+    # a fixed nesting angle: no quarter turn to make it fit
+    assert too_big([("fixed", 400, 1600, False)], 3000, 1500) == "fixed (400 × 1600 mm) ei mahdu"
+    assert too_big([("fixed", 1600, 400, False)], 3000, 1500) == ""
 
 
 def test_small_helpers():
@@ -63,6 +73,7 @@ def test_a_sheet_the_parts_do_not_fit_is_never_cheapest():
     small = options[0]
     assert (small.sw, small.sh) == (1000, 2000)
     assert small.failed == 2 and not small.ok
+    assert small.reason == "Tuote #1 (1200 × 1100 mm) ei mahdu"
     assert cheapest_index(options) != 0
 
 
@@ -77,8 +88,8 @@ def test_compute_options_uses_the_packer_it_is_given():
 
     def pack(sw, sh):
         seen.append((sw, sh))
-        return Packing(sheets=["layout"], sheets_needed=2, eff_w=sw, eff_h=sh,
-                       draw_w=sw, draw_h=sh)
+        return [Packing(sheets=["layout"], sheets_needed=2, eff_w=sw, eff_h=sh,
+                        draw_w=sw, draw_h=sh)]
 
     result = compute_options({("2", "S235 | 1000x2000"): 1000.0}, "S235", "2", 2.0,
                              n_pieces=4, part_area_mm2=500_000, pack=pack)
@@ -87,6 +98,20 @@ def test_compute_options_uses_the_packer_it_is_given():
     assert option.sheets_needed == 2 and option.packing.sheets == ["layout"]
     assert math.isclose(option.total_eur, 64.0)            # 2 sheets × 32 kg × 1000 €/tn
     assert math.isclose(option.utilization, 0.125)         # 0.5 m² of 4 m²
+
+
+def test_each_plan_of_a_size_is_priced_and_a_tie_goes_to_fewer_programs():
+    def pack(sw, sh):
+        return [Packing(sheets=["a", "b"], sheets_needed=2, eff_w=sw, eff_h=sh,
+                        draw_w=sw, draw_h=sh),
+                Packing(sheets=["kit"], sheets_needed=2, eff_w=sw, eff_h=sh,
+                        draw_w=sw, draw_h=sh)]
+
+    options = compute_options({("2", "S235 | 1000x2000"): 1000.0}, "S235", "2", 2.0,
+                              n_pieces=4, part_area_mm2=500_000, pack=pack).options
+    assert [o.programs for o in options] == [2, 1]
+    assert options[0].total_eur == options[1].total_eur
+    assert cheapest_index(options) == 1
 
 
 def test_grouping_and_piece_costs():
@@ -126,3 +151,37 @@ def test_the_cut_gap_is_kept_between_pieces_but_not_at_the_sheet_edge():
 
     assert sheets(495) == 1      # 495 + 10 + 495 = 1000: both edges touched
     assert sheets(496) == 2      # 496 + 10 + 496 > 1000: the gap still counts
+
+
+def test_identical_rect_sheets_become_one_layout_with_a_count():
+    # 900 × 300 pieces: 6 fit a 1000 × 2000 sheet, so 19 pieces make three
+    # full identical sheets and one sheet of the last one
+    products = [{"id": "a", "width": 900, "height": 300, "qty": 19, "_global_idx": 0}]
+    [option] = rect_options(LOOKUP, "S235", "2", 2.0, products).options[:1]
+    assert option.sheets_needed == 4
+    assert [(len(s.placements), s.count) for s in option.packing.sheets] == [(6, 3), (1, 1)]
+
+
+def test_rect_quantities_that_split_evenly_become_one_program():
+    # 20 pieces on 4 sheets: 5 per sheet cut 4 times, not 6 ×3 and 2 ×1
+    products = [{"id": "a", "width": 900, "height": 300, "qty": 20, "_global_idx": 0}]
+    [option] = rect_options(LOOKUP, "S235", "2", 2.0, products).options[:1]
+    assert (option.sheets_needed, option.programs) == (4, 1)
+    assert [(len(s.placements), s.count) for s in option.packing.sheets] == [(5, 4)]
+
+
+def test_mixed_rect_parts_get_both_plans_with_exact_quantities():
+    lookup = {("2", "S235 | 1000x2000"): 900.0}
+    # 20 a + 5 b: greedy needs 4 sheets over 4 layouts; one program of
+    # 4 a + 1 b cut 5 times needs a sheet more
+    products = [{"id": "a", "width": 500, "height": 500, "qty": 20, "_global_idx": 0},
+                {"id": "b", "width": 1000, "height": 500, "qty": 5, "_global_idx": 1}]
+    options = rect_options(lookup, "S235", "2", 2.0, products).options
+    assert [(o.sheets_needed, o.programs) for o in options] == [(4, 4), (5, 1)]
+    for o in options:
+        made = [0, 0]
+        for sheet in o.packing.sheets:
+            for pl in sheet.placements:
+                made[pl.product_idx] += sheet.count
+        assert made == [20, 5]
+    assert cheapest_index(options) == 0          # the extra sheet costs more

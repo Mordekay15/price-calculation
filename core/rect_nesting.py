@@ -1,9 +1,19 @@
 """Bounding-box nesting for the manual tab: a greedy guillotine packer
-(longest side first, best-area fit, 90° rotation) and ``rect_options``."""
+(longest side first, best-area fit, 90° rotation) and ``rect_options``.
+Identical sheets are merged into one layout with a ``count``, as Sparrow's are."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
-from core.sheet_cost import EdgeGaps, GroupCost, Packing, compute_options, usable_area
+from core.programs import choose_plans, kit_plan, sheets_used
+from core.sheet_cost import (
+    EdgeGaps,
+    GroupCost,
+    Packing,
+    compute_options,
+    product_label,
+    too_big,
+    usable_area,
+)
 
 
 # ── Packing ───────────────────────────────────────────────────────────────────
@@ -24,6 +34,7 @@ class Sheet:
     h: int
     placements: list[Placement] = field(default_factory=list)
     free_rects: list[tuple[int, int, int, int]] = field(default_factory=list)
+    count: int = 1      # identical sheets cut from this layout
 
     def __post_init__(self):
         if not self.free_rects:
@@ -131,6 +142,19 @@ def expand_products(products: list[dict]) -> list[tuple[int, int, int, int]]:
     return pieces
 
 
+def merge_identical(sheets: list[Sheet]) -> list[Sheet]:
+    """One sheet per distinct layout, its ``count`` the sheets that repeat it,
+    in order of first appearance."""
+    merged: dict[tuple, Sheet] = {}
+    for sheet in sheets:
+        key = tuple(sorted((p.x, p.y, p.w, p.h, p.product_idx) for p in sheet.placements))
+        if key in merged:
+            merged[key].count += sheet.count
+        else:
+            merged[key] = sheet
+    return list(merged.values())
+
+
 def _turned(sheet: Sheet) -> Sheet:
     """The sheet's layout mirrored across its diagonal: a standing sheet laid
     down. Every piece keeps its place relative to the others, so the layout
@@ -138,7 +162,16 @@ def _turned(sheet: Sheet) -> Sheet:
     return Sheet(sheet.h, sheet.w, [
         Placement(p.y, p.x, p.h, p.w, p.product_idx, not p.rotated)
         for p in sheet.placements
-    ], [(y, x, h, w) for x, y, w, h in sheet.free_rects])
+    ], [(y, x, h, w) for x, y, w, h in sheet.free_rects], sheet.count)
+
+
+def _one_sheet(sheets: list[Sheet], failed: int) -> Sheet | None:
+    """The layout, when every piece went on a single sheet."""
+    return sheets[0] if not failed and sheets_used(sheets) == 1 else None
+
+
+def _all_fit(sheets: list[Sheet], failed: int) -> list[Sheet] | None:
+    return None if failed else sheets
 
 
 # ── Costing with this packer ──────────────────────────────────────────────────
@@ -159,30 +192,47 @@ def rect_options(
     side, so the packer leaves that gap between parts. The usable area is
     grown by the same amount, so the last piece's gap may overhang the edge:
     parts may touch the sheet edge. The edge gaps shrink the usable area.
+    Each size is priced with the fewest sheets and, when worth showing, with a
+    repeatable program (see ``core.programs``).
     """
-    pieces = [
-        (p_idx, c_idx, w + rankavali_mm, h + rankavali_mm)
-        for p_idx, c_idx, w, h in expand_products(products)
-    ]
+    quantities = [int(p["qty"]) for p in products]
     part_area_mm2 = sum(p["width"] * p["height"] * p["qty"] for p in products)
 
-    def pack_fn(sw: int, sh: int) -> Packing:
+    def pieces_for(qty: list[int]) -> list[tuple[int, int, int, int]]:
+        counted = [{**p, "qty": q} for p, q in zip(products, qty)]
+        return [(p_idx, c_idx, w + rankavali_mm, h + rankavali_mm)
+                for p_idx, c_idx, w, h in expand_products(counted)]
+
+    def pack_fn(sw: int, sh: int) -> list[Packing]:
         # Laid long side horizontal, like every sheet in the app. The packer
         # still fills the sheet standing on its short side, as it always has
         # (its greedy order packs differently the other way round), and the
-        # finished layout is turned to lie down.
+        # finished layouts are turned to lie down.
         x0, y0, eff_w, eff_h = usable_area(sw, sh, edges)
-        sheets, failed = pack(pieces, eff_h + rankavali_mm, eff_w + rankavali_mm,
-                              allow_rotation=True)
-        return Packing(
-            sheets=[_turned(sheet) for sheet in sheets],
-            sheets_needed=len(sheets),
-            eff_w=eff_w, eff_h=eff_h, draw_w=max(sw, sh), draw_h=min(sw, sh),
-            failed=len(failed), x0=x0, y0=y0,
-        )
+
+        def pack_sheets(qty: list[int]) -> tuple[list[Sheet], int]:
+            sheets, failed = pack(pieces_for(qty), eff_h + rankavali_mm,
+                                  eff_w + rankavali_mm, allow_rotation=True)
+            return merge_identical(sheets), len(failed)
+
+        def packing(sheets: list[Sheet], failed: int = 0) -> Packing:
+            return Packing(
+                sheets=[_turned(sheet) for sheet in sheets], sheets_needed=sheets_used(sheets),
+                eff_w=eff_w, eff_h=eff_h, draw_w=max(sw, sh), draw_h=min(sw, sh),
+                failed=failed, x0=x0, y0=y0,
+            )
+
+        greedy, failed = pack_sheets(quantities)
+        if failed:
+            reason = too_big([(product_label(p), p["width"], p["height"]) for p in products],
+                             eff_w, eff_h)
+            return [replace(packing(greedy, failed), reason=reason)]
+        kit = kit_plan(quantities, greedy, lambda kit: _one_sheet(*pack_sheets(kit)),
+                       lambda rest: _all_fit(*pack_sheets(rest)))
+        return [packing(sheets) for sheets in choose_plans(greedy, kit)]
 
     return compute_options(
         lookup, material, thickness, thickness_mm,
-        n_pieces=len(pieces), part_area_mm2=part_area_mm2, pack=pack_fn,
+        n_pieces=sum(quantities), part_area_mm2=part_area_mm2, pack=pack_fn,
         margin_pct=margin_pct,
     )

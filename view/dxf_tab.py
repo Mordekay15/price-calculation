@@ -11,7 +11,13 @@ from core.pricing import build_lookup, parse_thickness_mm
 from core.dxf import DxfFile, DxfReport, read_dxf
 from core.geometry import net_area
 from core.sheet_cost import group_products, is_ready
-from core.sparrow import find_executable, part_from_report, run_sparrow, sparrow_options
+from core.sparrow import (
+    NESTING_ANGLES,
+    find_executable,
+    part_from_report,
+    run_sparrow,
+    sparrow_options,
+)
 from view.common import (
     ADVANCED_LABEL,
     NESTING_LABELS,
@@ -35,14 +41,14 @@ _RENEST = "dxf_sparrow_renest"  # {signature} of groups to re-nest on this run
 # button. Make it a tall dashed drop zone that says files can be dropped on it.
 _DROPZONE_CSS = """
 <style>
-.st-key-dxf_uploader [data-testid="stFileUploaderDropzone"] {
+[class*="st-key-dxf_uploader"] [data-testid="stFileUploaderDropzone"] {
     min-height: 9rem;
     border: 2px dashed rgba(128, 128, 128, 0.6);
     justify-content: center;
     flex-wrap: wrap;
     gap: 0.5rem 1rem;
 }
-.st-key-dxf_uploader [data-testid="stFileUploaderDropzone"]::before {
+[class*="st-key-dxf_uploader"] [data-testid="stFileUploaderDropzone"]::before {
     content: "Vedä ja pudota DXF-tiedostot tähän";
     width: 100%;
     text-align: center;
@@ -85,24 +91,17 @@ def _nesting_diff(saved: dict, current: dict) -> str:
 def render(data: dict) -> None:
     lookup = build_lookup(data)
 
-    st.html(_DROPZONE_CSS)
-    uploaded = st.file_uploader(
-        "Lataa DXF-tiedostot",
-        type="dxf",
-        accept_multiple_files=True,
-        key="dxf_uploader",
-        help="Vedä tiedostot alueelle tai valitse ne koneelta. Voit ladata useita "
-             "tiedostoja kerralla. Jokainen tiedosto on yksi tuote.",
-    )
-    parts = _sync_store(uploaded)
+    parts = _render_drop_area()
     if not parts:
         st.info("Lataa vähintään yksi DXF-tiedosto aloittaaksesi.")
         return
 
-    products = _render_part_cards(parts, materials_with_copper(lookup), lookup)
+    # Per-part angles are chosen on the cards, drawn above the run row whose
+    # switch decides it: read the switch's value from the last run.
+    per_part = len(parts) > 1 and st.session_state.get(_ANGLE_MODE) == _PER_PART
+    products = _render_part_cards(parts, materials_with_copper(lookup), lookup, per_part)
     margin_pct, nest_mode, sheet = _render_settings()
-    groups = group_products(products, nest_mode)
-    if not groups:
+    if not any(is_ready(p) for p in products):
         st.info("Valitse materiaali ja paksuus vähintään yhdelle osalle.")
         return
 
@@ -116,35 +115,24 @@ def render(data: dict) -> None:
         return
 
     st.divider()
-    # The search time sits with the button it applies to.
+    # Two rows above the button they apply to: the nesting angle, then the
+    # search time with the buttons.
+    shared = _render_angle_controls(len(parts))
+    if shared == ():
+        return  # no angle ticked: the warning says so
     c_time, c_run, c_update = st.columns([1, 2, 2], vertical_alignment="bottom")
     time_limit = c_time.number_input(
         "Sijoittelun hakuaika (s)", min_value=1, value=4, step=1, key="dxf_sparrow_t",
         help="Aikaraja yhdelle sijoitteluyritykselle (levyä kohden tehdään "
              "yksi tai useampi). Pidempi aika voi löytää tiiviimmän sijoittelun, "
              "mutta laskenta kestää kauemmin.")
+    if shared is not None:
+        products = [{**p, "angles": shared} for p in products]
+    groups = group_products(products, nest_mode)
     settings = _Settings(nest_mode, sheet, int(time_limit), margin_pct)
     cache: dict = st.session_state.setdefault(_CACHE, {})
-    # Two buttons that never overlap: the first nests only groups with no
-    # result, the second only results made with other Sparrow settings. A
-    # group's own button re-nests just that group.
-    n_new = n_stale = 0
-    for k, p in groups.items():
-        entry = cache.get(_sig(k, p, settings))
-        if entry is None:
-            n_new += parse_thickness_mm(k[1]) is not None
-        else:
-            n_stale += _is_stale(entry, settings)
-    run = c_run.button(_run_label(n_new, n_stale, len(groups)), key="dxf_sparrow_run",
-                    type="primary", disabled=n_new == 0,
-                    help="Laskee vain osat, joilla ei vielä ole tulosta. Jo "
-                         "laskettuihin ei kosketa.")
-    # Shown only when there is something to update.
-    update = n_stale > 0 and c_update.button(
-        f"Päivitä eri asetuksilla lasketut ({n_stale})", key="dxf_sparrow_update",
-        help="Laskee nykyisillä asetuksilla uudelleen kaikki tulokset, jotka on "
-             "laskettu eri asetuksilla. Yksittäisen osan voi päivittää sen omasta "
-             "painikkeesta.")
+    n_new, n_stale = _count_pending(groups, settings, cache)
+    run, update = _render_run_buttons(c_run, c_update, n_new, n_stale, len(groups))
     st.divider()  # the run buttons above, the results below
     renest = st.session_state.pop(_RENEST, set())
     _show(products, groups, settings, cache, _nester(lookup, settings, exe),
@@ -153,6 +141,54 @@ def render(data: dict) -> None:
         # The button's count was drawn before these groups were nested:
         # redraw it with the new count (e.g. "kaikki laskettu").
         st.rerun()
+
+
+def _render_drop_area() -> list[tuple[str, DxfFile]]:
+    """The drop area; returns every part read so far, in upload order."""
+    st.html(_DROPZONE_CSS)
+    uploaded = st.file_uploader(
+        "Lataa DXF-tiedostot",
+        type="dxf",
+        accept_multiple_files=True,
+        key=f"dxf_uploader_{st.session_state.get(_INBOX, 0)}",
+        help="Vedä tiedostot alueelle tai valitse ne koneelta. Voit ladata useita "
+             "tiedostoja kerralla. Jokainen tiedosto on yksi tuote; ne siirtyvät "
+             "alle osakorteiksi, ja kortin Poista-painike poistaa osan.",
+    )
+    if _ingest(uploaded):
+        st.rerun()  # redraw with the drop area empty
+    return list(st.session_state.get(_STORE, {}).items())
+
+
+def _count_pending(groups, settings: _Settings, cache: dict) -> tuple[int, int]:
+    """``(n_new, n_stale)``: groups with no result yet (and a readable
+    thickness), and results made with other Sparrow settings."""
+    n_new = n_stale = 0
+    for key, prods in groups.items():
+        entry = cache.get(_sig(key, prods, settings))
+        if entry is None:
+            n_new += parse_thickness_mm(key[1]) is not None
+        else:
+            n_stale += _is_stale(entry, settings)
+    return n_new, n_stale
+
+
+def _render_run_buttons(c_run, c_update, n_new: int, n_stale: int,
+                        n_groups: int) -> tuple[bool, bool]:
+    """The two buttons, which never overlap: the first nests only groups with
+    no result, the second (shown only when needed) only results made with
+    other Sparrow settings. A group's own button re-nests just that group.
+    Returns ``(run, update)`` — whether each was clicked."""
+    run = c_run.button(_run_label(n_new, n_stale, n_groups), key="dxf_sparrow_run",
+                       type="primary", disabled=n_new == 0,
+                       help="Laskee vain osat, joilla ei vielä ole tulosta. Jo "
+                            "laskettuihin ei kosketa.")
+    update = n_stale > 0 and c_update.button(
+        f"Päivitä eri asetuksilla lasketut ({n_stale})", key="dxf_sparrow_update",
+        help="Laskee nykyisillä asetuksilla uudelleen kaikki tulokset, jotka on "
+             "laskettu eri asetuksilla. Yksittäisen osan voi päivittää sen omasta "
+             "painikkeesta.")
+    return run, update
 
 
 def _is_stale(entry: dict, settings: _Settings) -> bool:
@@ -175,12 +211,14 @@ def _run_label(n_new: int, n_stale: int, n_groups: int) -> str:
     return f"{base} — " + (f"{n_new} uusi" if n_new == 1 else f"{n_new} uutta")
 
 
-def _render_part_cards(parts, materials: list[str], lookup: dict) -> list[dict]:
-    """One card per uploaded part; returns the configured product dicts."""
+def _render_part_cards(parts, materials: list[str], lookup: dict,
+                       per_part_angles: bool = False) -> list[dict]:
+    """One card per uploaded part; returns the configured product dicts. The
+    nesting angle is on the cards only when it is chosen per part."""
     st.markdown("**Osat**")
     products = []
     for idx, (fid, part) in enumerate(parts):
-        product = _render_part_config(fid, part, idx, materials, lookup)
+        product = _render_part_config(fid, part, idx, materials, lookup, per_part_angles)
         if product is not None:
             products.append(product)
     return products
@@ -203,8 +241,8 @@ def _render_settings() -> tuple[float, str, SheetSettings]:
 
 
 def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
-    """Stable cache key: material + thickness, the parts (quantity) and the
-    margin — what decides the nesting and its price.
+    """Stable cache key: material + thickness, the parts (quantity, nesting
+    angles) and the margin — what decides the nesting and its price.
 
     The nesting mode is left out: a part nested alone is the same nesting in
     either mode, so switching to "separate" keeps a group of one part, and
@@ -213,7 +251,8 @@ def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
     changing one doesn't drop every result.
     """
     material, thickness = key[0], key[1]
-    prod_sig = ",".join(f"{p['id']}:{p['qty']}" for p in products)
+    prod_sig = ",".join(f"{p['id']}:{p['qty']}:{'/'.join(map(str, p['angles']))}"
+                        for p in products)
     return f"{material}|{thickness}|{prod_sig}|{settings.margin_pct}"
 
 
@@ -231,12 +270,10 @@ def _nester(lookup: dict, settings: _Settings, exe):
     returned as a cache entry (None when its thickness can't be read)."""
     progress = SparrowProgress()
 
-    def run_fn(instance, *, seed, time_limit_sec, separation):
+    def run_fn(instance, *, separation):
         progress.run_started()
-        return run_sparrow(
-            instance, executable=exe, time_limit_sec=int(time_limit_sec),
-            seed=int(seed), min_item_separation=separation,
-        )
+        return run_sparrow(instance, executable=exe, time_limit_sec=settings.time_limit,
+                           min_item_separation=separation)
 
     def nest(key: tuple, prods: list[dict]) -> dict | None:
         material, thickness = key[0], key[1]
@@ -250,7 +287,6 @@ def _nester(lookup: dict, settings: _Settings, exe):
             lookup, material, thickness, thickness_mm, parts,
             run_fn=run_fn, margin_pct=settings.margin_pct,
             edges=settings.sheet.gaps(), rankavali_mm=settings.sheet.rankavali_mm,
-            time_limit_sec=settings.time_limit,
         )
         return {"result": result, "parts": parts, "areas": areas,
                 "thickness_mm": thickness_mm, "nesting": settings.nesting()}
@@ -323,7 +359,7 @@ def _parts_for_group(products: list[dict]) -> tuple[list, dict[str, float]]:
     outline minus its holes.
     """
     parts = [
-        part_from_report(p["report"], int(p["qty"])) for p in products
+        part_from_report(p["report"], int(p["qty"]), p["angles"]) for p in products
     ]
     areas = {p["id"]: net_area(sp.outer, sp.holes) for p, sp in zip(products, parts)}
     return parts, areas
@@ -331,8 +367,9 @@ def _parts_for_group(products: list[dict]) -> tuple[list, dict[str, float]]:
 
 # ── Part cards ────────────────────────────────────────────────────────────────
 #
-# _sync_store() reads each uploaded file once with core.dxf.read_dxf (cached in
-# session state, pruned when a file is removed). _render_part_config() draws a
+# _ingest() reads each dropped file once with core.dxf.read_dxf into session
+# state and empties the drop area; the cards are the file list, and a card's
+# Poista button removes its file. _render_part_config() draws a
 # card — preview, measured size, material / thickness / quantity —
 # and returns the product dict the pricing uses, or None (with the reasons
 # shown) when the part cannot be priced. The card and the pricing share the
@@ -341,31 +378,32 @@ def _parts_for_group(products: list[dict]) -> tuple[list, dict[str, float]]:
 _STORE   = "dxf_store"         # {file_id: DxfFile}
 _REPORTS = "dxf_part_reports"  # {file_id: DxfReport}
 _CONFIG  = "dxf_part_config"   # {file_id: {"material", "thickness"}}
+_INBOX   = "dxf_inbox"         # bumped to give the uploader a fresh, empty key
+_FILL_ASKED = "dxf_fill_asked" # the "same material for the others?" question is answered
 
 
-def _sync_store(uploaded) -> list[tuple[str, DxfFile]]:
-    """Read newly uploaded files once, drop removed ones, keep upload order."""
+def _ingest(uploaded) -> bool:
+    """Move newly dropped files into the store, in upload order, and empty the
+    drop area (Streamlit can't remove one file from an uploader, only start a
+    new one). True when something new came in."""
     store: dict = st.session_state.setdefault(_STORE, {})
-    uploaded = uploaded or []
-    current_ids = {u.file_id for u in uploaded}
-    for fid in [f for f in store if f not in current_ids]:
-        _evict(fid)
-
-    files = []
-    for up in uploaded:
-        if up.file_id not in store:
-            store[up.file_id] = read_dxf(up.getvalue(), up.name)
-        files.append((up.file_id, store[up.file_id]))
-    return files
+    new = [up for up in uploaded or [] if up.file_id not in store]
+    for up in new:
+        store[up.file_id] = read_dxf(up.getvalue(), up.name)
+    if new:
+        st.session_state[_INBOX] = st.session_state.get(_INBOX, 0) + 1
+        st.session_state.pop(_FILL_ASKED, None)  # new empty parts: ask again
+    return bool(new)
 
 
 def _evict(fid: str) -> None:
-    """Drop everything kept for a removed file, including its widget state."""
+    """A card's "Poista" button: drop everything kept for the file, including
+    its widget state."""
     st.session_state.get(_STORE, {}).pop(fid, None)
-    st.session_state.get(_CONFIG, {}).pop(fid, None)
+    cfg = st.session_state.get(_CONFIG, {}).pop(fid, {})
     st.session_state.get(_REPORTS, {}).pop(fid, None)
-    for key in (f"dxf_mat_{fid}", f"dxf_th_{fid}", f"dxf_th_{fid}_disabled",
-                f"dxf_q_{fid}", f"dxf_unit_ok_{fid}"):
+    for key in (*_material_keys(fid, cfg), f"dxf_q_{fid}", f"dxf_unit_ok_{fid}",
+                *(f"dxf_angle_{a}_{fid}" for a in NESTING_ANGLES)):
         st.session_state.pop(key, None)
 
 
@@ -375,12 +413,15 @@ def _render_part_config(
     idx: int,
     materials: list[str],
     lookup: dict,
+    per_part_angles: bool = False,
 ) -> dict | None:
     """Draw one part's card, preview left and inputs right; return its product
-    dict, or None if not priceable."""
+    dict, or None if not priceable. Its ``angles`` are None (set later from the
+    run row) unless ``per_part_angles``."""
     with st.container(border=True):
-        hdr = st.columns([6, 2])
+        hdr = st.columns([6, 2, 1], vertical_alignment="center")
         hdr[0].markdown(f"**#{idx + 1}** · {dxf.name}")
+        hdr[2].button("Poista", key=f"dxf_del_{fid}", on_click=_evict, args=(fid,))
 
         # Text found in the drawing (Mat=…, Thk=…) — shown to cross-check the
         # material choice, never nested.
@@ -397,6 +438,10 @@ def _render_part_config(
             return None
         with input_col:
             material, thickness, qty = _render_part_inputs(fid, materials, lookup)
+            _offer_same_material(fid, material, thickness)
+            angles = _render_nesting_angles(fid) if per_part_angles else None
+        if angles == ():
+            return None
 
     return {
         "id":        fid,
@@ -406,6 +451,7 @@ def _render_part_config(
         "width":     size[0],
         "height":    size[1],
         "qty":       qty,
+        "angles":    angles,
         "report":    report,
     }
 
@@ -455,6 +501,17 @@ def _checked_size(fid: str, dxf: DxfFile, report: DxfReport, badge) -> tuple | N
     return width, height
 
 
+def _material_keys(fid: str, cfg: dict) -> tuple[str, str, str]:
+    """The material, thickness and disabled-thickness selectbox keys of a card.
+    ``cfg["v"]`` is bumped to give them new keys: a fresh selectbox starts from
+    the stored choice. (Setting or deleting a widget's value doesn't stick —
+    the browser sends its old value back, and Streamlit warns.)"""
+    v = cfg.get("v", 0)
+    suffix = f"_{v}" if v else ""
+    return (f"dxf_mat_{fid}{suffix}", f"dxf_th_{fid}{suffix}",
+            f"dxf_th_{fid}{suffix}_disabled")
+
+
 def _render_part_inputs(fid: str, materials: list[str], lookup: dict) -> tuple:
     """Material, thickness and quantity; returns ``(material, thickness, qty)``.
 
@@ -463,9 +520,10 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict) -> tuple:
     """
     cfg = st.session_state.setdefault(_CONFIG, {}).setdefault(
         fid, {"material": None, "thickness": None})
+    mat_key, thick_key, _ = _material_keys(fid, cfg)
     material, thickness = render_material_thickness(
         materials, lookup,
-        mat_key=f"dxf_mat_{fid}", thick_key=f"dxf_th_{fid}",
+        mat_key=mat_key, thick_key=thick_key,
         mat_default=cfg["material"], thick_default=cfg["thickness"],
     )
     cfg["material"] = material
@@ -473,6 +531,83 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict) -> tuple:
     qty = int(st.number_input("Määrä (kpl)", min_value=1, value=1, step=1,
                               key=f"dxf_q_{fid}"))
     return material, thickness, qty
+
+
+_ANGLE_LABELS = {0: "0/180", 90: "90/270"}
+_ANGLE_HELP = (
+    "Kulmat lasketaan piirustuksesta: 0/180 pitää piirustuksen X-akselin "
+    "valssaussuunnassa eli levyn pitkän sivun suuntaisena, 90/270 sitä vastaan "
+    "kohtisuorassa. Kun molemmat on valittu, osa saa kääntyä vapaasti."
+)
+
+
+_ANGLE_MODE = "dxf_angle_mode"
+_SHARED, _PER_PART = "Sama kaikille", "Osakohtainen"
+
+
+def _render_nesting_angles(fid: str = "") -> tuple[int, ...]:
+    """Allowed nesting angles (see ``core.sparrow.NESTING_ANGLES``), both
+    ticked by default; () with a warning when none is. ``fid`` keys a card's
+    own choice; without it, the run row's shared one."""
+    suffix = f"_{fid}" if fid else ""
+    cols = st.columns([2, 1, 1], vertical_alignment="center")
+    cols[0].markdown("Sallittu nestauskulma", help=_ANGLE_HELP)
+    angles = tuple(a for a, col in zip(NESTING_ANGLES, cols[1:])
+                   if col.checkbox(_ANGLE_LABELS[a], value=True, key=f"dxf_angle_{a}{suffix}"))
+    if not angles:
+        st.warning("Valitse vähintään yksi nestauskulma.")
+    return angles
+
+
+def _render_angle_controls(n_parts: int) -> tuple[int, ...] | None:
+    """The nesting-angle row above the run button: the angles every part gets,
+    or None when they are chosen per part on the cards (a switch offered only
+    for several parts, left of the angles)."""
+    if n_parts == 1:
+        with st.columns([3, 2])[0]:
+            return _render_nesting_angles()
+    switch, angles = st.columns([2, 3], vertical_alignment="center")
+    if switch.radio("Nestauskulma", (_SHARED, _PER_PART), horizontal=True,
+                    key=_ANGLE_MODE) == _PER_PART:
+        angles.caption("Sallittu nestauskulma valitaan osakorteilla.")
+        return None
+    with angles:
+        return _render_nesting_angles()
+
+
+def _offer_same_material(fid: str, material: str | None, thickness: str | None) -> None:
+    """Once a card has its material and thickness, ask whether the parts that
+    have neither yet get the same. Asked once; dropping new files asks again."""
+    if st.session_state.get(_FILL_ASKED) or not (material and thickness):
+        return
+    config = st.session_state.get(_CONFIG, {})
+    empty = [f for f in st.session_state.get(_STORE, {})
+             if f != fid and not (config.get(f, {}).get("material")
+                                  and config.get(f, {}).get("thickness"))]
+    if not empty:
+        return
+    with st.container(border=True):
+        others = "muille osille" if len(empty) > 1 else "toiselle osalle"
+        st.markdown(f"Täytetäänkö {others} ({len(empty)}) sama materiaali ja "
+                    f"paksuus: **{material} · {thickness} mm**?")
+        yes, no, _ = st.columns([1, 1, 4])
+        yes.button("Kyllä", key=f"dxf_fill_yes_{fid}", type="primary",
+                   on_click=_fill_material, args=(empty, material, thickness))
+        no.button("Ei", key=f"dxf_fill_no_{fid}", on_click=_fill_material, args=([], None, None))
+
+
+def _fill_material(fids: list[str], material: str | None, thickness: str | None) -> None:
+    """Answer the question: give ``fids`` the material and thickness and stop
+    asking. Their selectboxes get new keys (see ``_material_keys``), so they
+    start from the stored choice."""
+    config = st.session_state.setdefault(_CONFIG, {})
+    for f in fids:
+        old = config.get(f, {})
+        for key in _material_keys(f, old):
+            st.session_state.pop(key, None)
+        config[f] = {**old, "material": material, "thickness": thickness,
+                     "v": old.get("v", 0) + 1}
+    st.session_state[_FILL_ASKED] = True
 
 
 def _part(fid: str, dxf: DxfFile) -> DxfReport:
