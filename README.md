@@ -173,6 +173,7 @@ ring-shaped part, so keep frames on their own layer.
 
 | What you want to change | Where |
 |---|---|
+| Which Tibnor sheet sizes are priced | `TIBNOR_SIZES` in `core/suppliers/tibnor.py` (re-upload the Tibnor PDF after a change) |
 | Support a new supplier PDF | a parser in `core/suppliers/` + an entry in `SUPPLIERS` (`core/suppliers/__init__.py`) |
 | Densities, copper sizes or price range | `core/pricing.py` |
 | How a sheet size is priced | `core/sheet_cost.py` |

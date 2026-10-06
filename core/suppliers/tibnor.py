@@ -11,8 +11,9 @@ from core.suppliers.cells import clean, expand_range_rows, to_float
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-# Sheet sizes Tibnor stocks (from the page-1 free-text note).
-TIBNOR_SIZES = ["1000x2000", "1250x2500", "1500x3000", "1500x6000", "1520x3020"]
+# Sheet sizes priced from the Tibnor list. The list also offers 1500x6000 and
+# 1520x3020; we do not buy those, so they are left out.
+TIBNOR_SIZES = ["1000x2000", "1250x2500", "1500x3000"]
 
 # Each product: (col_index, header_keyword, output_label, thickness_col).
 # col_index is the canonical position in the supplier's table; header_keyword
