@@ -134,7 +134,7 @@ def _table_rows(options: list[SheetOption], n_pieces: int, cheapest_idx: int | N
             "Levyn kg":          None,
             "Yhteensä €":        None,
             "€/kpl":             None,
-            "Paras":             "ei mahdu",
+            "Paras":             o.reason or "ei mahdu",
         }
         if o.ok:
             row.update({

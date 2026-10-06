@@ -127,6 +127,22 @@ def utilization(part_area_mm2: float, sheet_w: float, sheet_h: float, n_sheets: 
     return part_area_mm2 / total if total else 0.0
 
 
+def too_big(parts, sheet_w: float, sheet_h: float, tol: float = 0.0) -> str:
+    """Why parts don't fit a ``sheet_w`` × ``sheet_h`` usable area, as the
+    sheet-size table shows it: ``ITM-072558 (3059 mm) ei mahdu``. ``parts`` are
+    ``(name, w, h)``; a part fits as is or turned a quarter. Names the length
+    when that is what's too long, else both sides. "" when every part fits."""
+    long_cap, short_cap = max(sheet_w, sheet_h) + tol, min(sheet_w, sheet_h) + tol
+    out = []
+    for name, w, h in parts:
+        long_side, short_side = max(w, h), min(w, h)
+        if long_side > long_cap:
+            out.append(f"{name} ({long_side:.0f} mm)")
+        elif short_side > short_cap:
+            out.append(f"{name} ({long_side:.0f} × {short_side:.0f} mm)")
+    return ", ".join(out) + " ei mahdu" if out else ""
+
+
 def fmt_m(mm: int) -> str:
     """Format a mm value as metres: 1000 -> '1.0', 1250 -> '1.25', 1500 -> '1.5'."""
     s = f"{mm / 1000:.2f}".rstrip("0")

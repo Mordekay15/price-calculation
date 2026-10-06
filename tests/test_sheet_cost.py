@@ -10,6 +10,7 @@ from core.sheet_cost import (
     group_products,
     parse_size,
     piece_costs,
+    too_big,
     usable_area,
     utilization,
 )
@@ -19,6 +20,12 @@ LOOKUP = {
     ("2", "S235 | 1250x2500"): 870.0,
     ("2", "S235 | 1500x3000"): 850.0,
 }
+
+
+def test_too_big_names_each_part_and_the_side_that_does_not_fit():
+    parts = [("long", 3059, 18.5), ("wide", 1600, 1700), ("ok", 2900, 400)]
+    assert too_big(parts, 3000, 1500) == "long (3059 mm), wide (1700 × 1600 mm) ei mahdu"
+    assert too_big(parts[2:], 3000, 1500) == ""
 
 
 def test_small_helpers():
@@ -63,6 +70,7 @@ def test_a_sheet_the_parts_do_not_fit_is_never_cheapest():
     small = options[0]
     assert (small.sw, small.sh) == (1000, 2000)
     assert small.failed == 2 and not small.ok
+    assert small.reason == "Tuote #1 (1200 × 1100 mm) ei mahdu"
     assert cheapest_index(options) != 0
 
 

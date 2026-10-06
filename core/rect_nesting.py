@@ -2,10 +2,17 @@
 (longest side first, best-area fit, 90° rotation) and ``rect_options``.
 Identical sheets are merged into one layout with a ``count``, as Sparrow's are."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from core.programs import choose_plans, kit_plan, sheets_used
-from core.sheet_cost import EdgeGaps, GroupCost, Packing, compute_options, usable_area
+from core.sheet_cost import (
+    EdgeGaps,
+    GroupCost,
+    Packing,
+    compute_options,
+    too_big,
+    usable_area,
+)
 
 
 # ── Packing ───────────────────────────────────────────────────────────────────
@@ -157,6 +164,11 @@ def _turned(sheet: Sheet) -> Sheet:
     ], [(y, x, h, w) for x, y, w, h in sheet.free_rects], sheet.count)
 
 
+def _label(product: dict) -> str:
+    """A product as the layout legend names it."""
+    return product.get("name") or f"Tuote #{product['_global_idx'] + 1}"
+
+
 def _one_sheet(sheets: list[Sheet], failed: int) -> Sheet | None:
     """The layout, when every piece went on a single sheet."""
     return sheets[0] if not failed and sheets_used(sheets) == 1 else None
@@ -216,7 +228,9 @@ def rect_options(
 
         greedy, failed = pack_sheets(quantities)
         if failed:
-            return [packing(greedy, failed)]
+            reason = too_big([(_label(p), p["width"], p["height"]) for p in products],
+                             eff_w, eff_h)
+            return [replace(packing(greedy, failed), reason=reason)]
         kit = kit_plan(quantities, greedy, lambda kit: _one_sheet(*pack_sheets(kit)),
                        lambda rest: _all_fit(*pack_sheets(rest)))
         return [packing(sheets) for sheets in choose_plans(greedy, kit)]

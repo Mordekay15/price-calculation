@@ -16,7 +16,14 @@ from pathlib import Path
 from core.dxf import DxfReport
 from core.geometry import bbox, bbox_wh, net_area, rotate_translate, signed_area
 from core.programs import choose_plans, kit_plan
-from core.sheet_cost import EdgeGaps, GroupCost, Packing, compute_options, usable_area
+from core.sheet_cost import (
+    EdgeGaps,
+    GroupCost,
+    Packing,
+    compute_options,
+    too_big,
+    usable_area,
+)
 
 Point = tuple[float, float]
 
@@ -310,11 +317,10 @@ def greedy_fixed_sheets(
         return PackResult(ok=False, reason="virheellinen levykoko")
 
     remaining = [int(p.quantity) for p in parts]
-    for i, p in enumerate(parts):
-        w, h = bbox_wh(p.outer)
-        if remaining[i] > 0 and not _fits(w, h, sheet_w, sheet_h):
-            return PackResult(ok=False, reason=f"osa {p.part_id} ei mahdu levylle "
-                                               f"({w:.0f}×{h:.0f} mm)")
+    reason = too_big([(p.part_id, *bbox_wh(p.outer)) for p in parts if p.quantity > 0],
+                     sheet_w, sheet_h, _TOL)
+    if reason:
+        return PackResult(ok=False, reason=reason)
 
     n_total = sum(remaining)
     sheets: list[PackedSheet] = []
@@ -441,11 +447,6 @@ def _build_instance(parts, demand: dict[int, int], strip_height: float) -> dict:
         item["shape"] = part.shape_dict()
         items.append(item)
     return {"name": "pack", "strip_height": float(strip_height), "items": items}
-
-
-def _fits(w: float, h: float, sw: float, sh: float) -> bool:
-    """True if a w×h part fits an sw×sh sheet as is or turned a quarter."""
-    return (w <= sw + _TOL and h <= sh + _TOL) or (h <= sw + _TOL and w <= sh + _TOL)
 
 
 # ── 4. Costing ────────────────────────────────────────────────────────────────

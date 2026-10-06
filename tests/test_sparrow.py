@@ -127,7 +127,7 @@ def test_a_long_part_drawn_diagonally_fits_once_laid_along_its_length(drawing):
 
 def test_greedy_reports_a_part_too_big_for_the_sheet():
     pack = greedy_fixed_sheets([square(size=300, name="big")], 250, 250, run_fn=fake_solver)
-    assert not pack.ok and "big" in pack.reason
+    assert not pack.ok and pack.reason == "big (300 mm) ei mahdu"
 
 
 def test_sparrow_options_prices_with_the_given_solver():
