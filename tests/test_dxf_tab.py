@@ -36,6 +36,21 @@ def test_a_nesting_angle_change_re_nests_the_group():
     assert _sig(KEY, PRODS, settings()) != _sig(KEY, fixed, settings())
 
 
+def test_a_price_set_or_changed_later_makes_the_group_new_again():
+    from core.pricing import (COPPER_MATERIAL, COPPER_THICKNESSES, build_copper_section,
+                              build_lookup)
+
+    def copper(price_kg, **other):
+        return settings(lookup=build_lookup({**build_copper_section(price_kg), **other}))
+
+    key, thickness = (COPPER_MATERIAL, COPPER_THICKNESSES[0]), COPPER_THICKNESSES[0]
+    unpriced, priced = _sig(key, PRODS, copper(None)), _sig(key, PRODS, copper(15.5))
+    assert unpriced != priced                              # set later: nest again
+    assert priced != _sig(key, PRODS, copper(15.9))       # changed: nest again
+    steel = {"tata": [{"Paksuus (mm)": thickness, "S235 | 1000x2000": 900.0}]}
+    assert priced == _sig(key, PRODS, copper(15.5, **steel))   # other material: kept
+
+
 def test_nesting_diff_names_only_the_changed_settings():
     old, new = settings().nesting(), settings(time_limit=10).nesting()
     assert _nesting_diff(old, new) == "hakuaika 4 s (nyt 10 s)"
