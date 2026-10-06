@@ -252,12 +252,10 @@ def _nester(lookup: dict, settings: _Settings, exe):
     returned as a cache entry (None when its thickness can't be read)."""
     progress = SparrowProgress()
 
-    def run_fn(instance, *, seed, time_limit_sec, separation):
+    def run_fn(instance, *, separation):
         progress.run_started()
-        return run_sparrow(
-            instance, executable=exe, time_limit_sec=int(time_limit_sec),
-            seed=int(seed), min_item_separation=separation,
-        )
+        return run_sparrow(instance, executable=exe, time_limit_sec=settings.time_limit,
+                           min_item_separation=separation)
 
     def nest(key: tuple, prods: list[dict]) -> dict | None:
         material, thickness = key[0], key[1]
@@ -271,7 +269,6 @@ def _nester(lookup: dict, settings: _Settings, exe):
             lookup, material, thickness, thickness_mm, parts,
             run_fn=run_fn, margin_pct=settings.margin_pct,
             edges=settings.sheet.gaps(), rankavali_mm=settings.sheet.rankavali_mm,
-            time_limit_sec=settings.time_limit,
         )
         return {"result": result, "parts": parts, "areas": areas,
                 "thickness_mm": thickness_mm, "nesting": settings.nesting()}

@@ -328,13 +328,14 @@ def greedy_fixed_sheets(
     sheet_h: float,
     *,
     run_fn,
-    seed: int = 0,
-    time_limit_sec: int = 4,
     separation: float | None = None,
     max_sheets: int = 400,
     on_sheet=None,
 ) -> PackResult:
     """Nest every part's ``quantity`` onto fixed ``sheet_w`` × ``sheet_h`` sheets.
+
+    ``run_fn(instance, separation=)`` runs the solver on a strip instance and
+    returns a ``SparrowResult`` (the caller binds its time limit).
 
     ``on_sheet(placed, total)``, if given, is called after each sheet layout is
     settled — for a progress display. Not ok (with a reason) when a part is
@@ -357,7 +358,7 @@ def greedy_fixed_sheets(
 
         def probe(n: int):
             return _probe(parts, _mix(remaining, n), sheet_w, sheet_h, run_fn=run_fn,
-                          seed=seed, time_limit_sec=time_limit_sec, separation=separation)
+                          separation=separation)
 
         total = sum(remaining)
         err, best, strip_len = probe(total)
@@ -425,7 +426,7 @@ def _mix(remaining: list[int], n: int) -> dict[int, int]:
 
 
 def _probe(parts, demand: dict[int, int], sheet_w: float, sheet_h: float,
-           *, run_fn, seed, time_limit_sec, separation):
+           *, run_fn, separation):
     """Nest ``demand`` in a strip ``sheet_h`` high.
 
     Returns ``(error, placed_on_sheet, strip_len)``: error is None on success;
@@ -438,7 +439,7 @@ def _probe(parts, demand: dict[int, int], sheet_w: float, sheet_h: float,
     pad = separation or 0.0
     active = list(demand)
     instance = _build_instance(parts, demand, sheet_h + 2 * pad)
-    res = run_fn(instance, seed=seed, time_limit_sec=time_limit_sec, separation=separation)
+    res = run_fn(instance, separation=separation)
     if not res.ok:
         return res.message or "Sparrow-ajo epäonnistui", [], None
 
@@ -489,8 +490,6 @@ def sparrow_options(
     margin_pct: float = 0.0,
     edges: EdgeGaps = EdgeGaps(),
     rankavali_mm: int = 0,
-    seed: int = 0,
-    time_limit_sec: int = 4,
     on_progress=None,
 ) -> GroupCost | None:
     """``core.sheet_cost.compute_options`` with Sparrow shape nesting.
@@ -506,8 +505,7 @@ def sparrow_options(
     def pack_fn(sw: int, sh: int) -> list[Packing]:
         return _pack_on_short_side(
             parts, sw, sh, edges,
-            run_fn=run_fn, seed=seed, time_limit_sec=time_limit_sec,
-            separation=separation, on_progress=on_progress,
+            run_fn=run_fn, separation=separation, on_progress=on_progress,
         )
 
     return compute_options(
@@ -517,8 +515,8 @@ def sparrow_options(
     )
 
 
-def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, seed, time_limit_sec,
-                        separation, on_progress=None) -> list[Packing]:
+def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
+                        on_progress=None) -> list[Packing]:
     """Pack the sheet one way only: Sparrow's fixed strip height is the sheet's
     short side and the strip runs along the long side (e.g. 1000 high, up to
     2000 long on a 1000 × 2000 sheet), both less the edge gaps.
@@ -531,8 +529,7 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, seed, time_limit_sec,
     if on_progress is not None:
         on_sheet = lambda placed, total: on_progress(  # noqa: E731
             "sheet", w=long_side, h=short_side, placed=placed, total=total)
-    pack = greedy_fixed_sheets(parts, ew, eh, run_fn=run_fn, seed=seed,
-                               time_limit_sec=time_limit_sec, separation=separation,
+    pack = greedy_fixed_sheets(parts, ew, eh, run_fn=run_fn, separation=separation,
                                on_sheet=on_sheet)
 
     def packing(sheets: list[PackedSheet]) -> Packing:
@@ -542,8 +539,7 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, seed, time_limit_sec,
 
     if not pack.ok:
         return [packing(pack.sheets)]
-    kit = _kit(parts, pack.sheets, ew, eh, run_fn=run_fn, seed=seed,
-               time_limit_sec=time_limit_sec, separation=separation)
+    kit = _kit(parts, pack.sheets, ew, eh, run_fn=run_fn, separation=separation)
     return [packing(sheets) for sheets in choose_plans(pack.sheets, kit)]
 
 
@@ -552,14 +548,14 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, seed, time_limit_sec,
 _KIT_BUDGET = 4
 
 
-def _kit(parts, greedy_sheets, sheet_w, sheet_h, *, run_fn, seed, time_limit_sec,
+def _kit(parts, greedy_sheets, sheet_w, sheet_h, *, run_fn,
          separation) -> list[PackedSheet] | None:
     """``core.programs.kit_plan`` with Sparrow: a kit fits when one probe puts
     every piece of it on the sheet; the remainder is packed greedily."""
     def fits_kit(kit):
         demand = {i: n for i, n in enumerate(kit) if n > 0}
-        err, kept, _ = _probe(parts, demand, sheet_w, sheet_h, run_fn=run_fn, seed=seed,
-                              time_limit_sec=time_limit_sec, separation=separation)
+        err, kept, _ = _probe(parts, demand, sheet_w, sheet_h, run_fn=run_fn,
+                              separation=separation)
         if err is not None or len(kept) < sum(kit):
             return None
         return _sheet(kept, sheet_w, sheet_h)
@@ -567,7 +563,7 @@ def _kit(parts, greedy_sheets, sheet_w, sheet_h, *, run_fn, seed, time_limit_sec
     def pack_rest(rest):
         pack = greedy_fixed_sheets(
             [replace(p, quantity=q) for p, q in zip(parts, rest)], sheet_w, sheet_h,
-            run_fn=run_fn, seed=seed, time_limit_sec=time_limit_sec, separation=separation)
+            run_fn=run_fn, separation=separation)
         return pack.sheets if pack.ok else None
 
     return kit_plan([p.quantity for p in parts], greedy_sheets, fits_kit, pack_rest,

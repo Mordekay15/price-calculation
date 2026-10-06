@@ -30,7 +30,7 @@ def square(size=100, quantity=1, name="sq") -> SparrowPart:
                        width_mm=size, height_mm=size)
 
 
-def fake_solver(instance, *, seed, time_limit_sec, separation):
+def fake_solver(instance, *, separation):
     """Stack items in columns as high as the strip, left to right."""
     height = instance["strip_height"]
     x = y = col_w = 0.0
@@ -125,7 +125,7 @@ def test_a_long_part_drawn_diagonally_fits_once_laid_along_its_length(drawing):
     assert pack.ok and pack.sheets_needed == 1
 
 
-def turning_solver(instance, *, seed, time_limit_sec, separation):
+def turning_solver(instance, *, separation):
     """Like ``fake_solver``, but each item takes its first allowed rotation."""
     height = instance["strip_height"]
     x = y = col_w = 0.0
@@ -216,10 +216,9 @@ def test_edge_gaps_shrink_the_strip_sparrow_fills():
 def test_the_strip_is_padded_by_the_gap_and_parts_moved_back():
     seen = {}
 
-    def solver(instance, *, seed, time_limit_sec, separation):
+    def solver(instance, *, separation):
         seen["strip_height"] = instance["strip_height"]
-        return fake_solver(instance, seed=seed, time_limit_sec=time_limit_sec,
-                           separation=separation)
+        return fake_solver(instance, separation=separation)
 
     # the fake solver ignores the gap and places at the strip's corner (0, 0);
     # moved back by the 10 mm pad, that lands outside the sheet and is dropped
@@ -235,8 +234,8 @@ def test_real_sparrow_lets_parts_touch_the_sheet_edge():
     if exe is None:
         pytest.skip("Sparrow executable not found")
 
-    def run_fn(instance, *, seed, time_limit_sec, separation):
-        return run_sparrow(instance, executable=exe, time_limit_sec=2, seed=seed,
+    def run_fn(instance, *, separation):
+        return run_sparrow(instance, executable=exe, time_limit_sec=2,
                            min_item_separation=separation)
 
     # Two 100 mm squares with a 10 mm gap need 210 × 100; with the gap at the
