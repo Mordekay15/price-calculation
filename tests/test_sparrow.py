@@ -125,6 +125,58 @@ def test_a_long_part_drawn_diagonally_fits_once_laid_along_its_length(drawing):
     assert pack.ok and pack.sheets_needed == 1
 
 
+def turning_solver(instance, *, seed, time_limit_sec, separation):
+    """Like ``fake_solver``, but each item takes its first allowed rotation."""
+    height = instance["strip_height"]
+    x = y = col_w = 0.0
+    placements = []
+    for item in instance["items"]:
+        rot = item["allowed_orientations"][0]
+        x0, y0, x1, y1 = bbox(rotate_translate(item["shape"]["data"], rot, (0, 0)))
+        w, h = x1 - x0, y1 - y0
+        for _ in range(item["demand"]):
+            if y + h > height:
+                x, y, col_w = x + col_w, 0.0, 0.0
+            placements.append((item["id"], rot, (x - x0, y - y0)))
+            y += h
+            col_w = max(col_w, w)
+    return SparrowResult(True, "", placements, x + col_w)
+
+
+def bar_part(drawing, angle, angles, w=2900, h=80):
+    """A w × h bar drawn turned by ``angle``, read like an uploaded DXF."""
+    doc, msp = drawing()
+    msp.add_lwpolyline(rotate_translate([(0, 0), (w, 0), (w, h), (0, h)], angle, (0, 0)),
+                       close=True)
+    return part_from_report(read_dxf(dxf_bytes(doc), "bar.dxf").part(), 2, angles)
+
+
+def test_both_nesting_angles_keep_every_quarter_turn(drawing):
+    assert bar_part(drawing, 45, (0, 90)).orientations == (0.0, 90.0, 180.0, 270.0)
+
+
+def test_a_fixed_angle_puts_the_part_on_the_sheet_as_drawn(drawing):
+    # A bar drawn at 30°: the reader lays it flat (−30°), and 0/180 turns it
+    # back, so the drawing's X axis lies along the sheet's long side and the
+    # bar keeps its 30° (or 210°) to it.
+    part = bar_part(drawing, 30, (0,), w=1000)
+    assert part.orientations == (30.0, 210.0)
+    pack = greedy_fixed_sheets([part], 3000, 1500, run_fn=turning_solver)
+    assert pack.ok
+    for pl in pack.sheets[0].placements:
+        edges = list(zip(pl.outer, pl.outer[1:] + pl.outer[:1]))
+        (x1, y1), (x2, y2) = max(edges, key=lambda e: math.dist(*e))   # a long side
+        assert math.isclose(math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180, 30, abs_tol=1e-6)
+
+
+def test_a_fixed_angle_may_not_turn_a_part_to_fit(drawing):
+    # 400 × 1600 drawn standing: along the rolling direction it is 1600 high
+    standing = lambda angles: bar_part(drawing, 0, angles, w=400, h=1600)  # noqa: E731
+    pack = greedy_fixed_sheets([standing((0,))], 3000, 1500, run_fn=turning_solver)
+    assert not pack.ok and pack.reason == "bar (400 × 1600 mm) ei mahdu"
+    assert greedy_fixed_sheets([standing((90,))], 3000, 1500, run_fn=turning_solver).ok
+
+
 def test_greedy_reports_a_part_too_big_for_the_sheet():
     pack = greedy_fixed_sheets([square(size=300, name="big")], 250, 250, run_fn=fake_solver)
     assert not pack.ok and pack.reason == "big (300 mm) ei mahdu"

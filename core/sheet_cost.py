@@ -130,11 +130,17 @@ def utilization(part_area_mm2: float, sheet_w: float, sheet_h: float, n_sheets: 
 def too_big(parts, sheet_w: float, sheet_h: float, tol: float = 0.0) -> str:
     """Why parts don't fit a ``sheet_w`` × ``sheet_h`` usable area, as the
     sheet-size table shows it: ``ITM-072558 (3059 mm) ei mahdu``. ``parts`` are
-    ``(name, w, h)``; a part fits as is or turned a quarter. Names the length
-    when that is what's too long, else both sides. "" when every part fits."""
+    ``(name, w, h)`` or ``(name, w, h, turns)``: a part fits as is or, unless
+    ``turns`` is False (its nesting angle is fixed), turned a quarter. Names
+    the length when that is what's too long, else both sides. "" when every
+    part fits."""
     long_cap, short_cap = max(sheet_w, sheet_h) + tol, min(sheet_w, sheet_h) + tol
     out = []
-    for name, w, h in parts:
+    for name, w, h, *turns in parts:
+        if turns and not turns[0]:
+            if w > sheet_w + tol or h > sheet_h + tol:
+                out.append(f"{name} ({w:.0f} × {h:.0f} mm)")
+            continue
         long_side, short_side = max(w, h), min(w, h)
         if long_side > long_cap:
             out.append(f"{name} ({long_side:.0f} mm)")

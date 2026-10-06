@@ -143,6 +143,9 @@ class DxfReport:
     dropped: list[list[Point]] = field(default_factory=list)      # outside the part
     # Why this part cannot be priced (empty = it can).
     problems: list[str] = field(default_factory=list)
+    # How far the part was turned from the drawing to lie along its length
+    # (degrees, counter-clockwise): the drawing's X axis is now at this angle.
+    turned_deg: float = 0.0
 
 
 @dataclass
@@ -250,6 +253,7 @@ def _lay_along_length(report: DxfReport) -> None:
     def turned(points):
         return rotate_translate(points, turn, (0.0, 0.0))
 
+    report.turned_deg = turn
     for c in (report.outline, *report.holes):
         c.points = turned(c.points)
     for lines in (report.reference_lines, report.open_lines, report.dropped):

@@ -26,6 +26,9 @@ def test_too_big_names_each_part_and_the_side_that_does_not_fit():
     parts = [("long", 3059, 18.5), ("wide", 1600, 1700), ("ok", 2900, 400)]
     assert too_big(parts, 3000, 1500) == "long (3059 mm), wide (1700 × 1600 mm) ei mahdu"
     assert too_big(parts[2:], 3000, 1500) == ""
+    # a fixed nesting angle: no quarter turn to make it fit
+    assert too_big([("fixed", 400, 1600, False)], 3000, 1500) == "fixed (400 × 1600 mm) ei mahdu"
+    assert too_big([("fixed", 1600, 400, False)], 3000, 1500) == ""
 
 
 def test_small_helpers():

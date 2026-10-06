@@ -30,8 +30,14 @@ Point = tuple[float, float]
 
 # ── 1. Parts ──────────────────────────────────────────────────────────────────
 
-# The rotations every part may take (degrees): the four quarter turns.
+# The rotations a part may take (degrees): the four quarter turns, unless its
+# nesting angle is fixed (see ``part_from_report``).
 ORIENTATIONS: tuple[float, ...] = (0.0, 90.0, 180.0, 270.0)
+
+# The nesting angles a part card offers, counted from the part as drawn: 0
+# (0/180) keeps the drawing's X axis along the sheet's long side, which is the
+# rolling direction; 90 (90/270) lays it across.
+NESTING_ANGLES: tuple[int, ...] = (0, 90)
 
 # Points closer than this (mm) are treated as the same vertex when cleaning a
 # ring. Guards against jagua-rs bailing on duplicate vertices, including f32
@@ -46,6 +52,7 @@ class SparrowPart:
     ``outer`` is the placement outline; ``holes`` are kept for the drawing and
     the real part area (Sparrow places a part by its outer boundary).
     ``construction`` holds the bend / reference lines drawn on the layout.
+    ``orientations`` are the rotations Sparrow may give it.
     """
 
     part_id: str
@@ -55,6 +62,17 @@ class SparrowPart:
     width_mm: float = 0.0
     height_mm: float = 0.0
     construction: list[list[Point]] = field(default_factory=list)
+    orientations: tuple[float, ...] = ORIENTATIONS
+
+    @property
+    def turns(self) -> bool:
+        """May the part take any quarter turn (its nesting angle is free)?"""
+        return self.orientations == ORIENTATIONS
+
+    def sheet_size(self) -> tuple[float, float]:
+        """Its bounding box at its first allowed rotation, as it lies on the
+        sheet (the other allowed rotation is half a turn: the same box)."""
+        return bbox_wh(rotate_translate(self.outer, self.orientations[0], (0.0, 0.0)))
 
     def shape_dict(self) -> dict:
         """The jagua-rs ``shape`` object for this part."""
@@ -66,13 +84,22 @@ class SparrowPart:
         return {"type": "polygon", "data": {"outer": outer, "inner": inner}}
 
 
-def part_from_report(report: DxfReport, quantity: int = 1) -> SparrowPart:
+def part_from_report(report: DxfReport, quantity: int = 1,
+                     angles: tuple[int, ...] = NESTING_ANGLES) -> SparrowPart:
     """The SparrowPart for a priceable DXF part, with its holes attached.
 
-    Outer rings come out counter-clockwise and holes clockwise (standard
-    convention; the solver re-derives winding, but this keeps the JSON tidy).
+    ``angles`` are the allowed nesting angles (see ``NESTING_ANGLES``). With
+    both the part takes any quarter turn; with one, only that angle and half a
+    turn more, counted from the drawing: the turn that laid the part along its
+    length is undone. Outer rings come out counter-clockwise and holes
+    clockwise (standard convention; the solver re-derives winding, but this
+    keeps the JSON tidy).
     """
     outline = report.outline
+    orientations = ORIENTATIONS
+    if set(angles) != set(NESTING_ANGLES):
+        orientations = tuple(sorted({round((a + k - report.turned_deg) % 360.0, 6)
+                                     for a in angles for k in (0, 180)}))
     return SparrowPart(
         part_id=_stem(report.name),
         quantity=int(quantity),
@@ -81,6 +108,7 @@ def part_from_report(report: DxfReport, quantity: int = 1) -> SparrowPart:
         width_mm=outline.width_mm,
         height_mm=outline.height_mm,
         construction=list(report.reference_lines),
+        orientations=orientations,
     )
 
 
@@ -317,7 +345,7 @@ def greedy_fixed_sheets(
         return PackResult(ok=False, reason="virheellinen levykoko")
 
     remaining = [int(p.quantity) for p in parts]
-    reason = too_big([(p.part_id, *bbox_wh(p.outer)) for p in parts if p.quantity > 0],
+    reason = too_big([(p.part_id, *p.sheet_size(), p.turns) for p in parts if p.quantity > 0],
                      sheet_w, sheet_h, _TOL)
     if reason:
         return PackResult(ok=False, reason=reason)
@@ -443,7 +471,7 @@ def _build_instance(parts, demand: dict[int, int], strip_height: float) -> dict:
     for local_id, (orig_i, n) in enumerate(demand.items()):
         part = parts[orig_i]
         item = {"id": local_id, "demand": int(n), "part_id": part.part_id,
-                "allowed_orientations": list(ORIENTATIONS)}
+                "allowed_orientations": list(part.orientations)}
         item["shape"] = part.shape_dict()
         items.append(item)
     return {"name": "pack", "strip_height": float(strip_height), "items": items}
