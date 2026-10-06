@@ -59,33 +59,37 @@ def test_run_label_counts_only_new_groups():
     assert _run_label(0, 0, 2) == "Laske levykäyttö — kaikki laskettu"
 
 
-def test_a_part_removed_from_its_card_is_skipped_until_uploaded_again():
+def test_dropped_files_become_cards_and_poista_removes_one():
     from streamlit.testing.v1 import AppTest
 
     def page():
         from types import SimpleNamespace
 
+        import ezdxf
         import streamlit as st
 
         from tests.conftest import dxf_bytes
-        from view.dxf_tab import _remove, _sync_store
-        import ezdxf
+        from view.dxf_tab import _STORE, _evict, _ingest
 
         doc = ezdxf.new()
         doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 50), (0, 50)], close=True)
         data = dxf_bytes(doc)
-        ids = st.session_state.get("ids", ["a", "b"])
-        files = [SimpleNamespace(file_id=i, name=f"{i}.dxf", getvalue=lambda: data) for i in ids]
+        drop = st.session_state.pop("drop", [])
+        files = [SimpleNamespace(file_id=i, name=f"{i}.dxf", getvalue=lambda: data) for i in drop]
         if st.session_state.get("remove"):
-            _remove(st.session_state.pop("remove"))
-        st.session_state["shown"] = [fid for fid, _ in _sync_store(files)]
+            _evict(st.session_state.pop("remove"))
+        st.session_state["new"] = _ingest(files)
+        st.session_state["shown"] = list(st.session_state.get(_STORE, {}))
 
-    at = AppTest.from_function(page).run()
-    assert at.session_state["shown"] == ["a", "b"]
-    at.session_state["remove"] = "a"
-    assert at.run().session_state["shown"] == ["b"]
-    assert at.run().session_state["shown"] == ["b"]          # stays removed
-    at.session_state["ids"] = ["b"]                          # taken out of the uploader
+    at = AppTest.from_function(page)
+    at.session_state["drop"] = ["a", "b"]
     at.run()
-    at.session_state["ids"] = ["a2", "b"]                    # uploaded again: a new file id
-    assert at.run().session_state["shown"] == ["a2", "b"]
+    assert at.session_state["new"] and at.session_state["shown"] == ["a", "b"]
+    assert at.session_state["dxf_inbox"] == 1                # the drop area starts over
+    at.session_state["remove"] = "a"
+    at.run()
+    assert at.session_state["shown"] == ["b"]
+    assert not at.session_state["new"]
+    at.session_state["drop"] = ["a2"]                        # dropped again
+    at.run()
+    assert at.session_state["shown"] == ["b", "a2"]

@@ -35,14 +35,14 @@ _RENEST = "dxf_sparrow_renest"  # {signature} of groups to re-nest on this run
 # button. Make it a tall dashed drop zone that says files can be dropped on it.
 _DROPZONE_CSS = """
 <style>
-.st-key-dxf_uploader [data-testid="stFileUploaderDropzone"] {
+[class*="st-key-dxf_uploader"] [data-testid="stFileUploaderDropzone"] {
     min-height: 9rem;
     border: 2px dashed rgba(128, 128, 128, 0.6);
     justify-content: center;
     flex-wrap: wrap;
     gap: 0.5rem 1rem;
 }
-.st-key-dxf_uploader [data-testid="stFileUploaderDropzone"]::before {
+[class*="st-key-dxf_uploader"] [data-testid="stFileUploaderDropzone"]::before {
     content: "Vedä ja pudota DXF-tiedostot tähän";
     width: 100%;
     text-align: center;
@@ -90,11 +90,14 @@ def render(data: dict) -> None:
         "Lataa DXF-tiedostot",
         type="dxf",
         accept_multiple_files=True,
-        key="dxf_uploader",
+        key=f"dxf_uploader_{st.session_state.get(_INBOX, 0)}",
         help="Vedä tiedostot alueelle tai valitse ne koneelta. Voit ladata useita "
-             "tiedostoja kerralla. Jokainen tiedosto on yksi tuote.",
+             "tiedostoja kerralla. Jokainen tiedosto on yksi tuote; ne siirtyvät "
+             "alle osakorteiksi, ja kortin Poista-painike poistaa osan.",
     )
-    parts = _sync_store(uploaded)
+    if _ingest(uploaded):
+        st.rerun()  # redraw with the drop area empty
+    parts = list(st.session_state.get(_STORE, {}).items())
     if not parts:
         st.info("Lataa vähintään yksi DXF-tiedosto aloittaaksesi.")
         return
@@ -331,8 +334,9 @@ def _parts_for_group(products: list[dict]) -> tuple[list, dict[str, float]]:
 
 # ── Part cards ────────────────────────────────────────────────────────────────
 #
-# _sync_store() reads each uploaded file once with core.dxf.read_dxf (cached in
-# session state, pruned when a file is removed). _render_part_config() draws a
+# _ingest() reads each dropped file once with core.dxf.read_dxf into session
+# state and empties the drop area; the cards are the file list, and a card's
+# Poista button removes its file. _render_part_config() draws a
 # card — preview, measured size, material / thickness / quantity —
 # and returns the product dict the pricing uses, or None (with the reasons
 # shown) when the part cannot be priced. The card and the pricing share the
@@ -341,47 +345,31 @@ def _parts_for_group(products: list[dict]) -> tuple[list, dict[str, float]]:
 _STORE   = "dxf_store"         # {file_id: DxfFile}
 _REPORTS = "dxf_part_reports"  # {file_id: DxfReport}
 _CONFIG  = "dxf_part_config"   # {file_id: {"material", "thickness"}}
-_REMOVED = "dxf_removed"       # {file_id} removed from its card's button
+_INBOX   = "dxf_inbox"         # bumped to give the uploader a fresh, empty key
 
 
-def _sync_store(uploaded) -> list[tuple[str, DxfFile]]:
-    """Read newly uploaded files once, drop removed ones, keep upload order.
-
-    A file removed from its card stays in the uploader (Streamlit can't take
-    it out from code) but is skipped; uploading it again brings it back.
-    """
+def _ingest(uploaded) -> bool:
+    """Move newly dropped files into the store, in upload order, and empty the
+    drop area (Streamlit can't remove one file from an uploader, only start a
+    new one). True when something new came in."""
     store: dict = st.session_state.setdefault(_STORE, {})
-    removed: set = st.session_state.setdefault(_REMOVED, set())
-    uploaded = uploaded or []
-    current_ids = {u.file_id for u in uploaded}
-    for fid in [f for f in store if f not in current_ids]:
-        _evict(fid)
-    removed &= current_ids
-
-    files = []
-    for up in uploaded:
-        if up.file_id in removed:
-            continue
-        if up.file_id not in store:
-            store[up.file_id] = read_dxf(up.getvalue(), up.name)
-        files.append((up.file_id, store[up.file_id]))
-    return files
+    new = [up for up in uploaded or [] if up.file_id not in store]
+    for up in new:
+        store[up.file_id] = read_dxf(up.getvalue(), up.name)
+    if new:
+        st.session_state[_INBOX] = st.session_state.get(_INBOX, 0) + 1
+    return bool(new)
 
 
 def _evict(fid: str) -> None:
-    """Drop everything kept for a removed file, including its widget state."""
+    """A card's "Poista" button: drop everything kept for the file, including
+    its widget state."""
     st.session_state.get(_STORE, {}).pop(fid, None)
     st.session_state.get(_CONFIG, {}).pop(fid, None)
     st.session_state.get(_REPORTS, {}).pop(fid, None)
     for key in (f"dxf_mat_{fid}", f"dxf_th_{fid}", f"dxf_th_{fid}_disabled",
                 f"dxf_q_{fid}", f"dxf_unit_ok_{fid}"):
         st.session_state.pop(key, None)
-
-
-def _remove(fid: str) -> None:
-    """A card's "Poista" button: drop the part from the page."""
-    st.session_state.setdefault(_REMOVED, set()).add(fid)
-    _evict(fid)
 
 
 def _render_part_config(
@@ -396,7 +384,7 @@ def _render_part_config(
     with st.container(border=True):
         hdr = st.columns([6, 2, 1], vertical_alignment="center")
         hdr[0].markdown(f"**#{idx + 1}** · {dxf.name}")
-        hdr[2].button("Poista", key=f"dxf_del_{fid}", on_click=_remove, args=(fid,))
+        hdr[2].button("Poista", key=f"dxf_del_{fid}", on_click=_evict, args=(fid,))
 
         # Text found in the drawing (Mat=…, Thk=…) — shown to cross-check the
         # material choice, never nested.

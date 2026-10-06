@@ -5,9 +5,9 @@ A Streamlit app that prices sheet-metal parts from supplier price lists.
 - **Hintalaskuri** (manual tab): enter rectangular parts. Parts are nested with
   a fast bounding-box packer.
 - **DXF-nestaus** (DXF tab): upload one DXF per part. The real shapes are
-  nested with the [Sparrow](https://github.com/JeroenGar/sparrow) solver. A
-  part's **Poista** button takes it off the page; the file stays listed in the
-  uploader until it is removed there, and uploading it again brings it back.
+  nested with the [Sparrow](https://github.com/JeroenGar/sparrow) solver.  Dropped
+  files become part cards and the drop area empties; a card's **Poista**
+  button removes the part.
 
 Both tabs compare every priced sheet size and pick the cheapest. Parts of the
 same material and thickness share sheets, and the app also looks for a plan
