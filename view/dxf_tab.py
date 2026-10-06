@@ -364,6 +364,7 @@ _STORE   = "dxf_store"         # {file_id: DxfFile}
 _REPORTS = "dxf_part_reports"  # {file_id: DxfReport}
 _CONFIG  = "dxf_part_config"   # {file_id: {"material", "thickness"}}
 _INBOX   = "dxf_inbox"         # bumped to give the uploader a fresh, empty key
+_FILL_ASKED = "dxf_fill_asked" # the "same material for the others?" question is answered
 
 
 def _ingest(uploaded) -> bool:
@@ -376,6 +377,7 @@ def _ingest(uploaded) -> bool:
         store[up.file_id] = read_dxf(up.getvalue(), up.name)
     if new:
         st.session_state[_INBOX] = st.session_state.get(_INBOX, 0) + 1
+        st.session_state.pop(_FILL_ASKED, None)  # new empty parts: ask again
     return bool(new)
 
 
@@ -422,6 +424,7 @@ def _render_part_config(
             return None
         with input_col:
             material, thickness, qty = _render_part_inputs(fid, materials, lookup)
+            _offer_same_material(fid, material, thickness)
             angles = _render_nesting_angles(fid) if per_part_angles else None
         if angles == ():
             return None
@@ -544,6 +547,38 @@ def _render_angle_controls(n_parts: int) -> tuple[int, ...] | None:
         return None
     with angles:
         return _render_nesting_angles()
+
+
+def _offer_same_material(fid: str, material: str | None, thickness: str | None) -> None:
+    """Once a card has its material and thickness, ask whether the parts that
+    have neither yet get the same. Asked once; dropping new files asks again."""
+    if st.session_state.get(_FILL_ASKED) or not (material and thickness):
+        return
+    config = st.session_state.get(_CONFIG, {})
+    empty = [f for f in st.session_state.get(_STORE, {})
+             if f != fid and not (config.get(f, {}).get("material")
+                                  and config.get(f, {}).get("thickness"))]
+    if not empty:
+        return
+    with st.container(border=True):
+        others = "muille osille" if len(empty) > 1 else "toiselle osalle"
+        st.markdown(f"Täytetäänkö {others} ({len(empty)}) sama materiaali ja "
+                    f"paksuus: **{material} · {thickness} mm**?")
+        yes, no, _ = st.columns([1, 1, 4])
+        yes.button("Kyllä", key=f"dxf_fill_yes_{fid}", type="primary",
+                   on_click=_fill_material, args=(empty, material, thickness))
+        no.button("Ei", key=f"dxf_fill_no_{fid}", on_click=_fill_material, args=([], None, None))
+
+
+def _fill_material(fids: list[str], material: str | None, thickness: str | None) -> None:
+    """Answer the question: give ``fids`` the material and thickness (their
+    cards' selectboxes too) and stop asking."""
+    config = st.session_state.setdefault(_CONFIG, {})
+    for f in fids:
+        config[f] = {**config.get(f, {}), "material": material, "thickness": thickness}
+        st.session_state[f"dxf_mat_{f}"] = material
+        st.session_state[f"dxf_th_{f}"] = thickness
+    st.session_state[_FILL_ASKED] = True
 
 
 def _part(fid: str, dxf: DxfFile) -> DxfReport:

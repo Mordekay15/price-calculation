@@ -100,16 +100,16 @@ def test_dropped_files_become_cards_and_poista_removes_one():
     assert at.session_state["shown"] == ["b", "a2"]
 
 
-def angle_page(n):
+def dxf_page(n):
     from streamlit.testing.v1 import AppTest
 
-    at = AppTest.from_file("angle_page.py")
+    at = AppTest.from_file("dxf_page.py")
     at.session_state["n"] = n
     return at.run()
 
 
 def test_one_part_takes_its_nesting_angle_from_the_run_row():
-    at = angle_page(1)
+    at = dxf_page(1)
     assert [c.key for c in at.checkbox] == ["dxf_angle_0", "dxf_angle_90"]   # none on the card
     assert not at.radio
     at.checkbox(key="dxf_angle_90").uncheck().run()
@@ -117,7 +117,7 @@ def test_one_part_takes_its_nesting_angle_from_the_run_row():
 
 
 def test_several_parts_share_one_angle_or_choose_per_part():
-    at = angle_page(2)
+    at = dxf_page(2)
     assert at.radio(key="dxf_angle_mode").value == "Sama kaikille"
     at.checkbox(key="dxf_angle_0").uncheck().run()
     assert at.session_state["angles"] == [(90,), (90,)]
@@ -126,3 +126,29 @@ def test_several_parts_share_one_angle_or_choose_per_part():
                                             "dxf_angle_0_f1", "dxf_angle_90_f1"}
     at.checkbox(key="dxf_angle_90_f1").uncheck().run()
     assert at.session_state["angles"] == [(0, 90), (0,)]
+
+
+def fill_first_card(at):
+    at.selectbox(key="dxf_mat_f0").set_value("S235").run()
+    return at.selectbox(key="dxf_th_f0").set_value("2").run()
+
+
+def test_the_first_material_can_be_given_to_the_other_parts():
+    at = fill_first_card(dxf_page(3))
+    assert any("sama materiaali" in m.value for m in at.markdown)
+    at.button(key="dxf_fill_yes_f0").click().run()
+    assert at.session_state["materials"] == [("S235", "2")] * 3
+    assert not any("sama materiaali" in m.value for m in at.markdown)   # gone
+
+
+def test_no_keeps_the_others_empty_and_stops_asking():
+    at = fill_first_card(dxf_page(2))
+    at.button(key="dxf_fill_no_f0").click().run()
+    assert at.session_state["materials"] == [("S235", "2"), (None, None)]
+    at.selectbox(key="dxf_mat_f1").set_value("S235").run()
+    assert not any("sama materiaali" in m.value for m in at.markdown)
+
+
+def test_one_part_is_never_asked():
+    at = fill_first_card(dxf_page(1))
+    assert not any("sama materiaali" in m.value for m in at.markdown)
