@@ -91,19 +91,7 @@ def _nesting_diff(saved: dict, current: dict) -> str:
 def render(data: dict) -> None:
     lookup = build_lookup(data)
 
-    st.html(_DROPZONE_CSS)
-    uploaded = st.file_uploader(
-        "Lataa DXF-tiedostot",
-        type="dxf",
-        accept_multiple_files=True,
-        key=f"dxf_uploader_{st.session_state.get(_INBOX, 0)}",
-        help="Vedä tiedostot alueelle tai valitse ne koneelta. Voit ladata useita "
-             "tiedostoja kerralla. Jokainen tiedosto on yksi tuote; ne siirtyvät "
-             "alle osakorteiksi, ja kortin Poista-painike poistaa osan.",
-    )
-    if _ingest(uploaded):
-        st.rerun()  # redraw with the drop area empty
-    parts = list(st.session_state.get(_STORE, {}).items())
+    parts = _render_drop_area()
     if not parts:
         st.info("Lataa vähintään yksi DXF-tiedosto aloittaaksesi.")
         return
@@ -143,26 +131,8 @@ def render(data: dict) -> None:
     groups = group_products(products, nest_mode)
     settings = _Settings(nest_mode, sheet, int(time_limit), margin_pct)
     cache: dict = st.session_state.setdefault(_CACHE, {})
-    # Two buttons that never overlap: the first nests only groups with no
-    # result, the second only results made with other Sparrow settings. A
-    # group's own button re-nests just that group.
-    n_new = n_stale = 0
-    for k, p in groups.items():
-        entry = cache.get(_sig(k, p, settings))
-        if entry is None:
-            n_new += parse_thickness_mm(k[1]) is not None
-        else:
-            n_stale += _is_stale(entry, settings)
-    run = c_run.button(_run_label(n_new, n_stale, len(groups)), key="dxf_sparrow_run",
-                    type="primary", disabled=n_new == 0,
-                    help="Laskee vain osat, joilla ei vielä ole tulosta. Jo "
-                         "laskettuihin ei kosketa.")
-    # Shown only when there is something to update.
-    update = n_stale > 0 and c_update.button(
-        f"Päivitä eri asetuksilla lasketut ({n_stale})", key="dxf_sparrow_update",
-        help="Laskee nykyisillä asetuksilla uudelleen kaikki tulokset, jotka on "
-             "laskettu eri asetuksilla. Yksittäisen osan voi päivittää sen omasta "
-             "painikkeesta.")
+    n_new, n_stale = _count_pending(groups, settings, cache)
+    run, update = _render_run_buttons(c_run, c_update, n_new, n_stale, len(groups))
     st.divider()  # the run buttons above, the results below
     renest = st.session_state.pop(_RENEST, set())
     _show(products, groups, settings, cache, _nester(lookup, settings, exe),
@@ -171,6 +141,54 @@ def render(data: dict) -> None:
         # The button's count was drawn before these groups were nested:
         # redraw it with the new count (e.g. "kaikki laskettu").
         st.rerun()
+
+
+def _render_drop_area() -> list[tuple[str, DxfFile]]:
+    """The drop area; returns every part read so far, in upload order."""
+    st.html(_DROPZONE_CSS)
+    uploaded = st.file_uploader(
+        "Lataa DXF-tiedostot",
+        type="dxf",
+        accept_multiple_files=True,
+        key=f"dxf_uploader_{st.session_state.get(_INBOX, 0)}",
+        help="Vedä tiedostot alueelle tai valitse ne koneelta. Voit ladata useita "
+             "tiedostoja kerralla. Jokainen tiedosto on yksi tuote; ne siirtyvät "
+             "alle osakorteiksi, ja kortin Poista-painike poistaa osan.",
+    )
+    if _ingest(uploaded):
+        st.rerun()  # redraw with the drop area empty
+    return list(st.session_state.get(_STORE, {}).items())
+
+
+def _count_pending(groups, settings: _Settings, cache: dict) -> tuple[int, int]:
+    """``(n_new, n_stale)``: groups with no result yet (and a readable
+    thickness), and results made with other Sparrow settings."""
+    n_new = n_stale = 0
+    for key, prods in groups.items():
+        entry = cache.get(_sig(key, prods, settings))
+        if entry is None:
+            n_new += parse_thickness_mm(key[1]) is not None
+        else:
+            n_stale += _is_stale(entry, settings)
+    return n_new, n_stale
+
+
+def _render_run_buttons(c_run, c_update, n_new: int, n_stale: int,
+                        n_groups: int) -> tuple[bool, bool]:
+    """The two buttons, which never overlap: the first nests only groups with
+    no result, the second (shown only when needed) only results made with
+    other Sparrow settings. A group's own button re-nests just that group.
+    Returns ``(run, update)`` — whether each was clicked."""
+    run = c_run.button(_run_label(n_new, n_stale, n_groups), key="dxf_sparrow_run",
+                       type="primary", disabled=n_new == 0,
+                       help="Laskee vain osat, joilla ei vielä ole tulosta. Jo "
+                            "laskettuihin ei kosketa.")
+    update = n_stale > 0 and c_update.button(
+        f"Päivitä eri asetuksilla lasketut ({n_stale})", key="dxf_sparrow_update",
+        help="Laskee nykyisillä asetuksilla uudelleen kaikki tulokset, jotka on "
+             "laskettu eri asetuksilla. Yksittäisen osan voi päivittää sen omasta "
+             "painikkeesta.")
+    return run, update
 
 
 def _is_stale(entry: dict, settings: _Settings) -> bool:
