@@ -233,16 +233,21 @@ def test_a_part_drawn_diagonally_is_laid_along_its_length(drawing):
     assert report.problems == []
     assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (2900, 80)
     assert point_in_polygon(report.holes[0].points[0], report.outline.points)
-    assert math.isclose(report.turned_deg % 180, 135)        # −45°: laid flat
 
 
-def test_a_straight_part_is_left_as_drawn(drawing):
+def test_a_lying_part_is_left_as_drawn(drawing):
     doc, msp = drawing()
-    rect(msp, 10, 20, 80, 300)          # standing: Sparrow turns it a quarter itself
+    rect(msp, 10, 20, 300, 80)
     report = part_of(doc)
     assert report.outline.points[0] == (10, 20)
-    assert (report.outline.width_mm, report.outline.height_mm) == (80, 300)
-    assert report.turned_deg == 0
+    assert (report.outline.width_mm, report.outline.height_mm) == (300, 80)
+
+
+def test_a_standing_part_is_laid_down_exactly(drawing):
+    doc, msp = drawing()
+    rect(msp, 10, 20, 80, 300)
+    report = part_of(doc)
+    assert (report.outline.width_mm, report.outline.height_mm) == (300, 80)   # no round-off
 
 
 def test_min_area_angle_lays_the_long_side_horizontal():

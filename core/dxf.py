@@ -143,9 +143,6 @@ class DxfReport:
     dropped: list[list[Point]] = field(default_factory=list)      # outside the part
     # Why this part cannot be priced (empty = it can).
     problems: list[str] = field(default_factory=list)
-    # How far the part was turned from the drawing to lie along its length
-    # (degrees, counter-clockwise): the drawing's X axis is now at this angle.
-    turned_deg: float = 0.0
 
 
 @dataclass
@@ -236,23 +233,34 @@ class DxfFile:
         return report
 
 
-# A part already within this many degrees of a quarter turn is left as drawn.
+# A part within this many degrees of lying along its length is left as drawn,
+# and a turn this close to a quarter turn is made an exact one.
 _STRAIGHT_TOL_DEG = 0.5
+
+# Exact quarter turns (counter-clockwise), free of float round-off.
+_QUARTER_TURNS = {1: lambda x, y: (-y, x), 2: lambda x, y: (-x, -y), 3: lambda x, y: (y, -x)}
 
 
 def _lay_along_length(report: DxfReport) -> None:
-    """Turn the whole drawing so the part lies along its length, as a designer
-    lays it before nesting: a strip drawn diagonally is then 2936 × 446 mm, not
-    2120 × 2061. The card, the price and Sparrow all use the turned part."""
+    """Turn the whole drawing so the part lies along its length, long side
+    horizontal, as a designer lays it before nesting: a strip drawn diagonally
+    is then 2936 × 446 mm, not 2120 × 2061, and a part drawn standing lies
+    down. The card, the price, the nesting angle (0/180 = along the length)
+    and Sparrow all use the turned part."""
     turn = min_area_angle(report.outline.points)
-    off = turn % 90.0
-    if min(off, 90.0 - off) <= _STRAIGHT_TOL_DEG:
+    off = turn % 180.0
+    if min(off, 180.0 - off) <= _STRAIGHT_TOL_DEG:
         return
+    quarters = round(turn / 90.0)
+    if abs(turn - 90.0 * quarters) <= _STRAIGHT_TOL_DEG:
+        exact = _QUARTER_TURNS[quarters % 4]
 
-    def turned(points):
-        return rotate_translate(points, turn, (0.0, 0.0))
+        def turned(points):
+            return [exact(x, y) for x, y in points]
+    else:
+        def turned(points):
+            return rotate_translate(points, turn, (0.0, 0.0))
 
-    report.turned_deg = turn
     for c in (report.outline, *report.holes):
         c.points = turned(c.points)
     for lines in (report.reference_lines, report.open_lines, report.dropped):
