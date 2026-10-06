@@ -204,6 +204,9 @@ def draw_sparrow_layout(option: SheetOption, parts: list) -> None:
             if i < len(parts) else f"#{i + 1}")
         for i in used
     ])
+    # A part with a fixed nesting angle lies to the rolling direction.
+    if any(not parts[i].turns for i in used if i < len(parts)):
+        st.caption("Valssaussuunta → levyn pitkä sivu (kuvissa vaakasuunta)")
 
     _render_layouts(shown, lambda sheet: sheet.used_area,
                     lambda sheet, scale: _shape_sheet_svg(sheet, shown, scale))
