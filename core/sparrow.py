@@ -287,7 +287,6 @@ class Placed:
     part_index: int                 # index into the parts list passed in
     part_id: str
     rotation_deg: float
-    translation: tuple[float, float]
     outer: list[Point]
     holes: list[list[Point]] = field(default_factory=list)
     construction: list[list[Point]] = field(default_factory=list)
@@ -457,7 +456,7 @@ def _probe(parts, demand: dict[int, int], sheet_w: float, sheet_h: float,
             continue  # spills past this sheet
         if left[orig_i] <= 0:
             continue
-        kept.append(Placed(orig_i, part.part_id, rot, trans, outer,
+        kept.append(Placed(orig_i, part.part_id, rot, outer,
                            [rotate_translate(h, rot, trans) for h in part.holes],
                            [rotate_translate(c, rot, trans) for c in part.construction]))
         left[orig_i] -= 1

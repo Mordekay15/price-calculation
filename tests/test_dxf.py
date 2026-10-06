@@ -128,7 +128,7 @@ def test_unit_from_a_text_label(drawing):
     rect(msp, 0, 0, 12, 8)
     msp.add_text('Un="inch"')
     dxf = read_dxf(dxf_bytes(doc), "part.dxf")
-    assert dxf.problems == [] and dxf.unit_note
+    assert dxf.problems == [] and not dxf.unit_guessed
     assert math.isclose(dxf.part().outline.width_mm, 12 * 25.4)
 
 
@@ -138,7 +138,7 @@ def test_unit_from_an_iso_sheet_size(drawing):
     rect(msp, 0, 0, 840, 594, layer="FORMAT")      # an A1 drawing sheet
     rect(msp, 100, 100, 300, 200)
     dxf = read_dxf(dxf_bytes(doc), "part.dxf")
-    assert dxf.problems == [] and "A1" in dxf.unit_note
+    assert dxf.problems == [] and not dxf.unit_guessed and dxf.unit_label == "mm"
     assert round(dxf.part().outline.width_mm) == 300
 
 

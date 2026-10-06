@@ -154,7 +154,6 @@ class DxfFile:
 
     name: str
     unit_label: str = ""
-    unit_note: str = ""          # how the unit was found, when not from the header
     # No unit anywhere: unit_label is only a guess, which the user must confirm
     # before the part is priced.
     unit_guessed: bool = False
@@ -278,8 +277,6 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
     unit_code = int(getattr(doc, "units", 0) or 0)
     if unit_code not in _UNITS:
         unit_code = _unit_from_texts(f.texts)
-        if unit_code is not None:
-            f.unit_note = "luettu piirustuksen tekstistä"
     # Without a unit, read in drawing units; a standard sheet size below may
     # still show they are millimetres.
     factor, f.unit_label = _UNITS.get(unit_code, (1.0, "ei yksikköä"))
@@ -299,13 +296,11 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
             f.pieces.append(_Piece(pts, closed, layer, not _is_dashed(entity, doc)))
 
     if unit_code is None:
-        sheet = _iso_sheet([pt for p in f.pieces for pt in p.points])
-        if sheet:
-            f.unit_label, f.unit_note = "mm", f"päätelty piirustusarkin koosta ({sheet})"
+        if _iso_sheet([pt for p in f.pieces for pt in p.points]):
+            f.unit_label = "mm"
         else:
             # Guess: mm, unless the header says the drawing is imperial.
             f.unit_guessed = True
-            f.unit_note = "arvattu — piirustuksessa ei ole mittayksikköä"
             if doc.header.get("$MEASUREMENT", 1) == 0:
                 factor, f.unit_label = _UNITS[1]
                 for p in f.pieces:
