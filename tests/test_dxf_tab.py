@@ -98,3 +98,31 @@ def test_dropped_files_become_cards_and_poista_removes_one():
     at.session_state["drop"] = ["a2"]                        # dropped again
     at.run()
     assert at.session_state["shown"] == ["b", "a2"]
+
+
+def angle_page(n):
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("angle_page.py")
+    at.session_state["n"] = n
+    return at.run()
+
+
+def test_one_part_takes_its_nesting_angle_from_the_run_row():
+    at = angle_page(1)
+    assert [c.key for c in at.checkbox] == ["dxf_angle_0", "dxf_angle_90"]   # none on the card
+    assert not at.radio
+    at.checkbox(key="dxf_angle_90").uncheck().run()
+    assert at.session_state["angles"] == [(0,)]
+
+
+def test_several_parts_share_one_angle_or_choose_per_part():
+    at = angle_page(2)
+    assert at.radio(key="dxf_angle_mode").value == "Sama kaikille"
+    at.checkbox(key="dxf_angle_0").uncheck().run()
+    assert at.session_state["angles"] == [(90,), (90,)]
+    at.radio(key="dxf_angle_mode").set_value("Osakohtainen").run()
+    assert {c.key for c in at.checkbox} == {"dxf_angle_0_f0", "dxf_angle_90_f0",
+                                            "dxf_angle_0_f1", "dxf_angle_90_f1"}
+    at.checkbox(key="dxf_angle_90_f1").uncheck().run()
+    assert at.session_state["angles"] == [(0, 90), (0,)]

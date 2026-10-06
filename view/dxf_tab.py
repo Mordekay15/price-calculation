@@ -108,10 +108,12 @@ def render(data: dict) -> None:
         st.info("Lataa vähintään yksi DXF-tiedosto aloittaaksesi.")
         return
 
-    products = _render_part_cards(parts, materials_with_copper(lookup), lookup)
+    # Per-part angles are chosen on the cards, drawn above the run row whose
+    # switch decides it: read the switch's value from the last run.
+    per_part = len(parts) > 1 and st.session_state.get(_ANGLE_MODE) == _PER_PART
+    products = _render_part_cards(parts, materials_with_copper(lookup), lookup, per_part)
     margin_pct, nest_mode, sheet = _render_settings()
-    groups = group_products(products, nest_mode)
-    if not groups:
+    if not any(is_ready(p) for p in products):
         st.info("Valitse materiaali ja paksuus vähintään yhdelle osalle.")
         return
 
@@ -125,13 +127,20 @@ def render(data: dict) -> None:
         return
 
     st.divider()
-    # The search time sits with the button it applies to.
-    c_time, c_run, c_update = st.columns([1, 2, 2], vertical_alignment="bottom")
+    # The search time and the nesting angle sit with the button they apply to.
+    c_time, c_angle, c_run, c_update = st.columns([1, 2, 2, 2], vertical_alignment="bottom")
     time_limit = c_time.number_input(
         "Sijoittelun hakuaika (s)", min_value=1, value=4, step=1, key="dxf_sparrow_t",
         help="Aikaraja yhdelle sijoitteluyritykselle (levyä kohden tehdään "
              "yksi tai useampi). Pidempi aika voi löytää tiiviimmän sijoittelun, "
              "mutta laskenta kestää kauemmin.")
+    with c_angle:
+        shared = _render_angle_controls(len(parts))
+    if shared == ():
+        return  # no angle ticked: the warning says so
+    if shared is not None:
+        products = [{**p, "angles": shared} for p in products]
+    groups = group_products(products, nest_mode)
     settings = _Settings(nest_mode, sheet, int(time_limit), margin_pct)
     cache: dict = st.session_state.setdefault(_CACHE, {})
     # Two buttons that never overlap: the first nests only groups with no
@@ -184,12 +193,14 @@ def _run_label(n_new: int, n_stale: int, n_groups: int) -> str:
     return f"{base} — " + (f"{n_new} uusi" if n_new == 1 else f"{n_new} uutta")
 
 
-def _render_part_cards(parts, materials: list[str], lookup: dict) -> list[dict]:
-    """One card per uploaded part; returns the configured product dicts."""
+def _render_part_cards(parts, materials: list[str], lookup: dict,
+                       per_part_angles: bool = False) -> list[dict]:
+    """One card per uploaded part; returns the configured product dicts. The
+    nesting angle is on the cards only when it is chosen per part."""
     st.markdown("**Osat**")
     products = []
     for idx, (fid, part) in enumerate(parts):
-        product = _render_part_config(fid, part, idx, materials, lookup)
+        product = _render_part_config(fid, part, idx, materials, lookup, per_part_angles)
         if product is not None:
             products.append(product)
     return products
@@ -386,9 +397,11 @@ def _render_part_config(
     idx: int,
     materials: list[str],
     lookup: dict,
+    per_part_angles: bool = False,
 ) -> dict | None:
     """Draw one part's card, preview left and inputs right; return its product
-    dict, or None if not priceable."""
+    dict, or None if not priceable. Its ``angles`` are None (set later from the
+    run row) unless ``per_part_angles``."""
     with st.container(border=True):
         hdr = st.columns([6, 2, 1], vertical_alignment="center")
         hdr[0].markdown(f"**#{idx + 1}** · {dxf.name}")
@@ -409,8 +422,8 @@ def _render_part_config(
             return None
         with input_col:
             material, thickness, qty = _render_part_inputs(fid, materials, lookup)
-            angles = _render_nesting_angles(fid)
-        if not angles:
+            angles = _render_nesting_angles(fid) if per_part_angles else None
+        if angles == ():
             return None
 
     return {
@@ -499,16 +512,32 @@ _ANGLE_HELP = (
 )
 
 
-def _render_nesting_angles(fid: str) -> tuple[int, ...]:
-    """The part's allowed nesting angles (see ``core.sparrow.NESTING_ANGLES``),
-    both ticked by default; () with a warning when none is."""
+_ANGLE_MODE = "dxf_angle_mode"
+_SHARED, _PER_PART = "Sama kaikille", "Osakohtainen"
+
+
+def _render_nesting_angles(fid: str = "") -> tuple[int, ...]:
+    """Allowed nesting angles (see ``core.sparrow.NESTING_ANGLES``), both
+    ticked by default; () with a warning when none is. ``fid`` keys a card's
+    own choice; without it, the run row's shared one."""
+    suffix = f"_{fid}" if fid else ""
     cols = st.columns([2, 1, 1], vertical_alignment="center")
     cols[0].markdown("Sallittu nestauskulma", help=_ANGLE_HELP)
     angles = tuple(a for a, col in zip(NESTING_ANGLES, cols[1:])
-                   if col.checkbox(_ANGLE_LABELS[a], value=True, key=f"dxf_angle_{a}_{fid}"))
+                   if col.checkbox(_ANGLE_LABELS[a], value=True, key=f"dxf_angle_{a}{suffix}"))
     if not angles:
         st.warning("Valitse vähintään yksi nestauskulma.")
     return angles
+
+
+def _render_angle_controls(n_parts: int) -> tuple[int, ...] | None:
+    """The run row's nesting angle: the angles every part gets, or None when
+    they are chosen per part on the cards (only offered for several parts)."""
+    if n_parts > 1 and st.radio("Nestauskulma", (_SHARED, _PER_PART), horizontal=True,
+                                key=_ANGLE_MODE) == _PER_PART:
+        st.caption("Sallittu nestauskulma valitaan osakorteilla.")
+        return None
+    return _render_nesting_angles()
 
 
 def _part(fid: str, dxf: DxfFile) -> DxfReport:
