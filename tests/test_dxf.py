@@ -209,6 +209,19 @@ def test_collinear_edges_of_a_long_outline_do_not_cross(drawing):
     assert part_of(doc).problems == []
 
 
+def test_a_nearly_straight_tiny_arc_does_not_cross_itself(drawing):
+    # An Inventor bulge of 1e-5 over a 0.065 mm chord flattens into four
+    # 0.016 mm segments on almost one line; non-neighbours touch that line
+    # but cannot cross (ITM-072574).
+    doc, msp = drawing()
+    msp.add_lwpolyline([(1358.1120566320319, 41.6609813251880, 1.21656677019e-05),
+                        (1358.1109486234379, 41.5956124246452, 0),
+                        (1378.1138565258350, 41.5956124246448, 0),
+                        (1378.1138565258350, 300, 0),
+                        (1358.1120566320319, 300, 0)], format="xyb", close=True)
+    assert part_of(doc).problems == []
+
+
 # ── Refused, with a reason ────────────────────────────────────────────────────
 
 def refused(doc) -> str:

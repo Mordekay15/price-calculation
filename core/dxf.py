@@ -523,8 +523,11 @@ def _segments_cross(p1: Point, p2: Point, p3: Point, p4: Point) -> bool:
         for b in (p3, p4):
             if abs(a[0] - b[0]) < 1e-9 and abs(a[1] - b[1]) < 1e-9:
                 return False
-    return (orient(p3, p4, p1) != orient(p3, p4, p2)
-            and orient(p1, p2, p3) != orient(p1, p2, p4))
+    # Properly: each segment's ends on strictly opposite sides of the other. A
+    # point on the other line (orient 0) only touches it — a nearly straight
+    # arc flattened into tiny collinear segments touches itself everywhere.
+    return (orient(p3, p4, p1) * orient(p3, p4, p2) < 0
+            and orient(p1, p2, p3) * orient(p1, p2, p4) < 0)
 
 
 def _self_intersects(points: list[Point]) -> bool:
