@@ -11,7 +11,13 @@ from core.pricing import build_lookup, parse_thickness_mm
 from core.dxf import DxfFile, DxfReport, read_dxf
 from core.geometry import net_area
 from core.sheet_cost import group_products, is_ready
-from core.sparrow import find_executable, part_from_report, run_sparrow, sparrow_options
+from core.sparrow import (
+    NESTING_ANGLES,
+    find_executable,
+    part_from_report,
+    run_sparrow,
+    sparrow_options,
+)
 from view.common import (
     ADVANCED_LABEL,
     NESTING_LABELS,
@@ -206,8 +212,8 @@ def _render_settings() -> tuple[float, str, SheetSettings]:
 
 
 def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
-    """Stable cache key: material + thickness, the parts (quantity) and the
-    margin — what decides the nesting and its price.
+    """Stable cache key: material + thickness, the parts (quantity, nesting
+    angles) and the margin — what decides the nesting and its price.
 
     The nesting mode is left out: a part nested alone is the same nesting in
     either mode, so switching to "separate" keeps a group of one part, and
@@ -216,7 +222,8 @@ def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
     changing one doesn't drop every result.
     """
     material, thickness = key[0], key[1]
-    prod_sig = ",".join(f"{p['id']}:{p['qty']}" for p in products)
+    prod_sig = ",".join(f"{p['id']}:{p['qty']}:{'/'.join(map(str, p['angles']))}"
+                        for p in products)
     return f"{material}|{thickness}|{prod_sig}|{settings.margin_pct}"
 
 
@@ -326,7 +333,7 @@ def _parts_for_group(products: list[dict]) -> tuple[list, dict[str, float]]:
     outline minus its holes.
     """
     parts = [
-        part_from_report(p["report"], int(p["qty"])) for p in products
+        part_from_report(p["report"], int(p["qty"]), p["angles"]) for p in products
     ]
     areas = {p["id"]: net_area(sp.outer, sp.holes) for p, sp in zip(products, parts)}
     return parts, areas
@@ -368,7 +375,8 @@ def _evict(fid: str) -> None:
     st.session_state.get(_CONFIG, {}).pop(fid, None)
     st.session_state.get(_REPORTS, {}).pop(fid, None)
     for key in (f"dxf_mat_{fid}", f"dxf_th_{fid}", f"dxf_th_{fid}_disabled",
-                f"dxf_q_{fid}", f"dxf_unit_ok_{fid}"):
+                f"dxf_q_{fid}", f"dxf_unit_ok_{fid}",
+                *(f"dxf_angle_{a}_{fid}" for a in NESTING_ANGLES)):
         st.session_state.pop(key, None)
 
 
@@ -401,6 +409,9 @@ def _render_part_config(
             return None
         with input_col:
             material, thickness, qty = _render_part_inputs(fid, materials, lookup)
+            angles = _render_nesting_angles(fid)
+        if not angles:
+            return None
 
     return {
         "id":        fid,
@@ -410,6 +421,7 @@ def _render_part_config(
         "width":     size[0],
         "height":    size[1],
         "qty":       qty,
+        "angles":    angles,
         "report":    report,
     }
 
@@ -477,6 +489,26 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict) -> tuple:
     qty = int(st.number_input("Määrä (kpl)", min_value=1, value=1, step=1,
                               key=f"dxf_q_{fid}"))
     return material, thickness, qty
+
+
+_ANGLE_LABELS = {0: "0/180", 90: "90/270"}
+_ANGLE_HELP = (
+    "Kulmat lasketaan piirustuksesta: 0/180 pitää piirustuksen X-akselin "
+    "valssaussuunnassa eli levyn pitkän sivun suuntaisena, 90/270 sitä vastaan "
+    "kohtisuorassa. Kun molemmat on valittu, osa saa kääntyä vapaasti."
+)
+
+
+def _render_nesting_angles(fid: str) -> tuple[int, ...]:
+    """The part's allowed nesting angles (see ``core.sparrow.NESTING_ANGLES``),
+    both ticked by default; () with a warning when none is."""
+    cols = st.columns([2, 1, 1], vertical_alignment="center")
+    cols[0].markdown("Sallittu nestauskulma", help=_ANGLE_HELP)
+    angles = tuple(a for a, col in zip(NESTING_ANGLES, cols[1:])
+                   if col.checkbox(_ANGLE_LABELS[a], value=True, key=f"dxf_angle_{a}_{fid}"))
+    if not angles:
+        st.warning("Valitse vähintään yksi nestauskulma.")
+    return angles
 
 
 def _part(fid: str, dxf: DxfFile) -> DxfReport:

@@ -10,7 +10,7 @@ def settings(**kw) -> _Settings:
     return _Settings(**{**base, **kw})
 
 
-PRODS = [{"id": "a", "qty": 2}]
+PRODS = [{"id": "a", "qty": 2, "angles": (0, 90)}]
 KEY = ("S235", "2", "a")
 
 
@@ -22,13 +22,18 @@ def test_sparrow_settings_do_not_change_the_cache_key():
 def test_a_single_part_keeps_its_result_when_the_nesting_mode_changes():
     combined, separate = ("S235", "2"), ("S235", "2", "a")
     assert _sig(combined, PRODS, settings()) == _sig(separate, PRODS, settings())
-    two = PRODS + [{"id": "b", "qty": 1}]
+    two = PRODS + [{"id": "b", "qty": 1, "angles": (0, 90)}]
     assert _sig(combined, two, settings()) != _sig(separate, PRODS, settings())
 
 
 def test_margin_and_quantity_change_the_cache_key():
     assert _sig(KEY, PRODS, settings()) != _sig(KEY, PRODS, settings(margin_pct=20.0))
     assert _sig(KEY, PRODS, settings()) != _sig(KEY, [{**PRODS[0], "qty": 3}], settings())
+
+
+def test_a_nesting_angle_change_re_nests_the_group():
+    fixed = [{**PRODS[0], "angles": (0,)}]
+    assert _sig(KEY, PRODS, settings()) != _sig(KEY, fixed, settings())
 
 
 def test_nesting_diff_names_only_the_changed_settings():
