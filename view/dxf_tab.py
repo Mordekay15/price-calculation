@@ -341,18 +341,27 @@ def _parts_for_group(products: list[dict]) -> tuple[list, dict[str, float]]:
 _STORE   = "dxf_store"         # {file_id: DxfFile}
 _REPORTS = "dxf_part_reports"  # {file_id: DxfReport}
 _CONFIG  = "dxf_part_config"   # {file_id: {"material", "thickness"}}
+_REMOVED = "dxf_removed"       # {file_id} removed from its card's button
 
 
 def _sync_store(uploaded) -> list[tuple[str, DxfFile]]:
-    """Read newly uploaded files once, drop removed ones, keep upload order."""
+    """Read newly uploaded files once, drop removed ones, keep upload order.
+
+    A file removed from its card stays in the uploader (Streamlit can't take
+    it out from code) but is skipped; uploading it again brings it back.
+    """
     store: dict = st.session_state.setdefault(_STORE, {})
+    removed: set = st.session_state.setdefault(_REMOVED, set())
     uploaded = uploaded or []
     current_ids = {u.file_id for u in uploaded}
     for fid in [f for f in store if f not in current_ids]:
         _evict(fid)
+    removed &= current_ids
 
     files = []
     for up in uploaded:
+        if up.file_id in removed:
+            continue
         if up.file_id not in store:
             store[up.file_id] = read_dxf(up.getvalue(), up.name)
         files.append((up.file_id, store[up.file_id]))
@@ -369,6 +378,12 @@ def _evict(fid: str) -> None:
         st.session_state.pop(key, None)
 
 
+def _remove(fid: str) -> None:
+    """A card's "Poista" button: drop the part from the page."""
+    st.session_state.setdefault(_REMOVED, set()).add(fid)
+    _evict(fid)
+
+
 def _render_part_config(
     fid: str,
     dxf: DxfFile,
@@ -379,8 +394,9 @@ def _render_part_config(
     """Draw one part's card, preview left and inputs right; return its product
     dict, or None if not priceable."""
     with st.container(border=True):
-        hdr = st.columns([6, 2])
+        hdr = st.columns([6, 2, 1], vertical_alignment="center")
         hdr[0].markdown(f"**#{idx + 1}** · {dxf.name}")
+        hdr[2].button("Poista", key=f"dxf_del_{fid}", on_click=_remove, args=(fid,))
 
         # Text found in the drawing (Mat=…, Thk=…) — shown to cross-check the
         # material choice, never nested.

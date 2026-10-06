@@ -57,3 +57,35 @@ def test_run_label_counts_only_new_groups():
     assert _run_label(1, 2, 4) == "Laske levykäyttö — 1 uusi"
     assert _run_label(0, 1, 2) == "Laske levykäyttö — ei uusia osia"
     assert _run_label(0, 0, 2) == "Laske levykäyttö — kaikki laskettu"
+
+
+def test_a_part_removed_from_its_card_is_skipped_until_uploaded_again():
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        from types import SimpleNamespace
+
+        import streamlit as st
+
+        from tests.conftest import dxf_bytes
+        from view.dxf_tab import _remove, _sync_store
+        import ezdxf
+
+        doc = ezdxf.new()
+        doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 50), (0, 50)], close=True)
+        data = dxf_bytes(doc)
+        ids = st.session_state.get("ids", ["a", "b"])
+        files = [SimpleNamespace(file_id=i, name=f"{i}.dxf", getvalue=lambda: data) for i in ids]
+        if st.session_state.get("remove"):
+            _remove(st.session_state.pop("remove"))
+        st.session_state["shown"] = [fid for fid, _ in _sync_store(files)]
+
+    at = AppTest.from_function(page).run()
+    assert at.session_state["shown"] == ["a", "b"]
+    at.session_state["remove"] = "a"
+    assert at.run().session_state["shown"] == ["b"]
+    assert at.run().session_state["shown"] == ["b"]          # stays removed
+    at.session_state["ids"] = ["b"]                          # taken out of the uploader
+    at.run()
+    at.session_state["ids"] = ["a2", "b"]                    # uploaded again: a new file id
+    assert at.run().session_state["shown"] == ["a2", "b"]
