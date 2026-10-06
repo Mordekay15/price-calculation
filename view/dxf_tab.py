@@ -571,13 +571,15 @@ def _offer_same_material(fid: str, material: str | None, thickness: str | None) 
 
 
 def _fill_material(fids: list[str], material: str | None, thickness: str | None) -> None:
-    """Answer the question: give ``fids`` the material and thickness (their
-    cards' selectboxes too) and stop asking."""
+    """Answer the question: give ``fids`` the material and thickness and stop
+    asking. Their selectboxes are reset, not set: they are rebuilt from the
+    stored choice (setting a widget that also has a default makes Streamlit
+    log a warning)."""
     config = st.session_state.setdefault(_CONFIG, {})
     for f in fids:
         config[f] = {**config.get(f, {}), "material": material, "thickness": thickness}
-        st.session_state[f"dxf_mat_{f}"] = material
-        st.session_state[f"dxf_th_{f}"] = thickness
+        for key in (f"dxf_mat_{f}", f"dxf_th_{f}", f"dxf_th_{f}_disabled"):
+            st.session_state.pop(key, None)
     st.session_state[_FILL_ASKED] = True
 
 

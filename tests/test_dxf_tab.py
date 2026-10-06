@@ -133,12 +133,23 @@ def fill_first_card(at):
     return at.selectbox(key="dxf_th_f0").set_value("2").run()
 
 
-def test_the_first_material_can_be_given_to_the_other_parts():
+def test_the_first_material_can_be_given_to_the_other_parts(caplog):
+    import logging
+
+    import streamlit.elements.lib.policies as policies
+
     at = fill_first_card(dxf_page(3))
     assert any("sama materiaali" in m.value for m in at.markdown)
-    at.button(key="dxf_fill_yes_f0").click().run()
+    policies._LOGGER.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.WARNING):
+            at.button(key="dxf_fill_yes_f0").click().run()
+    finally:
+        policies._LOGGER.removeHandler(caplog.handler)
     assert at.session_state["materials"] == [("S235", "2")] * 3
     assert not any("sama materiaali" in m.value for m in at.markdown)   # gone
+    # the other cards' selectboxes are rebuilt, not set: no Streamlit warning
+    assert not [r for r in caplog.records if "Session State" in r.getMessage()]
 
 
 def test_no_keeps_the_others_empty_and_stops_asking():
