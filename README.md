@@ -166,6 +166,15 @@ the price all use the same result.
   there is no closed outline, an open line sits
   inside the part, or an outline crosses itself.
 
+**Nesting angle and rolling direction.** Each DXF card has *Sallittu
+nestauskulma*: 0/180 and 90/270, both ticked by default. The rolling direction
+(*valssaussuunta*) runs along the sheet's long side. Angles are counted from
+the part as drawn: 0/180 keeps the drawing's X axis along the rolling direction,
+90/270 across it. With both ticked the part is laid along its length and may
+take any quarter turn; with one, it goes on the sheet as drawn (or half a turn
+round), so a part drawn diagonally stays diagonal. The layout then notes the
+rolling direction.
+
 A frame drawn on the *same* layer as the part can't be told apart from a
 ring-shaped part, so keep frames on their own layer.
 
