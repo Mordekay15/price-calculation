@@ -34,9 +34,9 @@ Point = tuple[float, float]
 # nesting angle is fixed (see ``part_from_report``).
 ORIENTATIONS: tuple[float, ...] = (0.0, 90.0, 180.0, 270.0)
 
-# The nesting angles a part card offers, counted from the part as drawn: 0
-# (0/180) keeps the drawing's X axis along the sheet's long side, which is the
-# rolling direction; 90 (90/270) lays it across.
+# The nesting angles a part card offers, counted from the part as its card
+# shows it (laid along its length): 0 (0/180) keeps its length along the
+# sheet's long side, which is the rolling direction; 90 (90/270) lays it across.
 NESTING_ANGLES: tuple[int, ...] = (0, 90)
 
 # Points closer than this (mm) are treated as the same vertex when cleaning a
@@ -88,18 +88,17 @@ def part_from_report(report: DxfReport, quantity: int = 1,
                      angles: tuple[int, ...] = NESTING_ANGLES) -> SparrowPart:
     """The SparrowPart for a priceable DXF part, with its holes attached.
 
-    ``angles`` are the allowed nesting angles (see ``NESTING_ANGLES``). With
-    both the part takes any quarter turn; with one, only that angle and half a
-    turn more, counted from the drawing: the turn that laid the part along its
-    length is undone. Outer rings come out counter-clockwise and holes
+    ``angles`` are the allowed nesting angles (see ``NESTING_ANGLES``), counted
+    from the part as its card shows it, laid along its length. With both the
+    part takes any quarter turn; with one, only that angle and half a turn
+    more. Outer rings come out counter-clockwise and holes
     clockwise (standard convention; the solver re-derives winding, but this
     keeps the JSON tidy).
     """
     outline = report.outline
     orientations = ORIENTATIONS
     if set(angles) != set(NESTING_ANGLES):
-        orientations = tuple(sorted({round((a + k - report.turned_deg) % 360.0, 6)
-                                     for a in angles for k in (0, 180)}))
+        orientations = tuple(sorted({float(a + k) for a in angles for k in (0, 180)}))
     return SparrowPart(
         part_id=_stem(report.name),
         quantity=int(quantity),

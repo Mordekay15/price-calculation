@@ -160,8 +160,9 @@ the price all use the same result.
 - **Laid along its length**: the part is turned so its smallest bounding
   rectangle lies straight, long side horizontal, as a designer lays it before
   nesting. A curved strip drawn diagonally (2120 × 2061 mm as drawn) is then
-  2936 × 437 mm. The card size, the price and the nesting all use the turned
-  part; a part already straight (within 0.5°) stays as drawn.
+  2936 × 437 mm, and a part drawn standing lies down. The card size, the
+  price, the nesting angle and the nesting all use the turned part; a part
+  already lying straight (within 0.5°) stays as drawn.
 - **Drawn but not cut**: bend and centre lines, dashed lines, countersinks and
   threads drawn as circles inside a hole, and the ISO thread symbol (a thin
   ¾-circle around a hole).
@@ -174,11 +175,10 @@ the price all use the same result.
 run button. With several parts a switch picks *Sama kaikille* (one
 choice for every part, the default) or *Osakohtainen* (each card has its own). The rolling direction
 (*valssaussuunta*) runs along the sheet's long side. Angles are counted from
-the part as drawn: 0/180 keeps the drawing's X axis along the rolling direction,
-90/270 across it. With both ticked the part is laid along its length and may
-take any quarter turn; with one, it goes on the sheet as drawn (or half a turn
-round), so a part drawn diagonally stays diagonal. The layout then notes the
-rolling direction.
+the part as its card shows it, laid along its length: 0/180 keeps that length
+along the rolling direction, 90/270 across it. With both ticked the part may
+take any quarter turn; with one, only that angle or half a turn round. The
+layout then notes the rolling direction.
 
 A frame drawn on the *same* layer as the part can't be told apart from a
 ring-shaped part, so keep frames on their own layer.

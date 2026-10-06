@@ -155,26 +155,27 @@ def test_both_nesting_angles_keep_every_quarter_turn(drawing):
     assert bar_part(drawing, 45, (0, 90)).orientations == (0.0, 90.0, 180.0, 270.0)
 
 
-def test_a_fixed_angle_puts_the_part_on_the_sheet_as_drawn(drawing):
-    # A bar drawn at 30°: the reader lays it flat (−30°), and 0/180 turns it
-    # back, so the drawing's X axis lies along the sheet's long side and the
-    # bar keeps its 30° (or 210°) to it.
+def test_a_fixed_angle_is_counted_from_the_part_as_its_card_shows_it(drawing):
+    # A bar drawn at 30°: the reader lays it along its length, and 0/180 keeps
+    # that length along the sheet's long side (the rolling direction).
     part = bar_part(drawing, 30, (0,), w=1000)
-    assert part.orientations == (30.0, 210.0)
+    assert part.orientations == (0.0, 180.0)
     pack = greedy_fixed_sheets([part], 3000, 1500, run_fn=turning_solver)
     assert pack.ok
     for pl in pack.sheets[0].placements:
         edges = list(zip(pl.outer, pl.outer[1:] + pl.outer[:1]))
         (x1, y1), (x2, y2) = max(edges, key=lambda e: math.dist(*e))   # a long side
-        assert math.isclose(math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180, 30, abs_tol=1e-6)
+        assert math.isclose(math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180, 0, abs_tol=1e-6)
 
 
 def test_a_fixed_angle_may_not_turn_a_part_to_fit(drawing):
-    # 400 × 1600 drawn standing: along the rolling direction it is 1600 high
+    # 400 × 1600 drawn standing lies down as 1600 × 400: along the rolling
+    # direction it fits; across it would be 1600 high, which it may not turn
+    # out of
     standing = lambda angles: bar_part(drawing, 0, angles, w=400, h=1600)  # noqa: E731
-    pack = greedy_fixed_sheets([standing((0,))], 3000, 1500, run_fn=turning_solver)
+    assert greedy_fixed_sheets([standing((0,))], 3000, 1500, run_fn=turning_solver).ok
+    pack = greedy_fixed_sheets([standing((90,))], 3000, 1500, run_fn=turning_solver)
     assert not pack.ok and pack.reason == "bar (400 × 1600 mm) ei mahdu"
-    assert greedy_fixed_sheets([standing((90,))], 3000, 1500, run_fn=turning_solver).ok
 
 
 def test_greedy_reports_a_part_too_big_for_the_sheet():
