@@ -385,10 +385,9 @@ def _evict(fid: str) -> None:
     """A card's "Poista" button: drop everything kept for the file, including
     its widget state."""
     st.session_state.get(_STORE, {}).pop(fid, None)
-    st.session_state.get(_CONFIG, {}).pop(fid, None)
+    cfg = st.session_state.get(_CONFIG, {}).pop(fid, {})
     st.session_state.get(_REPORTS, {}).pop(fid, None)
-    for key in (f"dxf_mat_{fid}", f"dxf_th_{fid}", f"dxf_th_{fid}_disabled",
-                f"dxf_q_{fid}", f"dxf_unit_ok_{fid}",
+    for key in (*_material_keys(fid, cfg), f"dxf_q_{fid}", f"dxf_unit_ok_{fid}",
                 *(f"dxf_angle_{a}_{fid}" for a in NESTING_ANGLES)):
         st.session_state.pop(key, None)
 
@@ -487,6 +486,17 @@ def _checked_size(fid: str, dxf: DxfFile, report: DxfReport, badge) -> tuple | N
     return width, height
 
 
+def _material_keys(fid: str, cfg: dict) -> tuple[str, str, str]:
+    """The material, thickness and disabled-thickness selectbox keys of a card.
+    ``cfg["v"]`` is bumped to give them new keys: a fresh selectbox starts from
+    the stored choice. (Setting or deleting a widget's value doesn't stick —
+    the browser sends its old value back, and Streamlit warns.)"""
+    v = cfg.get("v", 0)
+    suffix = f"_{v}" if v else ""
+    return (f"dxf_mat_{fid}{suffix}", f"dxf_th_{fid}{suffix}",
+            f"dxf_th_{fid}{suffix}_disabled")
+
+
 def _render_part_inputs(fid: str, materials: list[str], lookup: dict) -> tuple:
     """Material, thickness and quantity; returns ``(material, thickness, qty)``.
 
@@ -495,9 +505,10 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict) -> tuple:
     """
     cfg = st.session_state.setdefault(_CONFIG, {}).setdefault(
         fid, {"material": None, "thickness": None})
+    mat_key, thick_key, _ = _material_keys(fid, cfg)
     material, thickness = render_material_thickness(
         materials, lookup,
-        mat_key=f"dxf_mat_{fid}", thick_key=f"dxf_th_{fid}",
+        mat_key=mat_key, thick_key=thick_key,
         mat_default=cfg["material"], thick_default=cfg["thickness"],
     )
     cfg["material"] = material
@@ -572,14 +583,15 @@ def _offer_same_material(fid: str, material: str | None, thickness: str | None) 
 
 def _fill_material(fids: list[str], material: str | None, thickness: str | None) -> None:
     """Answer the question: give ``fids`` the material and thickness and stop
-    asking. Their selectboxes are reset, not set: they are rebuilt from the
-    stored choice (setting a widget that also has a default makes Streamlit
-    log a warning)."""
+    asking. Their selectboxes get new keys (see ``_material_keys``), so they
+    start from the stored choice."""
     config = st.session_state.setdefault(_CONFIG, {})
     for f in fids:
-        config[f] = {**config.get(f, {}), "material": material, "thickness": thickness}
-        for key in (f"dxf_mat_{f}", f"dxf_th_{f}", f"dxf_th_{f}_disabled"):
+        old = config.get(f, {})
+        for key in _material_keys(f, old):
             st.session_state.pop(key, None)
+        config[f] = {**old, "material": material, "thickness": thickness,
+                     "v": old.get("v", 0) + 1}
     st.session_state[_FILL_ASKED] = True
 
 
