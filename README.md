@@ -7,7 +7,8 @@ A Streamlit app that prices sheet-metal parts from supplier price lists.
 - **DXF-nestaus** (DXF tab): upload one DXF per part. The real shapes are
   nested with the [Sparrow](https://github.com/JeroenGar/sparrow) solver. Dropped
   files become part cards and the drop area empties; a card's **Poista**
-  button removes the part. A file whose name is already on a card is not
+  button removes the part, and **Poista kaikki** above the cards (asks to
+  confirm) removes them all. A file whose name is already on a card is not
   added again: a warning names it and its card (to replace a changed
   drawing, remove the old card first). When one card gets its material and thickness and
   others are still empty, the card asks whether to give them the same

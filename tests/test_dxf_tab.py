@@ -218,3 +218,12 @@ def test_no_keeps_the_others_empty_and_stops_asking():
 def test_one_part_is_never_asked():
     at = fill_first_card(dxf_page(1))
     assert not any("sama materiaali" in m.value for m in at.markdown)
+
+
+def test_poista_kaikki_removes_every_card_and_its_settings():
+    assert "dxf_del_all" not in [b.key for b in dxf_page(1).button]   # one part: its own Poista
+    at = fill_first_card(dxf_page(2))
+    at.button(key="dxf_del_all").click().run()
+    assert at.session_state["dxf_store"] == {} and not at.session_state["materials"]
+    assert not at.session_state["dxf_part_config"]
+    assert not [k for k in at.session_state if k.startswith(("dxf_mat_", "dxf_q_"))]

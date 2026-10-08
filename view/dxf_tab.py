@@ -236,7 +236,13 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
                        per_part_angles: bool = False) -> list[dict]:
     """One card per uploaded part; returns the configured product dicts. The
     nesting angle is on the cards only when it is chosen per part."""
-    st.markdown("**Osat**")
+    title, clear = st.columns([6, 2], vertical_alignment="center")
+    title.markdown("**Osat**")
+    if len(parts) > 1:
+        # Behind a popover: one stray click shouldn't drop every card's setup.
+        with clear.popover("Poista kaikki", width="stretch"):
+            st.button(f"Kyllä, poista kaikki {len(parts)} osaa", key="dxf_del_all",
+                      type="primary", on_click=_evict_all)
     products = []
     for idx, (fid, part) in enumerate(parts):
         product = _render_part_config(fid, part, idx, materials, lookup, per_part_angles)
@@ -441,6 +447,13 @@ def _evict(fid: str) -> None:
     for key in (*_material_keys(fid, cfg), f"dxf_q_{fid}", f"dxf_unit_ok_{fid}",
                 *(f"dxf_angle_{a}_{fid}" for a in NESTING_ANGLES)):
         st.session_state.pop(key, None)
+
+
+def _evict_all() -> None:
+    """The "Poista kaikki" button: every card's "Poista" at once."""
+    for fid in list(st.session_state.get(_STORE, {})):
+        _evict(fid)
+    st.session_state.pop(_FILL_ASKED, None)
 
 
 def _render_part_config(
