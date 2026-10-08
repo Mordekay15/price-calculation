@@ -167,11 +167,20 @@ price breakdown lists each size. In the example above with 1000 × 2000,
 1250 × 2500 and 1500 × 3000 at one price per tonne, the best single size
 costs 894 € and the mixed plan 834 €.
 
+**Parts that hook together.** The box check can't see shapes that interlock:
+square plates with notched corners laid as a checkerboard (big, small, big,
+small over small, big, small, big) hold 4 + 4 on a 1250 × 2500 sheet, where
+their boxes need 2537 mm. So on each sheet size the three pairs of parts whose
+two-part box sheets fill best are also nested by Sparrow on their real shapes
+(two runs each, `_PAIR_BUDGET` in `core/sparrow.py`), and those sheets join
+the candidates.
+
 Candidate sheets are checked with the box packer (instant). For DXF parts each
 real shape is placed in its box, which is always a valid layout; Sparrow's own
 sheets are candidates too, so where the shapes interlock its tighter sheets
-are used. The search adds no Sparrow runs; it is capped at 4000 box checks per
-sheet size (`max_checks`), a few seconds on a large order. The manual tab
+are used. Apart from the pair runs above it adds no Sparrow runs; it is
+capped at 4000 box checks per sheet size (`max_checks`), a few seconds on a
+large order. The manual tab
 keeps its result until a part or setting changes.
 
 ## Programs: repeatable sheet layouts

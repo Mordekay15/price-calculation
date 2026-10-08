@@ -552,6 +552,8 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
         return [packing(pack.sheets)]
     kit = _kit(parts, pack.sheets, ew, eh, run_fn=run_fn, separation=separation)
     pool = _candidates(parts, [*pack.sheets, *(kit or [])], ew, eh, separation)
+    if pool is not None:
+        pool.update(_pair_sheets(parts, pool, ew, eh, **nest))
     if mixed is not None:
         mixed.keep(pool, lambda plan: _packed(packing(_plan_sheets(parts, plan, ew, eh, **nest))),
                    sw * sh)
@@ -559,6 +561,55 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
                            [net_area(p.outer, p.holes) for p in parts], sw * sh)
     fewest = fewest and _plan_sheets(parts, fewest, ew, eh, **nest)
     return [packing(sheets) for sheets in choose_plans(pack.sheets, fewest, kit)]
+
+
+# Pairs of parts Sparrow nests together on one sheet, per sheet size; each
+# takes up to two runs.
+_PAIR_BUDGET = 3
+
+
+def _pair_sheets(parts, pool: dict, sheet_w, sheet_h, *, run_fn,
+                 separation) -> dict:
+    """Sheets of two parts nested on their real shapes, as candidates.
+
+    The box check can't see shapes that hook into each other (notched corners
+    in a checkerboard, a part in another's recess), so it misses sheets that
+    hold more. The pairs whose two-part box sheets fill best are nested by
+    Sparrow: the pair's whole demand, then as many as its strip density
+    promises on one sheet. ``{counts: PackedSheet}``."""
+    q = [p.quantity for p in parts]
+    areas = [net_area(p.outer, p.holes) for p in parts]
+    fill: dict[tuple[int, int], float] = {}
+    for counts in pool:
+        on = tuple(i for i, n in enumerate(counts) if n)
+        if len(on) == 2:
+            fill[on] = max(fill.get(on, 0.0), sum(areas[i] * counts[i] for i in on))
+    found = {}
+    for pair in sorted(fill, key=lambda k: (-fill[k], k))[:_PAIR_BUDGET]:
+        kept = _densest(parts, [n if i in pair else 0 for i, n in enumerate(q)],
+                        sheet_w, sheet_h, run_fn=run_fn, separation=separation)
+        if kept:
+            counts = tuple(sum(pl.part_index == i for pl in kept) for i in range(len(parts)))
+            found[counts] = _sheet(kept, sheet_w, sheet_h)
+    return found
+
+
+def _densest(parts, demand: list[int], sheet_w, sheet_h, *, run_fn, separation):
+    """The most of ``demand`` one sheet holds, from two runs: the whole demand
+    in a strip (the parts it puts on the first sheet, and how densely it packs
+    overall), then that many in proportion on a single sheet."""
+    err, best, strip_len = _probe(parts, {i: n for i, n in enumerate(demand) if n},
+                                  sheet_w, sheet_h, run_fn=run_fn, separation=separation)
+    if err is not None:
+        return []
+    total = sum(demand)
+    guess = int(total * sheet_w / strip_len) if strip_len else 0
+    if len(best) < guess < total:
+        err, kept, _ = _probe(parts, _mix(demand, guess), sheet_w, sheet_h,
+                              run_fn=run_fn, separation=separation)
+        if err is None and len(kept) > len(best):
+            best = kept
+    return best
 
 
 def _packed(packing: Packing) -> tuple[Packing, float]:

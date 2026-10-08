@@ -191,3 +191,28 @@ def test_a_sheet_with_pieces_taken_off_is_nested_again_tight():
     assert sorted(min(x for x, _ in pl.outer) for pl in sheet.placements) == [0, 100]
     [kept] = _plan_sheets(parts, [(1, (2,), holed)], 600.0, 100.0)   # no solver: as it was
     assert sorted(min(x for x, _ in pl.outer) for pl in kept.placements) == [0, 400]
+
+
+def test_the_best_pairs_are_nested_on_their_real_shapes():
+    # Sparrow nests the pairs whose box sheets fill best, two runs at most
+    # each, and their sheets join the candidates (shapes that hook into each
+    # other can hold more than their boxes say).
+    from core.sparrow import _PAIR_BUDGET, _pair_sheets
+    from tests.test_sparrow import fake_solver
+
+    runs = []
+
+    def counting(instance, *, separation):
+        runs.append(sorted(i["demand"] for i in instance["items"]))
+        return fake_solver(instance, separation=separation)
+
+    parts = [SparrowPart(n, 4, square(s), width_mm=s, height_mm=s)
+             for n, s in (("a", 100), ("b", 90), ("c", 80), ("d", 70), ("e", 60))]
+    pool = {(1, 1, 0, 0, 0): None, (0, 0, 1, 1, 0): None, (0, 0, 0, 1, 1): None,
+            (1, 0, 0, 0, 1): None, (2, 2, 0, 0, 0): None}
+    found = _pair_sheets(parts, pool, 400.0, 200.0, run_fn=counting, separation=None)
+    assert len(runs) <= 2 * _PAIR_BUDGET
+    on = {tuple(i for i, n in enumerate(c) if n) for c in found}
+    assert on <= {(0, 1), (2, 3), (0, 4), (3, 4)} and (0, 1) in on   # a + b fill best
+    for counts, sheet in found.items():
+        assert len(sheet.placements) == sum(counts)
