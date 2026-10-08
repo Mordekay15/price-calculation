@@ -13,6 +13,7 @@ from core.pricing import (
     get_materials,
     get_thicknesses_for_material,
 )
+from core.cutting_stock import have_solver
 from core.sheet_cost import EdgeGaps, piece_costs
 from view.drawing import edge_gaps_svg
 
@@ -226,6 +227,13 @@ def render_groups(groups: dict[tuple, list[dict]], render_one):
     each product's pieces are billed at, the summed total (None when no group
     was priced), and whether any group had no result yet.
     """
+    if not have_solver():
+        # Without it the fewest-sheets and mixed-size plans silently vanish
+        # and an old, worse plan is shown: say so.
+        st.warning("Levysuunnitelmien optimointi ei ole käytössä: Python-paketti **scipy** "
+                   "puuttuu. Asenna se (`pip install -r requirements.txt`) ja käynnistä "
+                   "sovellus uudelleen — muuten näytetään vain levy kerrallaan täytetyt "
+                   "suunnitelmat.")
     prices: dict[str, float] = {}
     grand_total = None
     missing = False

@@ -68,7 +68,7 @@ def candidate_sheets(quantities: list[int], sizes: list[tuple[float, float]],
     """Every candidate sheet found for one sheet size, ``{counts: layout}``
     (steps 1–4); None if there is nothing to plan or no solver. A part that
     fits no sheet of this size is left out (its quantity counts as 0)."""
-    if not _have_solver():
+    if not have_solver():
         return None
     q = [int(x) for x in quantities]
     if sum(q) == 0:
@@ -105,7 +105,7 @@ def best_plan(quantities: list[int], pools: list[tuple[float, dict[Pattern, obje
     programs: ``[(size_index, repeats, counts, layout)]``. ``pools`` holds
     each size's ``(price of one sheet, candidate_sheets(...))``; None when the
     candidates can't cover the order or there is no solver."""
-    if not _have_solver():
+    if not have_solver():
         return None
     q = [int(x) for x in quantities]
     patterns = [(t, p) for t, (_, pool) in enumerate(pools) if pool for p in pool]
@@ -119,7 +119,7 @@ def best_plan(quantities: list[int], pools: list[tuple[float, dict[Pattern, obje
     return [(t, r, p, layout) for r, p, (t, layout) in _trim(q, entries)]
 
 
-def _have_solver() -> bool:
+def have_solver() -> bool:
     try:
         import numpy  # noqa: F401
         from scipy.optimize import milp  # noqa: F401
