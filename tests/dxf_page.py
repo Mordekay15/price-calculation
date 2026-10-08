@@ -1,6 +1,8 @@
 """A page for test_dxf_tab: ``st.session_state["n"]`` part cards (S235, 2 mm
 priced) and the run row's nesting angle."""
 
+from types import SimpleNamespace
+
 import ezdxf
 import streamlit as st
 
@@ -10,6 +12,7 @@ from view.dxf_tab import (
     _ANGLE_MODE,
     _PER_PART,
     _STORE,
+    _ingest,
     _render_angle_controls,
     _render_part_cards,
 )
@@ -20,6 +23,9 @@ doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 50), (0, 50)], close=Tr
 data = dxf_bytes(doc)
 store = st.session_state.setdefault(
     _STORE, {f"f{i}": read_dxf(data, f"p{i}.dxf") for i in range(st.session_state.get("n", 1))})
+# "add": drop that many more files
+names = [f"p{len(store) + i}.dxf" for i in range(st.session_state.pop("add", 0))]
+_ingest([SimpleNamespace(file_id=f"f{n[1:-4]}", name=n, getvalue=lambda: data) for n in names])
 parts = list(store.items())
 per_part = len(parts) > 1 and st.session_state.get(_ANGLE_MODE) == _PER_PART
 products = _render_part_cards(parts, ["S235"], {("2", "S235 | 1000x2000"): 900.0}, per_part)

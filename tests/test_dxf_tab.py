@@ -198,30 +198,52 @@ def test_the_first_material_can_be_given_to_the_other_parts(caplog):
     import streamlit.elements.lib.policies as policies
 
     at = fill_first_card(dxf_page(3))
-    assert any("sama materiaali" in m.value for m in at.markdown)
+    assert any("samaa materiaalia" in m.value for m in at.markdown)
     policies._LOGGER.addHandler(caplog.handler)
     try:
         with caplog.at_level(logging.WARNING):
-            at.button(key="dxf_fill_yes_f0").click().run()
+            at.button(key="dxf_fill_yes_f1").click().run()
     finally:
         policies._LOGGER.removeHandler(caplog.handler)
     assert at.session_state["materials"] == [("S235", "2")] * 3
-    assert not any("sama materiaali" in m.value for m in at.markdown)   # gone
+    assert not any("samaa materiaalia" in m.value for m in at.markdown)   # gone
     # the other cards' selectboxes are rebuilt, not set: no Streamlit warning
     assert not [r for r in caplog.records if "Session State" in r.getMessage()]
 
 
 def test_no_keeps_the_others_empty_and_stops_asking():
     at = fill_first_card(dxf_page(2))
-    at.button(key="dxf_fill_no_f0").click().run()
+    at.button(key="dxf_fill_no_f1").click().run()
     assert at.session_state["materials"] == [("S235", "2"), (None, None)]
     at.selectbox(key="dxf_mat_f1").set_value("S235").run()
-    assert not any("sama materiaali" in m.value for m in at.markdown)
+    assert not any("samaa materiaalia" in m.value for m in at.markdown)
+
+
+def fill_questions(at):
+    return [b.key for b in at.button if b.key.startswith("dxf_fill_yes_")]
+
+
+def test_the_question_is_asked_once_on_the_first_empty_card():
+    at = fill_first_card(dxf_page(3))
+    assert fill_questions(at) == ["dxf_fill_yes_f1"]
+    assert any("osille (2 kpl)" in m.value and "osalla #1" in m.value for m in at.markdown)
+
+
+def test_new_files_are_asked_about_on_the_first_new_card_only():
+    at = fill_first_card(dxf_page(2))
+    at.button(key="dxf_fill_yes_f1").click().run()
+    at.session_state["add"] = 2
+    at.run()
+    assert at.session_state["materials"][2:] == [(None, None)] * 2
+    assert fill_questions(at) == ["dxf_fill_yes_f2"]          # not on the filled cards
+    at.button(key="dxf_fill_yes_f2").click().run()
+    assert at.session_state["materials"] == [("S235", "2")] * 4
+    assert not fill_questions(at)
 
 
 def test_one_part_is_never_asked():
     at = fill_first_card(dxf_page(1))
-    assert not any("sama materiaali" in m.value for m in at.markdown)
+    assert not any("samaa materiaalia" in m.value for m in at.markdown)
 
 
 def test_poista_kaikki_removes_every_card_and_its_settings():

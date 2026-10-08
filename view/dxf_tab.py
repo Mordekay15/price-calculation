@@ -258,9 +258,10 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
         with clear.popover("Poista kaikki", width="stretch"):
             st.button(f"Kyllä, poista kaikki {len(parts)} osaa", key="dxf_del_all",
                       type="primary", on_click=_evict_all)
-    products = []
+    products, fill = [], _FillOffer()
     for idx, (fid, part) in enumerate(parts):
-        product = _render_part_config(fid, part, idx, materials, lookup, per_part_angles)
+        product = _render_part_config(fid, part, idx, materials, lookup,
+                                      per_part_angles, fill)
         if product is not None:
             products.append(product)
     return products
@@ -480,10 +481,12 @@ def _render_part_config(
     materials: list[str],
     lookup: dict,
     per_part_angles: bool = False,
+    fill: "_FillOffer | None" = None,
 ) -> dict | None:
     """Draw one part's card, preview left and inputs right; return its product
     dict, or None if not priceable. Its ``angles`` are None (set later from the
-    run row) unless ``per_part_angles``."""
+    run row) unless ``per_part_angles``. ``fill`` carries the "same material?"
+    question from card to card (see ``_offer_same_material``)."""
     with st.container(border=True):
         hdr = st.columns([6, 2, 1], vertical_alignment="center")
         hdr[0].markdown(f"**#{idx + 1}** · {dxf.name}")
@@ -504,7 +507,8 @@ def _render_part_config(
             return None
         with input_col:
             material, thickness, qty = _render_part_inputs(fid, materials, lookup)
-            _offer_same_material(fid, material, thickness)
+            if fill is not None:
+                _offer_same_material(fid, idx, material, thickness, fill)
             angles = _render_nesting_angles(fid) if per_part_angles else None
         if angles == ():
             return None
@@ -641,33 +645,54 @@ def _render_angle_controls(n_parts: int) -> tuple[int, ...] | None:
         return _render_nesting_angles()
 
 
-def _offer_same_material(fid: str, material: str | None, thickness: str | None) -> None:
-    """Once a card has its material and thickness, ask whether the parts that
-    have neither yet get the same. Asked once; dropping new files asks again."""
-    if st.session_state.get(_FILL_ASKED) or not (material and thickness):
+@dataclass
+class _FillOffer:
+    """The "same material?" question for one run of the cards: the last card
+    so far with a material and thickness, and whether a card has asked."""
+
+    source: tuple[int, str, str] | None = None   # (card index, material, thickness)
+    shown: bool = False
+
+
+def _offer_same_material(fid: str, idx: int, material: str | None,
+                         thickness: str | None, fill: _FillOffer) -> None:
+    """Ask once, on the first empty card below a filled one, whether the empty
+    cards get that card's material and thickness. Answered, it isn't asked
+    again until new files are dropped — then on the first new card."""
+    if material and thickness:
+        fill.source = (idx, material, thickness)
         return
-    config = st.session_state.get(_CONFIG, {})
-    empty = [f for f in st.session_state.get(_STORE, {})
-             if f != fid and not (config.get(f, {}).get("material")
-                                  and config.get(f, {}).get("thickness"))]
-    if not empty:
+    if fill.shown or fill.source is None or st.session_state.get(_FILL_ASKED):
         return
+    fill.shown = True
+    src_idx, src_mat, src_th = fill.source
+    n_empty = len(_empty_cards())
     with st.container(border=True):
-        others = "muille osille" if len(empty) > 1 else "toiselle osalle"
-        st.markdown(f"Täytetäänkö {others} ({len(empty)}) sama materiaali ja "
-                    f"paksuus: **{material} · {thickness} mm**?")
+        whom = (f"tälle ja muille tyhjille osille ({n_empty} kpl)" if n_empty > 1
+                else "tälle osalle")
+        st.markdown(f"Käytetäänkö {whom} samaa materiaalia ja paksuutta kuin "
+                    f"osalla #{src_idx + 1}: **{src_mat} · {src_th} mm**?")
         yes, no, _ = st.columns([1, 1, 4])
         yes.button("Kyllä", key=f"dxf_fill_yes_{fid}", type="primary",
-                   on_click=_fill_material, args=(empty, material, thickness))
-        no.button("Ei", key=f"dxf_fill_no_{fid}", on_click=_fill_material, args=([], None, None))
+                   on_click=_fill_material, args=(src_mat, src_th))
+        no.button("Ei", key=f"dxf_fill_no_{fid}", on_click=_fill_material, args=(None, None))
 
 
-def _fill_material(fids: list[str], material: str | None, thickness: str | None) -> None:
-    """Answer the question: give ``fids`` the material and thickness and stop
-    asking. Their selectboxes get new keys (see ``_material_keys``), so they
-    start from the stored choice."""
+def _empty_cards() -> list[str]:
+    """The cards with no material or thickness yet."""
+    config = st.session_state.get(_CONFIG, {})
+    return [f for f in st.session_state.get(_STORE, {})
+            if not (config.get(f, {}).get("material") and config.get(f, {}).get("thickness"))]
+
+
+def _fill_material(material: str | None, thickness: str | None) -> None:
+    """Answer the question: give every empty card the material and thickness
+    (none for "Ei") and stop asking. The empty cards are found when the button
+    is clicked, so a card filled meanwhile keeps its own choice. Their
+    selectboxes get new keys (see ``_material_keys``), so they start from the
+    stored choice."""
     config = st.session_state.setdefault(_CONFIG, {})
-    for f in fids:
+    for f in _empty_cards() if material else []:
         old = config.get(f, {})
         for key in _material_keys(f, old):
             st.session_state.pop(key, None)
