@@ -92,13 +92,14 @@ def made(packing):
 
 
 def test_mixed_parts_get_a_one_program_plan_next_to_the_fewest_sheets():
-    # 4 squares per 250 × 250 sheet. Greedy: 4 sheets over 3 layouts; one
-    # program of 2 a + 1 b, cut 5 times, needs a sheet more.
+    # 4 squares per 250 × 250 sheet. Greedy: 4 sheets over 3 layouts; the
+    # fewest sheets in 2 programs (3 a + 1 b ×3, 1 a + 2 b); one program of
+    # 2 a + 1 b, cut 5 times, needs a sheet more.
     result = sparrow_options({("2", "S235 | 250x250"): 900.0}, "S235", "2", 2.0,
                              [square(quantity=10, name="a"), square(quantity=5, name="b")],
                              run_fn=fake_solver)
     fewest, kit = result.options
-    assert (fewest.sheets_needed, fewest.programs) == (4, 3)
+    assert (fewest.sheets_needed, fewest.programs) == (4, 2)
     assert (kit.sheets_needed, kit.programs) == (5, 1)
     assert made(fewest.packing) == made(kit.packing) == {"a": 10, "b": 5}
 

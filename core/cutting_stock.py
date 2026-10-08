@@ -21,6 +21,14 @@ with the fewest sheets, then the fewest programs:
 5. The integer program over every sheet found; its plan may make a few pieces
    too many, so they are taken off single copies of a sheet (no extra pieces).
 
+Before step 5, a sheet filled well (``GOOD_FILL``, real part area over the
+sheet bought) whose repeats use up its parts exactly is kept as a program of
+its own, and the integer program plans only the other parts. Production would
+rather cut one good program more often than have a part split over programs
+or sheet sizes to save a little steel — but not at any price: a program is
+kept only while the plan costs at most ``KEEP_MAX_EXTRA`` more than the
+cheapest one.
+
 With several sheet sizes, each size's candidates are found on their own and
 ``best_plan`` picks over all of them at each sheet's price: a plan may cut
 the big parts from one size and the rest from a smaller one.
@@ -44,6 +52,8 @@ _DIVES = 3              # residual rounds
 _MAX_ROUNDS = 40        # pricing rounds per column generation
 _NEW_PER_ROUND = 12     # patterns added per pricing round
 _ILP_SECONDS = 5
+GOOD_FILL = 0.80        # a sheet this full that uses up its parts is kept as it is…
+KEEP_MAX_EXTRA = 0.05   # …while the plan then costs at most this much more
 
 
 def cutting_stock_plan(quantities: list[int], sizes: list[tuple[float, float]],
@@ -99,24 +109,92 @@ def candidate_sheets(quantities: list[int], sizes: list[tuple[float, float]],
     return dict(search.pool)
 
 
-def best_plan(quantities: list[int], pools: list[tuple[float, dict[Pattern, object]]]
-              ) -> list[tuple[int, int, Pattern, object]] | None:
+def best_plan(quantities: list[int], pools: list[tuple], *,
+              areas: list[float] | None = None, good_fill: float = GOOD_FILL,
+              max_extra: float = KEEP_MAX_EXTRA) -> list[tuple[int, int, Pattern, object]] | None:
     """The cheapest plan over one or more sheet sizes, then the fewest
     programs: ``[(size_index, repeats, counts, layout)]``. ``pools`` holds
-    each size's ``(price of one sheet, candidate_sheets(...))``; None when the
-    candidates can't cover the order or there is no solver."""
+    each size's ``(price of one sheet, candidate_sheets(...), sheet area)``;
+    None when the candidates can't cover the order or there is no solver.
+
+    With the parts' real ``areas``, well-filled sheets that use up their parts
+    are kept first, fullest first, each while the plan costs at most
+    ``max_extra`` more than the cheapest (see ``GOOD_FILL``)."""
     if not have_solver():
         return None
     q = [int(x) for x in quantities]
-    patterns = [(t, p) for t, (_, pool) in enumerate(pools) if pool for p in pool]
+    cheapest = _plan_rest(q, pools, [])
+    if cheapest is None or not areas:
+        return None if cheapest is None else cheapest[1]
+    best, kept = cheapest, []
+    for entry in _good_programs(q, pools, areas, good_fill):
+        taken = {i for _, _, p, _ in kept for i, c in enumerate(p) if c}
+        if taken & {i for i, c in enumerate(entry[2]) if c}:
+            continue
+        trial = _plan_rest(q, pools, kept + [entry])
+        if trial is not None and trial[0] <= cheapest[0] * (1 + max_extra) + _EPS:
+            best, kept = trial, kept + [entry]
+    return best[1]
+
+
+def _plan_rest(q, pools, kept):
+    """``(price, plan)``: the ``kept`` entries, and the cheapest plan for the
+    parts not on them from the candidates without those parts; None if the
+    candidates can't cover them."""
+    rest = list(q)
+    for _, r, p, _ in kept:
+        rest = [n - r * c for n, c in zip(rest, p)]
+    price = sum(r * pools[t][0] for t, r, _, _ in kept)
+    if not any(rest):
+        return price, list(kept)
+    taken = {i for _, _, p, _ in kept for i, c in enumerate(p) if c}
+    patterns = [(t, p) for t, (_, pool, *_) in enumerate(pools) if pool
+                for p in _maximal([p for p in pool if not any(p[i] for i in taken)], rest)]
     if not patterns:
         return None
-    plan = _ilp(q, [p for _, p in patterns], [pools[t][0] for t, _ in patterns])
+    plan = _ilp(rest, [p for _, p in patterns], [pools[t][0] for t, _ in patterns])
     if plan is None:
         return None
     entries = [(r, patterns[k][1], (patterns[k][0], pools[patterns[k][0]][1][patterns[k][1]]))
                for k, r in plan]
-    return [(t, r, p, layout) for r, p, (t, layout) in _trim(q, entries)]
+    trimmed = [(t, r, p, layout) for r, p, (t, layout) in _trim(rest, entries)]
+    return price + sum(r * pools[t][0] for t, r, _, _ in trimmed), list(kept) + trimmed
+
+
+def _maximal(patterns: list[Pattern], q: list[int]) -> list[Pattern]:
+    """The sheets no other sheet of the same size beats in every part (counts
+    capped at the demand ``q``): a beaten one is never needed, since surplus
+    pieces come off anyway. Keeps the integer program small."""
+    capped = {p: tuple(min(c, n) for c, n in zip(p, q)) for p in patterns}
+    by_size = sorted(patterns, key=lambda p: -sum(capped[p]))
+    kept: list[Pattern] = []
+    for p in by_size:
+        c = capped[p]
+        if not any(c):
+            continue
+        if not any(all(a >= b for a, b in zip(capped[k], c)) for k in kept):
+            kept.append(p)
+    return kept
+
+
+def _good_programs(q, pools, areas, good_fill):
+    """Sheets at least ``good_fill`` full whose repeats make exactly the
+    order's quantity of every part on them, as plan entries, the fullest
+    first (then the cheaper)."""
+    found = []
+    for t, (price, pool, *rest) in enumerate(pools):
+        sheet_area = rest[0] if rest else None
+        if not pool or not sheet_area:
+            continue
+        for p, layout in pool.items():
+            on = [i for i, n in enumerate(p) if n]
+            r = q[on[0]] // p[on[0]] if on else 0
+            if r < 1 or any(q[i] != r * p[i] for i in on):
+                continue        # leftovers: not kept
+            fill = sum(areas[i] * p[i] for i in on) / sheet_area
+            if fill >= good_fill - _EPS:
+                found.append((-fill, r * price, t, r, p, layout))
+    return [(t, r, p, layout) for _, _, t, r, p, layout in sorted(found, key=lambda e: e[:2])]
 
 
 def have_solver() -> bool:
@@ -339,18 +417,20 @@ class MixedSizes:
     sheets)``.
     """
 
-    def __init__(self, quantities: list[int]):
+    def __init__(self, quantities: list[int], areas: list[float] | None = None):
         self.quantities = quantities
-        self._sizes: list[tuple[dict | None, object]] = []
+        self.areas = areas
+        self._sizes: list[tuple[dict | None, object, float | None]] = []
 
-    def keep(self, pool: dict[Pattern, object] | None, to_packing) -> None:
-        self._sizes.append((pool, to_packing))
+    def keep(self, pool: dict[Pattern, object] | None, to_packing,
+             sheet_area: float | None = None) -> None:
+        self._sizes.append((pool, to_packing, sheet_area))
 
     def plan(self, sheet_eur: list[float]):
         """``[(size index, Packing, part area)]``, or None when the cheapest
         plan uses one size only (that size's own rows already show it)."""
-        pools = [(eur, pool) for eur, (pool, _) in zip(sheet_eur, self._sizes)]
-        plan = best_plan(self.quantities, pools)
+        pools = [(eur, pool, area) for eur, (pool, _, area) in zip(sheet_eur, self._sizes)]
+        plan = best_plan(self.quantities, pools, areas=self.areas)
         used = sorted({t for t, *_ in plan or []})
         if len(used) < 2:
             return None

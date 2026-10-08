@@ -503,7 +503,7 @@ def sparrow_options(
     n_pieces = sum(p.quantity for p in parts)
     part_area_mm2 = sum(net_area(p.outer, p.holes) * p.quantity for p in parts)
     separation = float(rankavali_mm) if rankavali_mm else None
-    mixed = MixedSizes([p.quantity for p in parts])
+    mixed = MixedSizes([p.quantity for p in parts], [net_area(p.outer, p.holes) for p in parts])
 
     def pack_fn(sw: int, sh: int) -> list[Packing]:
         return _pack_on_short_side(
@@ -545,13 +545,16 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
     if not pack.ok:
         if mixed is not None:
             mixed.keep(_candidates(parts, [], ew, eh, separation),
-                       lambda plan: _packed(packing(_plan_sheets(parts, plan, ew, eh), ok=True)))
+                       lambda plan: _packed(packing(_plan_sheets(parts, plan, ew, eh), ok=True)),
+                       sw * sh)
         return [packing(pack.sheets)]
     kit = _kit(parts, pack.sheets, ew, eh, run_fn=run_fn, separation=separation)
     pool = _candidates(parts, [*pack.sheets, *(kit or [])], ew, eh, separation)
     if mixed is not None:
-        mixed.keep(pool, lambda plan: _packed(packing(_plan_sheets(parts, plan, ew, eh))))
-    fewest = fewest_sheets([p.quantity for p in parts], pool)
+        mixed.keep(pool, lambda plan: _packed(packing(_plan_sheets(parts, plan, ew, eh))),
+                   sw * sh)
+    fewest = fewest_sheets([p.quantity for p in parts], pool,
+                           [net_area(p.outer, p.holes) for p in parts], sw * sh)
     fewest = fewest and _plan_sheets(parts, fewest, ew, eh)
     return [packing(sheets) for sheets in choose_plans(pack.sheets, fewest, kit)]
 

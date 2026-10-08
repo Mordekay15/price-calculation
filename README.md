@@ -145,6 +145,15 @@ yellow (over a dark blue) ×10, and the 5 violets left two to a sheet.
    each candidate: the fewest sheets, then the fewest programs. Pieces it
    makes too many come off single copies; no extra pieces are made.
 
+**Good programs are kept.** A candidate sheet at least 80 % full (real part
+area over the sheet bought, as *käyttöaste* shows it) whose repeats use up its
+parts exactly — e.g. two light blue plates per 1 × 2 m sheet ×5 for an order of
+10 — is kept as its own program, and the rest is planned without those parts.
+Production would rather cut one good program more often than have a part split
+over programs or sheet sizes to save a little steel. It is kept only while the
+plan costs at most 5 % more than the cheapest; otherwise the cheapest plan is
+used. (`GOOD_FILL` and `KEEP_MAX_EXTRA` in `core/cutting_stock.py`.)
+
 **Several sheet sizes.** Each size's candidate sheets are kept, also for a
 size too small for some parts, and one more integer program picks over all of
 them at each sheet's price (weight × €/tn with the margin): the big parts on a

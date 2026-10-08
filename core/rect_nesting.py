@@ -233,10 +233,13 @@ def box_candidates(sizes: list[tuple[float, float]], quantities: list[int], seed
                             [(counts_on(s.placements, n, index), s) for s in seeds])
 
 
-def fewest_sheets(quantities: list[int], pool: dict | None) -> list | None:
+def fewest_sheets(quantities: list[int], pool: dict | None, areas: list[float] | None = None,
+                  sheet_area: float | None = None) -> list | None:
     """The plan with the fewest sheets of one size from its candidate sheets:
-    ``[(repeats, counts, layout)]``, or None."""
-    plan = best_plan(quantities, [(1.0, pool)]) if pool else None
+    ``[(repeats, counts, layout)]``, or None. With the parts' real ``areas``
+    and the ``sheet_area``, well-filled programs are kept first (see
+    ``core.cutting_stock.GOOD_FILL``)."""
+    plan = best_plan(quantities, [(1.0, pool, sheet_area)], areas=areas) if pool else None
     return None if plan is None else [(r, p, layout) for _, r, p, layout in plan]
 
 
@@ -265,7 +268,8 @@ def rect_options(
     quantities = [int(p["qty"]) for p in products]
     part_area_mm2 = sum(p["width"] * p["height"] * p["qty"] for p in products)
     boxes = [(int(round(p["width"])), int(round(p["height"]))) for p in products]
-    mixed = MixedSizes(quantities)
+    areas = [p["width"] * p["height"] for p in products]
+    mixed = MixedSizes(quantities, areas)
 
     def pieces_for(qty: list[int]) -> list[tuple[int, int, int, int]]:
         counted = [{**p, "qty": q} for p, q in zip(products, qty)]
@@ -296,14 +300,14 @@ def rect_options(
         # small for some parts: it may still take the others in a mixed plan.
         pool = box_candidates(boxes, quantities, [] if failed else [_turned(s) for s in greedy],
                               eff_w, eff_h, rankavali_mm)
-        mixed.keep(pool, lambda plan: (packing(standing(plan)), area_of(plan)))
+        mixed.keep(pool, lambda plan: (packing(standing(plan)), area_of(plan)), sw * sh)
         if failed:
             reason = too_big([(product_label(p), p["width"], p["height"]) for p in products],
                              eff_w, eff_h)
             return [replace(packing(greedy, failed), reason=reason)]
         kit = kit_plan(quantities, greedy, lambda kit: _one_sheet(*pack_sheets(kit)),
                        lambda rest: _all_fit(*pack_sheets(rest)))
-        fewest = fewest_sheets(quantities, pool)
+        fewest = fewest_sheets(quantities, pool, areas, sw * sh)
         return [packing(sheets) for sheets in
                 choose_plans(greedy, fewest and standing(fewest), kit)]
 
