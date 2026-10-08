@@ -17,7 +17,7 @@ from core.dxf import DxfReport
 from core.geometry import bbox, bbox_wh, net_area, rotate_translate, signed_area
 from core.cutting_stock import MixedSizes
 from core.programs import choose_plans, kit_plan
-from core.rect_nesting import box_candidates, fewest_sheets, keep_counts
+from core.rect_nesting import box_candidates, box_sheet, fewest_sheets, keep_counts
 from core.sheet_cost import (
     EdgeGaps,
     GroupCost,
@@ -553,7 +553,7 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
     kit = _kit(parts, pack.sheets, ew, eh, run_fn=run_fn, separation=separation)
     pool = _candidates(parts, [*pack.sheets, *(kit or [])], ew, eh, separation)
     if pool is not None:
-        pool.update(_pair_sheets(parts, pool, ew, eh, **nest))
+        pool.update(_near_miss_sheets(parts, ew, eh, **nest))
     if mixed is not None:
         mixed.keep(pool, lambda plan: _packed(packing(_plan_sheets(parts, plan, ew, eh, **nest))),
                    sw * sh)
@@ -563,53 +563,64 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
     return [packing(sheets) for sheets in choose_plans(pack.sheets, fewest, kit)]
 
 
-# Pairs of parts Sparrow nests together on one sheet, per sheet size; each
-# takes up to two runs.
-_PAIR_BUDGET = 3
+# Near misses (below) Sparrow checks on their real shapes, per sheet size, one
+# run each; and how much longer than the sheet a near miss's boxes may need.
+_NEAR_BUDGET = 4
+_NEAR_MAX_OVER = 0.25
 
 
-def _pair_sheets(parts, pool: dict, sheet_w, sheet_h, *, run_fn,
-                 separation) -> dict:
-    """Sheets of two parts nested on their real shapes, as candidates.
+def _near_miss_sheets(parts, sheet_w, sheet_h, *, run_fn, separation) -> dict:
+    """Sheets the box check just misses, nested on the real shapes.
 
-    The box check can't see shapes that hook into each other (notched corners
-    in a checkerboard, a part in another's recess), so it misses sheets that
-    hold more. The pairs whose two-part box sheets fill best are nested by
-    Sparrow: the pair's whole demand, then as many as its strip density
-    promises on one sheet. ``{counts: PackedSheet}``."""
+    Boxes can't see shapes that hook into each other (notched corners in a
+    checkerboard, a part in another's recess), so they miss sheets that hold a
+    little more. For each part and each pair of parts, in the order's ratio:
+    the most the boxes fit on a sheet, then one more — the near miss — and how
+    much longer the sheet would have to be for its boxes. The smallest misses
+    (that have the area) are nested by Sparrow; those that fit join the
+    candidates. ``{counts: PackedSheet}``."""
     q = [p.quantity for p in parts]
+    n = len(parts)
+    boxes = [p.sheet_size() for p in parts]
+    fixed = frozenset(i for i, p in enumerate(parts) if not p.turns)
+    gap = separation or 0.0
     areas = [net_area(p.outer, p.holes) for p in parts]
-    fill: dict[tuple[int, int], float] = {}
-    for counts in pool:
-        on = tuple(i for i, n in enumerate(counts) if n)
-        if len(on) == 2:
-            fill[on] = max(fill.get(on, 0.0), sum(areas[i] * counts[i] for i in on))
+
+    def fits(counts, length=sheet_w):
+        return box_sheet(boxes, counts, length, sheet_h, gap, fixed=fixed) is not None
+
+    def as_counts(mix):
+        return [mix.get(i, 0) for i in range(n)]
+
+    misses = []
+    groups = [(i,) for i in range(n)] + [(i, j) for i in range(n) for j in range(i + 1, n)]
+    for group in groups:
+        demand = [q[i] if i in group else 0 for i in range(n)]
+        if not all(demand[i] for i in group):
+            continue
+        k = 0
+        while k < sum(demand) and fits(as_counts(_mix(demand, k + 1))):
+            k += 1
+        if k == sum(demand):
+            continue                    # the whole demand fits one sheet already
+        near = as_counts(_mix(demand, k + 1))
+        if sum(a * c for a, c in zip(areas, near)) > sheet_w * sheet_h:
+            continue                    # not even the area
+        lo, hi = sheet_w, sheet_w * (1 + _NEAR_MAX_OVER)
+        if not fits(near, hi):
+            continue                    # too far off
+        while hi - lo > 1:              # the shortest sheet its boxes fit
+            mid = (lo + hi) / 2
+            lo, hi = (lo, mid) if fits(near, mid) else (mid, hi)
+        misses.append((hi - sheet_w, group, near))
+
     found = {}
-    for pair in sorted(fill, key=lambda k: (-fill[k], k))[:_PAIR_BUDGET]:
-        kept = _densest(parts, [n if i in pair else 0 for i, n in enumerate(q)],
-                        sheet_w, sheet_h, run_fn=run_fn, separation=separation)
-        if kept:
-            counts = tuple(sum(pl.part_index == i for pl in kept) for i in range(len(parts)))
-            found[counts] = _sheet(kept, sheet_w, sheet_h)
-    return found
-
-
-def _densest(parts, demand: list[int], sheet_w, sheet_h, *, run_fn, separation):
-    """The most of ``demand`` one sheet holds, from two runs: the whole demand
-    in a strip (the parts it puts on the first sheet, and how densely it packs
-    overall), then that many in proportion on a single sheet."""
-    err, best, strip_len = _probe(parts, {i: n for i, n in enumerate(demand) if n},
-                                  sheet_w, sheet_h, run_fn=run_fn, separation=separation)
-    if err is not None:
-        return []
-    total = sum(demand)
-    guess = int(total * sheet_w / strip_len) if strip_len else 0
-    if len(best) < guess < total:
-        err, kept, _ = _probe(parts, _mix(demand, guess), sheet_w, sheet_h,
+    for _, _, near in sorted(misses, key=lambda m: (m[0], m[1]))[:_NEAR_BUDGET]:
+        err, kept, _ = _probe(parts, {i: c for i, c in enumerate(near) if c}, sheet_w, sheet_h,
                               run_fn=run_fn, separation=separation)
-        if err is None and len(kept) > len(best):
-            best = kept
-    return best
+        if err is None and len(kept) == sum(near):
+            found[tuple(near)] = _sheet(kept, sheet_w, sheet_h)
+    return found
 
 
 def _packed(packing: Packing) -> tuple[Packing, float]:

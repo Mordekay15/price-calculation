@@ -142,8 +142,10 @@ yellow (over a dark blue) ×10, and the 5 violets left two to a sheet.
    suit each other (k of one, m of another, the rest filled largest first).
    Leftover demand gets its own round, as it needs other partners.
 2. **An integer program** (`scipy.optimize.milp`) picks how many times to cut
-   each candidate: the fewest sheets, then the fewest programs. Pieces it
-   makes too many come off single copies; no extra pieces are made. A sheet
+   each candidate: first the lowest price (solved to the optimum), then at
+   that price the fewest programs, with exact quantities: a candidate may be
+   cut a whole number of times plus one copy with pieces left off, which
+   counts as a program of its own. No extra pieces are made. A sheet
    that loses pieces this way is nested again with just the pieces it keeps
    (one Sparrow run, or the box packer in the manual tab), so it keeps no
    holes where the extra pieces were.
@@ -168,17 +170,21 @@ price breakdown lists each size. In the example above with 1000 × 2000,
 costs 894 € and the mixed plan 834 €.
 
 **Parts that hook together.** The box check can't see shapes that interlock:
-square plates with notched corners laid as a checkerboard (big, small, big,
-small over small, big, small, big) hold 4 + 4 on a 1250 × 2500 sheet, where
-their boxes need 2537 mm. So on each sheet size the three pairs of parts whose
-two-part box sheets fill best are also nested by Sparrow on their real shapes
-(two runs each, `_PAIR_BUDGET` in `core/sparrow.py`), and those sheets join
-the candidates.
+square plates with 38.9 mm corner notches laid as a checkerboard (big, small,
+big, small over small, big, small, big) hold 4 + 4 on a 1250 × 2500 sheet,
+where their boxes need 2557 mm. So on each sheet size the app looks for *near
+misses*: for each part and each pair of parts, in the order's ratio, the most
+the boxes fit on a sheet and then one more, with how much longer the sheet
+would have to be for those boxes. The four smallest misses that have the area
+are nested by Sparrow on the real shapes (one run each, `_NEAR_BUDGET` in
+`core/sparrow.py`); those that fit join the candidates. A pair whose boxes
+miss by a lot (two 704 mm plates can't share the 1250 mm height whatever
+their notches) is not tried.
 
 Candidate sheets are checked with the box packer (instant). For DXF parts each
 real shape is placed in its box, which is always a valid layout; Sparrow's own
 sheets are candidates too, so where the shapes interlock its tighter sheets
-are used. Apart from the pair runs above it adds no Sparrow runs; it is
+are used. Apart from the near-miss runs above it adds no Sparrow runs; it is
 capped at 4000 box checks per sheet size (`max_checks`), a few seconds on a
 large order. The manual tab
 keeps its result until a part or setting changes.

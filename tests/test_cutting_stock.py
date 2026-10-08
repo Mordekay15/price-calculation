@@ -5,6 +5,8 @@ and plans cut from several sheet sizes."""
 import random
 from collections import Counter
 
+import pytest
+
 from core.cutting_stock import _trim, best_plan, cutting_stock_plan
 from core.programs import sheets_used
 from core.rect_nesting import box_candidates, fewest_sheets, rect_options
@@ -193,26 +195,50 @@ def test_a_sheet_with_pieces_taken_off_is_nested_again_tight():
     assert sorted(min(x for x, _ in pl.outer) for pl in kept.placements) == [0, 400]
 
 
-def test_the_best_pairs_are_nested_on_their_real_shapes():
-    # Sparrow nests the pairs whose box sheets fill best, two runs at most
-    # each, and their sheets join the candidates (shapes that hook into each
-    # other can hold more than their boxes say).
-    from core.sparrow import _PAIR_BUDGET, _pair_sheets
-    from tests.test_sparrow import fake_solver
+def notched(size, c=38.9):
+    """A square plate with a c × c notch cut out of each corner."""
+    return [(0, c), (c, c), (c, 0), (size - c, 0), (size - c, c), (size, c), (size, size - c),
+            (size - c, size - c), (size - c, size), (c, size), (c, size - c), (0, size - c)]
+
+
+def test_the_smallest_near_misses_are_tried_on_the_real_shapes():
+    # 524 and 634 plates, 10 each, on 1250 × 2500: boxes fit 3 + 3 (and 7 in
+    # all), 4 + 4 needs 2557 mm of boxes, a 2 % miss; the big plate alone or
+    # with a big partner misses by far more. Sparrow gets the small misses.
+    from core.sparrow import _NEAR_BUDGET, _near_miss_sheets
 
     runs = []
 
-    def counting(instance, *, separation):
-        runs.append(sorted(i["demand"] for i in instance["items"]))
-        return fake_solver(instance, separation=separation)
+    def anything_fits(instance, *, separation):     # every piece at the corner
+        runs.append({i["id"]: i["demand"] for i in instance["items"]})
+        from core.sparrow import SparrowResult
+        placements = [(i["id"], 0.0, (separation, separation)) for i in instance["items"]
+                      for _ in range(i["demand"])]
+        return SparrowResult(True, "", placements, 1.0)
 
-    parts = [SparrowPart(n, 4, square(s), width_mm=s, height_mm=s)
-             for n, s in (("a", 100), ("b", 90), ("c", 80), ("d", 70), ("e", 60))]
-    pool = {(1, 1, 0, 0, 0): None, (0, 0, 1, 1, 0): None, (0, 0, 0, 1, 1): None,
-            (1, 0, 0, 0, 1): None, (2, 2, 0, 0, 0): None}
-    found = _pair_sheets(parts, pool, 400.0, 200.0, run_fn=counting, separation=None)
-    assert len(runs) <= 2 * _PAIR_BUDGET
-    on = {tuple(i for i, n in enumerate(c) if n) for c in found}
-    assert on <= {(0, 1), (2, 3), (0, 4), (3, 4)} and (0, 1) in on   # a + b fill best
-    for counts, sheet in found.items():
-        assert len(sheet.placements) == sum(counts)
+    parts = [SparrowPart(n, 10, notched(s), width_mm=s, height_mm=s)
+             for n, s in (("small", 524.4), ("mid", 634.4), ("big", 1194.4))]
+    found = _near_miss_sheets(parts, 2500.0, 1250.0, run_fn=anything_fits, separation=5.0)
+    assert len(runs) <= _NEAR_BUDGET
+    assert (4, 4, 0) in found                          # the checkerboard's mix, first
+    assert runs[0] == {0: 4, 1: 4}
+
+
+@pytest.mark.sparrow
+def test_notched_plates_make_a_checkerboard_with_the_real_solver():
+    # 8 + 8 notched plates: as boxes 4 + 4 don't fit 2500 mm, but big and small
+    # alternating with their notches hooked together do: 2 sheets, 1 program.
+    from functools import partial
+
+    from core.sparrow import find_executable, run_sparrow
+    exe = find_executable()
+    if exe is None:
+        pytest.skip("Sparrow executable not found")
+    run = lambda inst, separation=None: run_sparrow(  # noqa: E731
+        inst, executable=exe, time_limit_sec=3, min_item_separation=separation)
+    parts = [SparrowPart(n, 8, notched(s), width_mm=s, height_mm=s)
+             for n, s in (("small", 524.4), ("mid", 634.4))]
+    best = min((o for o in sparrow_options(LOOKUP, "S235", "2", 2.0, parts, run_fn=run,
+                                           rankavali_mm=5).options if o.ok),
+               key=lambda o: (o.sheets_needed, o.programs))
+    assert (best.sheets_needed, best.programs) == (2, 1)

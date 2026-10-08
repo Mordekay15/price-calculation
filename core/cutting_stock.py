@@ -155,8 +155,8 @@ def _plan_rest(q, pools, kept):
     plan = _ilp(rest, [p for _, p in patterns], [pools[t][0] for t, _ in patterns])
     if plan is None:
         return None
-    entries = [(r, patterns[k][1], (patterns[k][0], pools[patterns[k][0]][1][patterns[k][1]]))
-               for k, r in plan]
+    entries = [(r, counts, (patterns[k][0], pools[patterns[k][0]][1][patterns[k][1]]))
+               for k, r, counts in plan]
     trimmed = [(t, r, p, layout) for r, p, (t, layout) in _trim(rest, entries)]
     return price + sum(r * pools[t][0] for t, r, _, _ in trimmed), list(kept) + trimmed
 
@@ -354,30 +354,73 @@ def _duals(q, patterns):
     return None if res is None else [-d for d in res.ineqlin.marginals]
 
 
-def _ilp(q, patterns, prices=None) -> list[tuple[int, int]] | None:
-    """``[(pattern index, repeats)]`` covering ``q``: the lowest price (each
-    pattern's sheet ``prices``, all 1 when not given: the fewest sheets), then
-    the fewest programs."""
+def _ilp(q, patterns, prices=None) -> list[tuple[int, int, Pattern]] | None:
+    """``[(pattern index, repeats, counts)]`` making exactly ``q``: the lowest
+    price (each pattern's sheet ``prices``, all 1 when not given: the fewest
+    sheets), then the fewest programs.
+
+    Two steps. First the price alone, with surplus pieces allowed (an easy
+    integer program, solved to the optimum; leaving pieces off a sheet costs
+    nothing). Then the fewest programs at that price, exactly: each pattern
+    cut a whole number of times plus at most one copy with pieces left off,
+    which is a program of its own. The second step is the hard one; if it
+    runs out of time, its best plan so far is used, or the first step's with
+    the surplus taken off — at the lowest price either way."""
     import numpy as np
     from scipy.optimize import Bounds, LinearConstraint, milp
     m, n = len(patterns), len(q)
     upper = float(sum(q))
     a = _matrix(q, patterns)
     price = np.array(prices if prices is not None else [1.0] * m, dtype=float)
-    # x: sheets cut from each pattern; z: the pattern is used (a program),
-    # worth less than the cheapest sheet over all programs together.
-    cost = np.concatenate([price, np.full(m, price.min() / (m + 1))])
-    constraints = [
-        LinearConstraint(np.hstack([a, np.zeros((n, m))]), lb=np.array(q, dtype=float)),
-        LinearConstraint(np.hstack([np.eye(m), -upper * np.eye(m)]), ub=0),
-    ]
-    res = milp(cost, constraints=constraints, integrality=np.ones(2 * m),
-               bounds=Bounds(0, np.concatenate([np.full(m, upper), np.ones(m)])),
-               options={"time_limit": _ILP_SECONDS})
-    if res.x is None:
+    cheapest = milp(price, constraints=[LinearConstraint(a, lb=np.array(q, dtype=float))],
+                    integrality=np.ones(m), bounds=Bounds(0, upper),
+                    options={"time_limit": _ILP_SECONDS})
+    if cheapest.x is None:
         return None
-    x = [int(round(v)) for v in res.x[:m]]
-    return [(k, r) for k, r in enumerate(x) if r > 0]
+
+    # Variables: x (whole copies), z (pattern used), w (one copy with pieces
+    # off), then r[p, i] (pieces of part i left off that copy).
+    nv = 3 * m + m * n
+    rows, lbs, ubs = [], [], []
+
+    def row(coeffs, lb=-np.inf, ub=np.inf):
+        v = np.zeros(nv)
+        for k, c in coeffs:
+            v[k] += c
+        rows.append(v)
+        lbs.append(lb)
+        ubs.append(ub)
+
+    def r_ix(k, i):
+        return 3 * m + k * n + i
+
+    for i in range(n):                  # exactly the order
+        row([(k, a[i, k]) for k in range(m)] + [(2 * m + k, a[i, k]) for k in range(m)]
+            + [(r_ix(k, i), -1.0) for k in range(m)], q[i], q[i])
+    for k in range(m):
+        row([(k, 1.0), (m + k, -upper)], ub=0)              # x only when used
+        for i in range(n):              # pieces off only that copy's own
+            row([(r_ix(k, i), 1.0), (2 * m + k, -a[i, k])], ub=0)
+    at_price = cheapest.fun + 1e-6 * max(1.0, abs(cheapest.fun))
+    row([(k, price[k]) for k in range(m)] + [(2 * m + k, price[k]) for k in range(m)],
+        ub=at_price)
+    cost = np.concatenate([np.zeros(m), np.ones(m), np.ones(m), np.zeros(m * n)])
+    upper_b = np.concatenate([np.full(m, upper), np.ones(2 * m), a.T.ravel()])
+    fewest = milp(cost, constraints=[LinearConstraint(np.array(rows), np.array(lbs),
+                                                      np.array(ubs))],
+                  integrality=np.ones(nv), bounds=Bounds(0, upper_b),
+                  options={"time_limit": _ILP_SECONDS})
+    if fewest.x is None:
+        x = [int(round(v)) for v in cheapest.x]
+        return [(k, r, patterns[k]) for k, r in enumerate(x) if r > 0]
+    v = [int(round(t)) for t in fewest.x]
+    plan = [(k, v[k], patterns[k]) for k in range(m) if v[k] > 0]
+    for k in range(m):
+        if v[2 * m + k]:
+            left = tuple(patterns[k][i] - v[r_ix(k, i)] for i in range(n))
+            if any(left):
+                plan.append((k, 1, left))
+    return plan
 
 
 def _trim(q, plan):

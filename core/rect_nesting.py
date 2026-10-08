@@ -199,6 +199,24 @@ def keep_counts(placements: list, counts, index=lambda p: p.product_idx) -> list
     return kept
 
 
+def box_sheet(sizes: list[tuple[float, float]], counts, sheet_w: float, sheet_h: float,
+              gap: float, *, fixed=frozenset()) -> Sheet | None:
+    """One lying ``sheet_w`` × ``sheet_h`` sheet holding ``counts`` of the
+    ``sizes`` boxes, or None. Boxes round up and the sheet down: a real shape
+    never comes closer than the ``gap``. Each box goes to the standing sheet
+    already turned, so an unturned piece there lies as given once the sheet
+    lies down (and a part in ``fixed`` keeps its angle)."""
+    pieces = [(i, c, math.ceil(h + gap - 1e-9), math.ceil(w + gap - 1e-9))
+              for i, (w, h) in enumerate(sizes) for c in range(counts[i])]
+    sheets, failed = pack(pieces, math.floor(sheet_h + gap + 1e-9),
+                          math.floor(sheet_w + gap + 1e-9), fixed=fixed)
+    if failed or len(sheets) != 1:
+        return None
+    return Sheet(sheets[0].h, sheets[0].w, [
+        Placement(p.y, p.x, p.h, p.w, p.product_idx, p.rotated)
+        for p in sheets[0].placements])
+
+
 def box_candidates(sizes: list[tuple[float, float]], quantities: list[int], seeds: list,
                    sheet_w: float, sheet_h: float, gap: float, *, fixed=frozenset(),
                    index=lambda p: p.product_idx) -> dict | None:
@@ -215,19 +233,7 @@ def box_candidates(sizes: list[tuple[float, float]], quantities: list[int], seed
     n = len(sizes)
 
     def fits(counts):
-        # Boxes round up and the sheet down: a real shape never comes closer
-        # than the gap. Each box goes to the standing sheet already turned, so
-        # an unturned piece there lies as given once the sheet lies down (and
-        # a part in ``fixed`` keeps its angle).
-        pieces = [(i, c, math.ceil(h + gap - 1e-9), math.ceil(w + gap - 1e-9))
-                  for i, (w, h) in enumerate(sizes) for c in range(counts[i])]
-        sheets, failed = pack(pieces, math.floor(sheet_h + gap + 1e-9),
-                              math.floor(sheet_w + gap + 1e-9), fixed=fixed)
-        if failed or len(sheets) != 1:
-            return None
-        return Sheet(sheets[0].h, sheets[0].w, [
-            Placement(p.y, p.x, p.h, p.w, p.product_idx, p.rotated)
-            for p in sheets[0].placements])
+        return box_sheet(sizes, counts, sheet_w, sheet_h, gap, fixed=fixed)
 
     return candidate_sheets(quantities, sizes, fits,
                             [(counts_on(s.placements, n, index), s) for s in seeds])
