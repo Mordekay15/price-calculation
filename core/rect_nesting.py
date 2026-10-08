@@ -2,8 +2,10 @@
 (longest side first, best-area fit, 90° rotation) and ``rect_options``.
 Identical sheets are merged into one layout with a ``count``, as Sparrow's are."""
 
+import math
 from dataclasses import dataclass, field, replace
 
+from core.cutting_stock import cutting_stock_plan
 from core.programs import choose_plans, kit_plan, sheets_used
 from core.sheet_cost import (
     EdgeGaps,
@@ -83,9 +85,11 @@ def pack(
     sheet_w: int,
     sheet_h: int,
     allow_rotation: bool = True,
+    fixed: frozenset[int] = frozenset(),
 ) -> tuple[list[Sheet], list[int]]:
     """
-    Pack `pieces` onto sheets of size sheet_w × sheet_h.
+    Pack `pieces` onto sheets of size sheet_w × sheet_h. Products in ``fixed``
+    are never turned.
 
     `pieces` is a list of (product_idx, copy_idx, width_mm, height_mm). The
     copy_idx is unused by the algorithm but lets callers map placements back
@@ -102,20 +106,21 @@ def pack(
     failed: list[int] = []
 
     for orig_i, (product_idx, _copy_idx, pw, ph) in indexed:
+        turns = allow_rotation and product_idx not in fixed
         fits_natural = pw <= sheet_w and ph <= sheet_h
-        fits_rotated = allow_rotation and ph <= sheet_w and pw <= sheet_h
+        fits_rotated = turns and ph <= sheet_w and pw <= sheet_h
         if not (fits_natural or fits_rotated):
             failed.append(orig_i)
             continue
 
         placed = False
         for sheet in sheets:
-            if _try_place(sheet, pw, ph, product_idx, allow_rotation):
+            if _try_place(sheet, pw, ph, product_idx, turns):
                 placed = True
                 break
         if not placed:
             new_sheet = Sheet(sheet_w, sheet_h)
-            _try_place(new_sheet, pw, ph, product_idx, allow_rotation)
+            _try_place(new_sheet, pw, ph, product_idx, turns)
             sheets.append(new_sheet)
 
     return sheets, failed
@@ -174,6 +179,60 @@ def _all_fit(sheets: list[Sheet], failed: int) -> list[Sheet] | None:
     return None if failed else sheets
 
 
+def counts_on(placements, n: int, index=lambda p: p.product_idx) -> tuple[int, ...]:
+    """How many of each of the ``n`` products a sheet holds."""
+    counts = [0] * n
+    for p in placements:
+        counts[index(p)] += 1
+    return tuple(counts)
+
+
+def keep_counts(placements: list, counts, index=lambda p: p.product_idx) -> list:
+    """The placements less any beyond ``counts`` of each product (a sheet with
+    surplus pieces taken off)."""
+    left = list(counts)
+    kept = []
+    for p in placements:
+        if left[index(p)] > 0:
+            left[index(p)] -= 1
+            kept.append(p)
+    return kept
+
+
+def box_plan(sizes: list[tuple[float, float]], quantities: list[int], seeds: list,
+             sheet_w: float, sheet_h: float, gap: float, *, fixed=frozenset(),
+             index=lambda p: p.product_idx):
+    """``core.cutting_stock.cutting_stock_plan`` on the parts' boxes: each box
+    grown by the cut gap (as ``rect_options`` packs), packed on the
+    ``sheet_w`` × ``sheet_h`` sheet (laid down: ``sheet_w`` along x) standing
+    on its side, as ``rect_options`` packs, and turned back.
+
+    ``seeds`` are layouts known to fit, with ``placements`` and their part
+    index read by ``index``. Returns ``[(repeats, counts, layout)]`` or None; a
+    layout is a seed or a lying ``Sheet`` and may hold surplus pieces (see
+    ``keep_counts``). A lying sheet's piece is ``rotated`` when it is turned a
+    quarter from its ``sizes`` box."""
+    n = len(sizes)
+
+    def fits(counts):
+        # Boxes round up and the sheet down: a real shape never comes closer
+        # than the gap. Each box goes to the standing sheet already turned, so
+        # an unturned piece there lies as given once the sheet lies down (and
+        # a part in ``fixed`` keeps its angle).
+        pieces = [(i, c, math.ceil(h + gap - 1e-9), math.ceil(w + gap - 1e-9))
+                  for i, (w, h) in enumerate(sizes) for c in range(counts[i])]
+        sheets, failed = pack(pieces, math.floor(sheet_h + gap + 1e-9),
+                              math.floor(sheet_w + gap + 1e-9), fixed=fixed)
+        if failed or len(sheets) != 1:
+            return None
+        return Sheet(sheets[0].h, sheets[0].w, [
+            Placement(p.y, p.x, p.h, p.w, p.product_idx, p.rotated)
+            for p in sheets[0].placements])
+
+    return cutting_stock_plan(quantities, sizes, fits,
+                              [(counts_on(s.placements, n, index), s) for s in seeds])
+
+
 # ── Costing with this packer ──────────────────────────────────────────────────
 
 def rect_options(
@@ -229,7 +288,19 @@ def rect_options(
             return [replace(packing(greedy, failed), reason=reason)]
         kit = kit_plan(quantities, greedy, lambda kit: _one_sheet(*pack_sheets(kit)),
                        lambda rest: _all_fit(*pack_sheets(rest)))
-        return [packing(sheets) for sheets in choose_plans(greedy, kit)]
+        return [packing(sheets) for sheets in choose_plans(greedy, fewest(greedy, eff_w, eff_h), kit)]
+
+    def fewest(greedy: list[Sheet], eff_w: int, eff_h: int) -> list[Sheet] | None:
+        """The cutting-stock plan (see ``core.cutting_stock``), as standing
+        sheets like the greedy ones (``packing`` turns them)."""
+        sizes = [(int(round(p["width"])), int(round(p["height"]))) for p in products]
+        plan = box_plan(sizes, quantities, [_turned(s) for s in greedy],
+                        eff_w, eff_h, rankavali_mm)
+        if plan is None:
+            return None
+        return [_turned(replace(layout, placements=keep_counts(layout.placements, counts),
+                                count=r))
+                for r, counts, layout in plan]
 
     return compute_options(
         lookup, material, thickness, thickness_mm,

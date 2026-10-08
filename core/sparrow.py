@@ -16,6 +16,7 @@ from pathlib import Path
 from core.dxf import DxfReport
 from core.geometry import bbox, bbox_wh, net_area, rotate_translate, signed_area
 from core.programs import choose_plans, kit_plan
+from core.rect_nesting import box_plan, keep_counts
 from core.sheet_cost import (
     EdgeGaps,
     GroupCost,
@@ -539,7 +540,41 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
     if not pack.ok:
         return [packing(pack.sheets)]
     kit = _kit(parts, pack.sheets, ew, eh, run_fn=run_fn, separation=separation)
-    return [packing(sheets) for sheets in choose_plans(pack.sheets, kit)]
+    fewest = _fewest(parts, [*pack.sheets, *(kit or [])], ew, eh, separation)
+    return [packing(sheets) for sheets in choose_plans(pack.sheets, fewest, kit)]
+
+
+def _fewest(parts, seeds: list[PackedSheet], sheet_w, sheet_h,
+            separation) -> list[PackedSheet] | None:
+    """The cutting-stock plan (``core.cutting_stock``): Sparrow's own sheets
+    (tighter than boxes: the shapes interlock) and sheets the box packer finds,
+    combined to use the fewest sheets. A box sheet places each real shape in
+    its box. Needs no Sparrow run."""
+    by_part = lambda pl: pl.part_index  # noqa: E731
+    plan = box_plan([p.sheet_size() for p in parts], [p.quantity for p in parts], seeds,
+                    sheet_w, sheet_h, separation or 0.0,
+                    fixed=frozenset(i for i, p in enumerate(parts) if not p.turns),
+                    index=by_part)
+    if plan is None:
+        return None
+    sheets = []
+    for repeats, counts, layout in plan:
+        placed = (layout.placements if isinstance(layout, PackedSheet)
+                  else [_in_box(parts, b) for b in layout.placements])
+        sheets.append(_sheet(keep_counts(placed, counts, by_part), sheet_w, sheet_h, repeats))
+    return sheets
+
+
+def _in_box(parts, box) -> Placed:
+    """The real part placed in a box packer's box: turned a quarter more when
+    the box is, its bounding box's corner on the box's."""
+    part = parts[box.product_idx]
+    rot = (part.orientations[0] + (90.0 if box.rotated else 0.0)) % 360.0
+    minx, miny, _, _ = bbox(rotate_translate(part.outer, rot, (0.0, 0.0)))
+    t = (box.x - minx, box.y - miny)
+    return Placed(box.product_idx, part.part_id, rot, rotate_translate(part.outer, rot, t),
+                  [rotate_translate(h, rot, t) for h in part.holes],
+                  [rotate_translate(c, rot, t) for c in part.construction])
 
 
 # Sparrow runs spent looking for a one-program kit on one sheet size; each run

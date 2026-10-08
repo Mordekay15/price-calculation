@@ -17,8 +17,9 @@ A Streamlit app that prices sheet-metal parts from supplier price lists.
   about once, between the last old card and the first new one.
 
 Both tabs compare every priced sheet size and pick the cheapest. Parts of the
-same material and thickness share sheets, and the app also looks for a plan
-production can repeat: one sheet program cut many times (see
+same material and thickness share sheets. The app looks for the plan that uses
+the fewest sheets ([Fewest sheets](#fewest-sheets-the-cutting-stock-plan)) and
+for a plan production can repeat: one sheet program cut many times (see
 [Programs](#programs-repeatable-sheet-layouts)).
 
 ## Run locally
@@ -55,7 +56,7 @@ pytest
 ```
 
 The tests take a few seconds. They cover pricing and copper, sheet costing and
-utilisation, the DXF reader rules (on drawings generated in the test), the
+utilisation, the fewest-sheets plan, the DXF reader rules (on drawings generated in the test), the
 Sparrow fixed-sheet search (with a small fake solver), the program plans of both
 packers, the supplier store, and a smoke test of the whole page. `tests/test_sparrow.py::test_real_sparrow_binary`
 also runs the real Sparrow executable and is skipped when it is not installed.
@@ -76,6 +77,7 @@ core/                   pure logic, no Streamlit
   pricing.py            price lookup, materials, thickness, densities, weight_kg, copper
   sheet_cost.py         price every sheet size (SheetOption), grouping, per-piece cost
   programs.py           repeatable programs: the kit search both packers share
+  cutting_stock.py      the fewest-sheets plan: candidate sheets + integer program
   rect_nesting.py       bounding-box packer (manual tab)
   sparrow.py            Sparrow: DXF part → solver run → fixed sheets → programs → cost
   dxf.py                the DXF reader: the part that is shown, nested and priced
@@ -108,8 +110,10 @@ For each group of parts that share a material and thickness,
    (*reunavarat*: top, bottom, left, right; the clamp strip, *kynsiraina*, is
    given as the bottom one) are not usable, and the cut gap (*rankaväli*)
    keeps parts apart.
-2. For each size, price up to two plans (see below): the fewest sheets, and
-   the fewest programs. Each is one row in the sheet-size table. A size the
+2. For each size, price up to three plans (see below): sheet by sheet, the
+   fewest sheets over the whole order, and the fewest programs. Each is one
+   row in the sheet-size table; a plan another one beats in both sheets and
+   programs is left out. A size the
    parts don't fit says which part is too big, e.g. *ITM-072558 (3059 mm) ei
    mahdu*.
 3. Charge whole sheets: sheets × sheet weight × price per tonne × (1 + margin).
@@ -120,6 +124,32 @@ For each group of parts that share a material and thickness,
 **Käyttöaste** (utilisation) is the real part area divided by the area of the
 sheets paid for. The real part area excludes the gap and, for DXF parts, has
 the holes removed.
+
+## Fewest sheets: the cutting-stock plan
+
+The packers fill one sheet at a time and never look ahead, so they can miss a
+plan that needs fewer sheets. Example, 10 each of seven square plates (524–1194
+mm) on 1250 × 2500: filled sheet by sheet they take 20 sheets. Planned as a
+whole they take 18: violet + 2 light blue (each over a pink) ×5, red + green +
+yellow (over a dark blue) ×10, and the 5 violets left two to a sheet.
+
+`core/cutting_stock.py` finds such plans with the classic cutting-stock method:
+
+1. **Candidate sheets** (how many of each part one sheet holds): the sheets the
+   packers already made, each part on its own sheet, sheets the LP's part
+   prices make worth adding (column generation), and sheets of two parts that
+   suit each other (k of one, m of another, the rest filled largest first).
+   Leftover demand gets its own round, as it needs other partners.
+2. **An integer program** (`scipy.optimize.milp`) picks how many times to cut
+   each candidate: the fewest sheets, then the fewest programs. Pieces it
+   makes too many come off single copies; no extra pieces are made.
+
+Candidate sheets are checked with the box packer (instant). For DXF parts each
+real shape is placed in its box, which is always a valid layout; Sparrow's own
+sheets are candidates too, so where the shapes interlock its tighter sheets
+are used. The search adds no Sparrow runs; it is capped at 4000 box checks per
+sheet size (`max_checks`), a few seconds on a large order. The manual tab
+keeps its result until a part or setting changes.
 
 ## Programs: repeatable sheet layouts
 
@@ -196,6 +226,7 @@ ring-shaped part, so keep frames on their own layer.
 | Densities, copper sizes or price range | `core/pricing.py` |
 | How a sheet size is priced | `core/sheet_cost.py` |
 | How repeatable programs are searched | `core/programs.py` |
+| How the fewest-sheets plan is searched | `core/cutting_stock.py` |
 | Which DXF layers are left out, or which drawing marks are recognised | `core/dxf.py` |
 | Sparrow settings or the fixed-sheet search | `core/sparrow.py` |
 | Inputs shared by both tabs | `view/common.py` |

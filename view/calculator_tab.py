@@ -8,7 +8,7 @@ import streamlit as st
 
 from core.pricing import build_lookup, parse_thickness_mm
 from core.rect_nesting import rect_options
-from core.sheet_cost import group_products
+from core.sheet_cost import EdgeGaps, group_products
 from view.common import (
     ADVANCED_LABEL,
     NESTING_LABELS,
@@ -40,9 +40,10 @@ def render(data: dict) -> None:
         thickness_mm = parse_thickness_mm(thickness)
         if thickness_mm is None:
             return None
-        result = rect_options(
-            lookup, material, thickness, thickness_mm, prods,
-            margin_pct=margin_pct, edges=sheet.gaps(), rankavali_mm=sheet.rankavali_mm,
+        gaps = sheet.gaps()
+        result = _options(
+            lookup, material, thickness, thickness_mm, prods, margin_pct,
+            (gaps.top, gaps.bottom, gaps.left, gaps.right), sheet.rankavali_mm,
         )
         ids = "-".join(str(p["id"]) for p in prods)
         return render_group(
@@ -58,6 +59,15 @@ def render(data: dict) -> None:
         prices, _, _ = render_groups(groups, render_one)
     render_pieces_summary(products, prices,
                           weight_label="Kappaleiden yhteispaino (kg)", lead="#")
+
+
+@st.cache_data(max_entries=64, show_spinner="Etsitään vähiten levyjä käyttävää suunnitelmaa…")
+def _options(lookup, material, thickness, thickness_mm, prods, margin_pct, edges, rankavali_mm):
+    """``rect_options``, kept until a part or setting changes: the
+    fewest-sheets search can take a few seconds on a large order."""
+    return rect_options(lookup, material, thickness, thickness_mm, prods,
+                        margin_pct=margin_pct, edges=EdgeGaps(*edges),
+                        rankavali_mm=rankavali_mm)
 
 
 # ── Product cards ─────────────────────────────────────────────────────────────

@@ -74,15 +74,17 @@ def _plan_key(plan: list) -> tuple[int, int]:
     return len(plan), sheets_used(plan)
 
 
-def choose_plans(greedy: list, kit: list | None) -> list[list]:
-    """The plans worth showing: the greedy one and the kit one, unless one is
-    at least as good in both sheets and programs (then only that one)."""
-    if kit is None:
-        return [greedy]
-    g = (sheets_used(greedy), len(greedy))
-    k = (sheets_used(kit), len(kit))
-    if k[0] <= g[0] and k[1] <= g[1]:
-        return [kit]
-    if g[0] <= k[0] and g[1] <= k[1]:
-        return [greedy]
-    return [greedy, kit]
+def choose_plans(greedy: list, *others: list | None) -> list[list]:
+    """The plans worth showing: the greedy one and the others (the kit, the
+    cutting-stock plan), less any another plan is at least as good as in both
+    sheets and programs. On a tie the later plan is kept."""
+    plans = [p for p in (greedy, *others) if p is not None]
+    keys = [(sheets_used(p), len(p)) for p in plans]
+    kept = []
+    for i, (plan, key) in enumerate(zip(plans, keys)):
+        beaten = any(
+            (other[0] <= key[0] and other[1] <= key[1]) and (other != key or j > i)
+            for j, other in enumerate(keys) if j != i)
+        if not beaten:
+            kept.append(plan)
+    return kept

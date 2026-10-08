@@ -172,12 +172,13 @@ def test_rect_quantities_that_split_evenly_become_one_program():
 
 def test_mixed_rect_parts_get_both_plans_with_exact_quantities():
     lookup = {("2", "S235 | 1000x2000"): 900.0}
-    # 20 a + 5 b: greedy needs 4 sheets over 4 layouts; one program of
-    # 4 a + 1 b cut 5 times needs a sheet more
+    # 20 a + 5 b: the fewest sheets are 4 (the greedy packer's 4 layouts, the
+    # cutting-stock plan's 3); one program of 4 a + 1 b cut 5 times needs a
+    # sheet more
     products = [{"id": "a", "width": 500, "height": 500, "qty": 20, "_global_idx": 0},
                 {"id": "b", "width": 1000, "height": 500, "qty": 5, "_global_idx": 1}]
     options = rect_options(lookup, "S235", "2", 2.0, products).options
-    assert [(o.sheets_needed, o.programs) for o in options] == [(4, 4), (5, 1)]
+    assert [(o.sheets_needed, o.programs) for o in options] == [(4, 3), (5, 1)]
     for o in options:
         made = [0, 0]
         for sheet in o.packing.sheets:
