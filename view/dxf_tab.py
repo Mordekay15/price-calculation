@@ -3,6 +3,7 @@ grouped by material + thickness and Sparrow nests the real shapes on every
 priced sheet size, behind a button and a progress bar, cached until an input
 changes."""
 
+import time
 from dataclasses import dataclass, field
 
 import streamlit as st
@@ -160,14 +161,28 @@ def _render_drop_area() -> list[tuple[str, DxfFile]]:
     if _ingest(uploaded):
         st.rerun()  # redraw with the drop area empty
     parts = list(st.session_state.get(_STORE, {}).items())
-    _warn_duplicates(st.session_state.pop(_DUPES, []), parts)
+    _warn_duplicates(parts)
     return parts
 
 
-def _warn_duplicates(names: list[str], parts: list[tuple[str, DxfFile]]) -> None:
-    """Name each dropped file that was already a card, and that card's number.
-    Shown once, on the redraw right after the drop."""
-    if not names:
+def _warn_duplicates(parts: list[tuple[str, DxfFile]]) -> None:
+    """The warning about files dropped again, for ``_DUPE_WARNING_S`` seconds
+    after the drop. It is drawn in a fragment that reruns when the time is up,
+    so it goes away on its own, without a click."""
+    names, until = st.session_state.get(_DUPES, ([], 0.0))
+    left = until - time.time()
+    if not names or left <= 0:
+        st.session_state.pop(_DUPES, None)
+        return
+    st.fragment(_duplicate_warning, run_every=left + 0.1)(names, until, parts)
+
+
+def _duplicate_warning(names: list[str], until: float,
+                       parts: list[tuple[str, DxfFile]]) -> None:
+    """Name each dropped file that was already a card, and that card's number;
+    nothing once the time is up."""
+    if time.time() >= until:
+        st.session_state.pop(_DUPES, None)
         return
     idx = {dxf.name: i for i, (_, dxf) in enumerate(parts)}
     lines = [f"- **{n}** (osa #{idx[n] + 1})" if n in idx else f"- **{n}**"
@@ -412,14 +427,15 @@ _REPORTS = "dxf_part_reports"  # {file_id: DxfReport}
 _CONFIG  = "dxf_part_config"   # {file_id: {"material", "thickness"}}
 _INBOX   = "dxf_inbox"         # bumped to give the uploader a fresh, empty key
 _FILL_ASKED = "dxf_fill_asked" # the "same material for the others?" question is answered
-_DUPES   = "dxf_dupes"         # names of dropped files already on a card, warned once
+_DUPES   = "dxf_dupes"         # (names of dropped files already on a card, warn until)
+_DUPE_WARNING_S = 15           # how long that warning stays
 
 
 def _ingest(uploaded) -> bool:
     """Move newly dropped files into the store, in upload order, and empty the
     drop area (Streamlit can't remove one file from an uploader, only start a
     new one). A file whose name is already on a card is not added again; its
-    name goes to ``_DUPES`` for the warning. True when something was dropped."""
+    name goes to ``_DUPES`` for the warning (a drop without one clears it). True when something was dropped."""
     store: dict = st.session_state.setdefault(_STORE, {})
     dropped = [up for up in uploaded or [] if up.file_id not in store]
     names = {dxf.name for dxf in store.values()}
@@ -432,7 +448,7 @@ def _ingest(uploaded) -> bool:
         names.add(up.name)
     if dropped:
         st.session_state[_INBOX] = st.session_state.get(_INBOX, 0) + 1
-        st.session_state[_DUPES] = dupes
+        st.session_state[_DUPES] = (dupes, time.time() + _DUPE_WARNING_S)
     if len(dropped) > len(dupes):
         st.session_state.pop(_FILL_ASKED, None)  # new empty parts: ask again
     return bool(dropped)
@@ -454,6 +470,7 @@ def _evict_all() -> None:
     for fid in list(st.session_state.get(_STORE, {})):
         _evict(fid)
     st.session_state.pop(_FILL_ASKED, None)
+    st.session_state.pop(_DUPES, None)  # it names cards that are gone
 
 
 def _render_part_config(

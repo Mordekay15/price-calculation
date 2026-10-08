@@ -9,7 +9,7 @@ A Streamlit app that prices sheet-metal parts from supplier price lists.
   files become part cards and the drop area empties; a card's **Poista**
   button removes the part, and **Poista kaikki** above the cards (asks to
   confirm) removes them all. A file whose name is already on a card is not
-  added again: a warning names it and its card (to replace a changed
+  added again: a warning names it and its card for 15 seconds (to replace a changed
   drawing, remove the old card first). When one card gets its material and thickness and
   others are still empty, the card asks whether to give them the same
   (*Kyllä* / *Ei*); the question goes away once answered and comes back

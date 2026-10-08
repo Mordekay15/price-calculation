@@ -148,7 +148,11 @@ def test_a_file_dropped_again_is_warned_about_and_not_added():
     assert at.session_state["shown"] == ["x.dxf", "y.dxf", "z.dxf"]
     assert "y.dxf" in at.warning[0].value and "osa #2" in at.warning[0].value
     at.run()
-    assert not at.warning                                     # shown once
+    assert "y.dxf" in at.warning[0].value                     # still there on a click
+    names, _until = at.session_state["dxf_dupes"]
+    at.session_state["dxf_dupes"] = (names, 0.0)               # 15 s later
+    at.run()
+    assert not at.warning
     at.session_state["remove"] = "a"
     at.session_state["drop"] = [("f", "x.dxf")]               # removed, then dropped again
     at.run()
