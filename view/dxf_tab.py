@@ -260,6 +260,7 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
                       type="primary", on_click=_evict_all)
     products, fill = [], _FillOffer()
     for idx, (fid, part) in enumerate(parts):
+        fill.slot = st.empty()  # above the card: where the question goes if it asks
         product = _render_part_config(fid, part, idx, materials, lookup,
                                       per_part_angles, fill)
         if product is not None:
@@ -648,17 +649,20 @@ def _render_angle_controls(n_parts: int) -> tuple[int, ...] | None:
 @dataclass
 class _FillOffer:
     """The "same material?" question for one run of the cards: the last card
-    so far with a material and thickness, and whether a card has asked."""
+    so far with a material and thickness, whether the question is out, and
+    the place above the card being drawn."""
 
     source: tuple[int, str, str] | None = None   # (card index, material, thickness)
     shown: bool = False
+    slot: object = None                          # st.empty() above the current card
 
 
 def _offer_same_material(fid: str, idx: int, material: str | None,
                          thickness: str | None, fill: _FillOffer) -> None:
-    """Ask once, on the first empty card below a filled one, whether the empty
-    cards get that card's material and thickness. Answered, it isn't asked
-    again until new files are dropped — then on the first new card."""
+    """Ask once, between a filled card and the first empty card below it,
+    whether the empty cards get that card's material and thickness. Answered,
+    it isn't asked again until new files are dropped — then between the last
+    old card and the first new one."""
     if material and thickness:
         fill.source = (idx, material, thickness)
         return
@@ -667,9 +671,9 @@ def _offer_same_material(fid: str, idx: int, material: str | None,
     fill.shown = True
     src_idx, src_mat, src_th = fill.source
     n_empty = len(_empty_cards())
-    with st.container(border=True):
-        whom = (f"tälle ja muille tyhjille osille ({n_empty} kpl)" if n_empty > 1
-                else "tälle osalle")
+    with fill.slot.container(border=True):
+        whom = (f"tyhjille osille ({n_empty} kpl)" if n_empty > 1
+                else f"osalle #{idx + 1}")
         st.markdown(f"Käytetäänkö {whom} samaa materiaalia ja paksuutta kuin "
                     f"osalla #{src_idx + 1}: **{src_mat} · {src_th} mm**?")
         yes, no, _ = st.columns([1, 1, 4])

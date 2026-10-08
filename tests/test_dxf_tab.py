@@ -223,9 +223,21 @@ def fill_questions(at):
     return [b.key for b in at.button if b.key.startswith("dxf_fill_yes_")]
 
 
-def test_the_question_is_asked_once_on_the_first_empty_card():
+def page_order(at) -> list[str]:
+    """The cards (``#1``…) and the question (``?``) from the top of the page."""
+    order = []
+    for m in at.markdown:
+        if "samaa materiaalia" in m.value:
+            order.append("?")
+        elif m.value.startswith("**#"):
+            order.append(m.value[2:].split("**")[0])
+    return order
+
+
+def test_the_question_is_asked_once_between_the_filled_and_the_next_card():
     at = fill_first_card(dxf_page(3))
     assert fill_questions(at) == ["dxf_fill_yes_f1"]
+    assert page_order(at) == ["#1", "?", "#2", "#3"]
     assert any("osille (2 kpl)" in m.value and "osalla #1" in m.value for m in at.markdown)
 
 
@@ -235,7 +247,8 @@ def test_new_files_are_asked_about_on_the_first_new_card_only():
     at.session_state["add"] = 2
     at.run()
     assert at.session_state["materials"][2:] == [(None, None)] * 2
-    assert fill_questions(at) == ["dxf_fill_yes_f2"]          # not on the filled cards
+    assert fill_questions(at) == ["dxf_fill_yes_f2"]          # once, not per filled card
+    assert page_order(at) == ["#1", "#2", "?", "#3", "#4"]    # before the new cards
     at.button(key="dxf_fill_yes_f2").click().run()
     assert at.session_state["materials"] == [("S235", "2")] * 4
     assert not fill_questions(at)

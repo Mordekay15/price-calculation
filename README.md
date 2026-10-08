@@ -11,10 +11,10 @@ A Streamlit app that prices sheet-metal parts from supplier price lists.
   confirm) removes them all. A file whose name is already on a card is not
   added again: a warning names it and its card for 15 seconds (to replace a changed
   drawing, remove the old card first). When a card has its material and thickness and
-  others are still empty, the first empty card below it asks whether the
-  empty cards get the same (*Kyllä* / *Ei*). The question is shown on one
-  card only and goes away once answered; files dropped later are asked
-  about once, on the first new card.
+  others are still empty, a question between it and the first empty card
+  below asks whether the empty cards get the same (*Kyllä* / *Ei*). It is
+  shown once and goes away once answered; files dropped later are asked
+  about once, between the last old card and the first new one.
 
 Both tabs compare every priced sheet size and pick the cheapest. Parts of the
 same material and thickness share sheets, and the app also looks for a plan
