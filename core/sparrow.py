@@ -542,20 +542,22 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
                        failed=0 if ok else 1, reason="" if ok else pack.reason,
                        x0=x0, y0=y0)
 
+    nest = {"run_fn": run_fn, "separation": separation}  # re-nests a holed sheet
     if not pack.ok:
         if mixed is not None:
             mixed.keep(_candidates(parts, [], ew, eh, separation),
-                       lambda plan: _packed(packing(_plan_sheets(parts, plan, ew, eh), ok=True)),
+                       lambda plan: _packed(packing(_plan_sheets(parts, plan, ew, eh, **nest),
+                                                    ok=True)),
                        sw * sh)
         return [packing(pack.sheets)]
     kit = _kit(parts, pack.sheets, ew, eh, run_fn=run_fn, separation=separation)
     pool = _candidates(parts, [*pack.sheets, *(kit or [])], ew, eh, separation)
     if mixed is not None:
-        mixed.keep(pool, lambda plan: _packed(packing(_plan_sheets(parts, plan, ew, eh))),
+        mixed.keep(pool, lambda plan: _packed(packing(_plan_sheets(parts, plan, ew, eh, **nest))),
                    sw * sh)
     fewest = fewest_sheets([p.quantity for p in parts], pool,
                            [net_area(p.outer, p.holes) for p in parts], sw * sh)
-    fewest = fewest and _plan_sheets(parts, fewest, ew, eh)
+    fewest = fewest and _plan_sheets(parts, fewest, ew, eh, **nest)
     return [packing(sheets) for sheets in choose_plans(pack.sheets, fewest, kit)]
 
 
@@ -578,14 +580,26 @@ def _candidates(parts, seeds: list[PackedSheet], sheet_w, sheet_h, separation):
                           index=_by_part)
 
 
-def _plan_sheets(parts, plan, sheet_w, sheet_h) -> list[PackedSheet]:
+def _plan_sheets(parts, plan, sheet_w, sheet_h, *, run_fn=None,
+                 separation=None) -> list[PackedSheet]:
     """A plan's ``[(repeats, counts, layout)]`` as sheets; a box sheet places
-    each real shape in its box."""
+    each real shape in its box.
+
+    A layout holding more pieces than its sheet needs would keep holes where
+    the extra pieces were: with ``run_fn`` its pieces are nested again on
+    their own (one Sparrow run), packed tight; the holed layout stays if that
+    run doesn't fit them all."""
     sheets = []
     for repeats, counts, layout in plan:
         placed = (layout.placements if isinstance(layout, PackedSheet)
                   else [_in_box(parts, b) for b in layout.placements])
-        sheets.append(_sheet(keep_counts(placed, counts, _by_part), sheet_w, sheet_h, repeats))
+        kept = keep_counts(placed, counts, _by_part)
+        if run_fn is not None and len(kept) < len(placed):
+            err, tight, _ = _probe(parts, {i: n for i, n in enumerate(counts) if n},
+                                   sheet_w, sheet_h, run_fn=run_fn, separation=separation)
+            if err is None and len(tight) == len(kept):
+                kept = tight
+        sheets.append(_sheet(kept, sheet_w, sheet_h, repeats))
     return sheets
 
 

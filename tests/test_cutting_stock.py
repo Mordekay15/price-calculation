@@ -176,3 +176,18 @@ def test_sparrow_mixes_sizes_too():
                      for pl in s.placements for _ in range(s.count))
     assert placed == {0: 1, 1: 2}
     assert cheapest_index(result.options) == len(result.options) - 1
+
+
+def test_a_sheet_with_pieces_taken_off_is_nested_again_tight():
+    # The plan needs 2 of a 3-square layout: taking the middle one off would
+    # leave a hole, so the 2 are nested again (squares left to right).
+    from core.sparrow import _plan_sheets
+    from tests.test_sparrow import fake_solver
+
+    parts = [SparrowPart("S", 2, square(100), width_mm=100, height_mm=100)]
+    at = lambda x: Placed(0, "S", 0.0, [(x + px, py) for px, py in square(100)])  # noqa: E731
+    holed = PackedSheet([at(0), at(400), at(200)], 600.0, 100.0, 30000.0)
+    [sheet] = _plan_sheets(parts, [(1, (2,), holed)], 600.0, 100.0, run_fn=fake_solver)
+    assert sorted(min(x for x, _ in pl.outer) for pl in sheet.placements) == [0, 100]
+    [kept] = _plan_sheets(parts, [(1, (2,), holed)], 600.0, 100.0)   # no solver: as it was
+    assert sorted(min(x for x, _ in pl.outer) for pl in kept.placements) == [0, 400]

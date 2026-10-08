@@ -300,7 +300,8 @@ def rect_options(
         # small for some parts: it may still take the others in a mixed plan.
         pool = box_candidates(boxes, quantities, [] if failed else [_turned(s) for s in greedy],
                               eff_w, eff_h, rankavali_mm)
-        mixed.keep(pool, lambda plan: (packing(standing(plan)), area_of(plan)), sw * sh)
+        mixed.keep(pool, lambda plan: (packing(standing(plan, pack_sheets)), area_of(plan)),
+                   sw * sh)
         if failed:
             reason = too_big([(product_label(p), p["width"], p["height"]) for p in products],
                              eff_w, eff_h)
@@ -309,18 +310,27 @@ def rect_options(
                        lambda rest: _all_fit(*pack_sheets(rest)))
         fewest = fewest_sheets(quantities, pool, areas, sw * sh)
         return [packing(sheets) for sheets in
-                choose_plans(greedy, fewest and standing(fewest), kit)]
+                choose_plans(greedy, fewest and standing(fewest, pack_sheets), kit)]
 
     def area_of(plan) -> float:
         return sum(r * n * products[i]["width"] * products[i]["height"]
                    for r, counts, _ in plan for i, n in enumerate(counts))
 
-    def standing(plan) -> list[Sheet]:
+    def standing(plan, pack_sheets) -> list[Sheet]:
         """A cutting-stock plan's lying layouts as standing sheets like the
-        greedy ones (``packing`` turns them)."""
-        return [_turned(replace(layout, placements=keep_counts(layout.placements, counts),
-                                count=r))
-                for r, counts, layout in plan]
+        greedy ones (``packing`` turns them). A layout with more pieces than
+        its sheet needs is packed again (``pack_sheets``, the size's packer)
+        with just those, so it keeps no holes where the extra pieces were."""
+        sheets = []
+        for r, counts, layout in plan:
+            kept = keep_counts(layout.placements, counts)
+            if len(kept) < len(layout.placements):
+                tight = _one_sheet(*pack_sheets(list(counts)))
+                if tight is not None:
+                    sheets.append(replace(tight, count=r))
+                    continue
+            sheets.append(_turned(replace(layout, placements=kept, count=r)))
+        return sheets
 
     return compute_options(
         lookup, material, thickness, thickness_mm,
