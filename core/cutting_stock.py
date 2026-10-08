@@ -21,6 +21,10 @@ with the fewest sheets, then the fewest programs:
 5. The integer program over every sheet found; its plan may make a few pieces
    too many, so they are taken off single copies of a sheet (no extra pieces).
 
+With several sheet sizes, each size's candidates are found on their own and
+``best_plan`` picks over all of them at each sheet's price: a plan may cut
+the big parts from one size and the rest from a smaller one.
+
 Patterns are checked with ``fits(counts)``, which returns a one-sheet layout or
 None; the caller decides how (the box packer here, for both tabs: a part fits
 in its box, so a box layout is valid for the real shape too). ``max_checks``
@@ -53,10 +57,18 @@ def cutting_stock_plan(quantities: list[int], sizes: list[tuple[float, float]],
     may hold more pieces than its ``counts`` (a copy with surplus pieces taken
     off): the caller drops the extra placements.
     """
-    try:
-        import numpy  # noqa: F401
-        from scipy.optimize import linprog  # noqa: F401
-    except ImportError:
+    pool = candidate_sheets(quantities, sizes, fits, seeds, max_checks=max_checks)
+    plan = best_plan(quantities, [(1.0, pool)]) if pool else None
+    return None if plan is None else [(r, p, layout) for _, r, p, layout in plan]
+
+
+def candidate_sheets(quantities: list[int], sizes: list[tuple[float, float]],
+                     fits, seeds: list[tuple[Pattern, object]] = (), *,
+                     max_checks: int = 4000) -> dict[Pattern, object] | None:
+    """Every candidate sheet found for one sheet size, ``{counts: layout}``
+    (steps 1–4); None if there is nothing to plan or no solver. A part that
+    fits no sheet of this size is left out (its quantity counts as 0)."""
+    if not _have_solver():
         return None
     q = [int(x) for x in quantities]
     if sum(q) == 0:
@@ -67,8 +79,9 @@ def cutting_stock_plan(quantities: list[int], sizes: list[tuple[float, float]],
     for i in range(len(q)):
         if q[i]:
             search.fill([i], q)
-    if any(q[i] and not any(p[i] for p in search.pool) for i in range(len(q))):
-        return None  # a part fits on no sheet: the packers report it
+    q = [n if any(p[i] for p in search.pool) else 0 for i, n in enumerate(q)]
+    if sum(q) == 0:
+        return None
 
     search.generate(q)
     for _ in range(_DIVES):
@@ -83,11 +96,36 @@ def cutting_stock_plan(quantities: list[int], sizes: list[tuple[float, float]],
         if not any(rest) or rest == q:
             break
         search.generate(rest)
+    return dict(search.pool)
 
-    plan = _ilp(q, search.patterns())
+
+def best_plan(quantities: list[int], pools: list[tuple[float, dict[Pattern, object]]]
+              ) -> list[tuple[int, int, Pattern, object]] | None:
+    """The cheapest plan over one or more sheet sizes, then the fewest
+    programs: ``[(size_index, repeats, counts, layout)]``. ``pools`` holds
+    each size's ``(price of one sheet, candidate_sheets(...))``; None when the
+    candidates can't cover the order or there is no solver."""
+    if not _have_solver():
+        return None
+    q = [int(x) for x in quantities]
+    patterns = [(t, p) for t, (_, pool) in enumerate(pools) if pool for p in pool]
+    if not patterns:
+        return None
+    plan = _ilp(q, [p for _, p in patterns], [pools[t][0] for t, _ in patterns])
     if plan is None:
         return None
-    return _trim(q, [(r, p, search.pool[p]) for r, p in plan])
+    entries = [(r, patterns[k][1], (patterns[k][0], pools[patterns[k][0]][1][patterns[k][1]]))
+               for k, r in plan]
+    return [(t, r, p, layout) for r, p, (t, layout) in _trim(q, entries)]
+
+
+def _have_solver() -> bool:
+    try:
+        import numpy  # noqa: F401
+        from scipy.optimize import milp  # noqa: F401
+    except ImportError:
+        return False
+    return True
 
 
 class _Search:
@@ -238,15 +276,19 @@ def _duals(q, patterns):
     return None if res is None else [-d for d in res.ineqlin.marginals]
 
 
-def _ilp(q, patterns) -> list[tuple[int, Pattern]] | None:
-    """Repeats per pattern covering ``q``: fewest sheets, then fewest programs."""
+def _ilp(q, patterns, prices=None) -> list[tuple[int, int]] | None:
+    """``[(pattern index, repeats)]`` covering ``q``: the lowest price (each
+    pattern's sheet ``prices``, all 1 when not given: the fewest sheets), then
+    the fewest programs."""
     import numpy as np
     from scipy.optimize import Bounds, LinearConstraint, milp
     m, n = len(patterns), len(q)
     upper = float(sum(q))
     a = _matrix(q, patterns)
-    # x: sheets cut from each pattern; z: the pattern is used (a program).
-    cost = np.concatenate([np.ones(m), np.full(m, 1.0 / (m + 1))])
+    price = np.array(prices if prices is not None else [1.0] * m, dtype=float)
+    # x: sheets cut from each pattern; z: the pattern is used (a program),
+    # worth less than the cheapest sheet over all programs together.
+    cost = np.concatenate([price, np.full(m, price.min() / (m + 1))])
     constraints = [
         LinearConstraint(np.hstack([a, np.zeros((n, m))]), lb=np.array(q, dtype=float)),
         LinearConstraint(np.hstack([np.eye(m), -upper * np.eye(m)]), ub=0),
@@ -257,7 +299,7 @@ def _ilp(q, patterns) -> list[tuple[int, Pattern]] | None:
     if res.x is None:
         return None
     x = [int(round(v)) for v in res.x[:m]]
-    return [(r, p) for r, p in zip(x, patterns) if r > 0]
+    return [(k, r) for k, r in enumerate(x) if r > 0]
 
 
 def _trim(q, plan):
@@ -284,3 +326,33 @@ def _trim(q, plan):
         else:
             merged[p] = [r, p, layout]
     return sorted((tuple(e) for e in merged.values()), key=lambda e: -e[0])
+
+
+class MixedSizes:
+    """Each sheet size's candidate sheets, kept as a packer packs the sizes
+    one by one, for ``compute_options``'s ``mix``: the cheapest plan over all
+    of them, when it really cuts from two sizes or more.
+
+    The packer calls ``keep`` once per size, in order (``None`` for a size
+    with no candidates), with ``to_packing(entries)`` that turns that size's
+    ``[(repeats, counts, layout)]`` into ``(Packing, real part area on its
+    sheets)``.
+    """
+
+    def __init__(self, quantities: list[int]):
+        self.quantities = quantities
+        self._sizes: list[tuple[dict | None, object]] = []
+
+    def keep(self, pool: dict[Pattern, object] | None, to_packing) -> None:
+        self._sizes.append((pool, to_packing))
+
+    def plan(self, sheet_eur: list[float]):
+        """``[(size index, Packing, part area)]``, or None when the cheapest
+        plan uses one size only (that size's own rows already show it)."""
+        pools = [(eur, pool) for eur, (pool, _) in zip(sheet_eur, self._sizes)]
+        plan = best_plan(self.quantities, pools)
+        used = sorted({t for t, *_ in plan or []})
+        if len(used) < 2:
+            return None
+        return [(t, *self._sizes[t][1]([(r, p, layout) for u, r, p, layout in plan if u == t]))
+                for t in used]

@@ -1,11 +1,12 @@
 """Sheet-usage costing, pure (no Streamlit): for one group of pieces that share
 a material and thickness, price every sheet size. The nesting is passed in as
 ``pack(sheet_w, sheet_h) -> list[Packing]`` (``rect_nesting`` or ``sparrow``):
-one Packing per plan worth pricing (see ``core.programs``)."""
+one Packing per plan worth pricing (see ``core.programs``). A packer may also
+pass ``mix``: a plan cut from several sheet sizes (see ``compute_options``)."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from core.pricing import get_sizes_for_material, parse_thickness_mm, weight_kg
 
@@ -69,6 +70,10 @@ class SheetOption:
     utilization: float = 0.0
     failed: int = 0
     reason: str = ""
+    # A plan cut from several sizes: one priced option per size, in order;
+    # this option holds their totals (``sw``, ``sh`` and ``packing`` are the
+    # first size's).
+    mix: list[SheetOption] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -76,10 +81,14 @@ class SheetOption:
 
     @property
     def sheet_kg(self) -> float:
+        if self.mix:
+            return sum(o.sheet_kg for o in self.mix)
         return self.sheet_weight_kg * self.sheets_needed
 
     @property
     def programs(self) -> int:
+        if self.mix:
+            return sum(o.programs for o in self.mix)
         return self.packing.programs
 
 
@@ -166,6 +175,7 @@ def compute_options(
     pack,
     margin_pct: float = 0.0,
     on_progress=None,
+    mix=None,
 ) -> GroupCost | None:
     """Price every sheet size of one material + thickness; None when there are
     no pieces or no priced size.
@@ -176,6 +186,12 @@ def compute_options(
     ``on_progress``, if given, is called as ``on_progress("size", index=i,
     count=n, w=sw, h=sh)`` before each sheet size is packed. A size packed
     with more than one plan gives one option per plan.
+
+    ``mix(prices)``, if given, is called once every size is packed, with the
+    price of one sheet of each size (€, margin included; in the order the sizes
+    were packed). It returns a plan cut from several sizes as ``[(size index,
+    Packing, real part area on its sheets)]``, or None; that plan is one more
+    option, last.
     """
     candidates: list[tuple[int, int, float]] = []
     for size_label in get_sizes_for_material(lookup, material):
@@ -188,25 +204,57 @@ def compute_options(
         return None
 
     pieces_kg = weight_kg(part_area_mm2, thickness_mm, material)
+
+    def priced(sw, sh, price_per_tonne, packing, area=part_area_mm2) -> SheetOption:
+        option = SheetOption(sw, sh, price_per_tonne,
+                             price_per_tonne * (1 + margin_pct / 100), packing,
+                             failed=packing.failed, reason=packing.reason)
+        if option.ok:
+            option.sheet_weight_kg = weight_kg(sw * sh, thickness_mm, material)
+            option.sheets_needed = packing.sheets_needed
+            option.utilization = utilization(area, sw, sh, packing.sheets_needed)
+            option.total_eur = option.adjusted_ppt * (option.sheet_kg / 1000)
+            # Effective rate against piece weight, so the pieces summary adds
+            # up to the sheet total.
+            option.bill_rate_ppt = (option.adjusted_ppt * (option.sheet_kg / pieces_kg)
+                                    if pieces_kg else option.adjusted_ppt)
+        return option
+
     options = []
     for index, (sw, sh, price_per_tonne) in enumerate(candidates):
         if on_progress is not None:
             on_progress("size", index=index, count=len(candidates), w=sw, h=sh)
         for packing in pack(sw, sh):
-            option = SheetOption(sw, sh, price_per_tonne,
-                                 price_per_tonne * (1 + margin_pct / 100), packing,
-                                 failed=packing.failed, reason=packing.reason)
-            if option.ok:
-                option.sheet_weight_kg = weight_kg(sw * sh, thickness_mm, material)
-                option.sheets_needed = packing.sheets_needed
-                option.utilization = utilization(part_area_mm2, sw, sh, packing.sheets_needed)
-                option.total_eur = option.adjusted_ppt * (option.sheet_kg / 1000)
-                # Effective rate against piece weight, so the pieces summary adds
-                # up to the sheet total.
-                option.bill_rate_ppt = (option.adjusted_ppt * (option.sheet_kg / pieces_kg)
-                                        if pieces_kg else option.adjusted_ppt)
-            options.append(option)
+            options.append(priced(sw, sh, price_per_tonne, packing))
+
+    if mix is not None:
+        sheet_eur = [weight_kg(sw * sh, thickness_mm, material) * ppt * (1 + margin_pct / 100)
+                     / 1000 for sw, sh, ppt in candidates]
+        plan = mix(sheet_eur)
+        if plan:
+            parts = [priced(*candidates[i], packing, area) for i, packing, area in plan]
+            options.append(_mixed(parts, part_area_mm2, pieces_kg))
     return GroupCost(options, n_pieces, pieces_kg)
+
+
+def _mixed(parts: list[SheetOption], part_area_mm2: float, pieces_kg: float) -> SheetOption:
+    """One option for a plan cut from several sizes: their totals; its €/tn are
+    the averages over the sheet weight bought."""
+    kg = sum(o.sheet_kg for o in parts)
+    total = sum(o.total_eur for o in parts)
+    first = parts[0]
+    option = SheetOption(
+        first.sw, first.sh,
+        sum(o.base_ppt * o.sheet_kg for o in parts) / kg if kg else first.base_ppt,
+        total * 1000 / kg if kg else first.adjusted_ppt,
+        first.packing, mix=parts,
+    )
+    option.sheets_needed = sum(o.sheets_needed for o in parts)
+    option.total_eur = total
+    area = sum(o.sw * o.sh * o.sheets_needed for o in parts)
+    option.utilization = part_area_mm2 / area if area else 0.0
+    option.bill_rate_ppt = total * 1000 / pieces_kg if pieces_kg else option.adjusted_ppt
+    return option
 
 
 def cheapest_index(options: list[SheetOption]) -> int | None:

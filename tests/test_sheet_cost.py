@@ -57,7 +57,12 @@ def test_rect_options_prices_every_sheet_size():
     assert math.isclose(small.utilization, 0.655)
     assert result.n_pieces == 20
     assert math.isclose(result.pieces_kg, (400 * 300 * 17 + 900 * 700 * 3) * 2 * 8e-6)
-    assert cheapest_index(result.options) == 0
+    # of the single sizes, the small one is cheapest; one small sheet and one
+    # 1250 × 2500 together are cheaper still (see test_cutting_stock)
+    *single, mixed = result.options
+    assert cheapest_index(single) == 0
+    assert [(o.sw, o.sheets_needed) for o in mixed.mix] == [(1000, 1), (1250, 1)]
+    assert mixed.total_eur < small.total_eur and cheapest_index(result.options) == 3
 
 
 def test_margin_raises_the_price_per_tonne():

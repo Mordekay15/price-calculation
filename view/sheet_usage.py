@@ -1,8 +1,9 @@
 """The "sheet usage" section of both tabs: for one material + thickness group,
 the chosen size's layout (drawn by the caller, with the parts' names and
 colours) and its metrics first, then the priced sheet sizes to pick from and
-the step-by-step price breakdown. A size can have two rows: the fewest sheets
-and the fewest programs (see ``core.programs``)."""
+the step-by-step price breakdown. A size can have several rows (sheet by
+sheet, the fewest sheets, the fewest programs: see ``core.programs``), and the
+last row may cut the parts from several sizes (``SheetOption.mix``)."""
 
 import pandas as pd
 import streamlit as st
@@ -116,7 +117,17 @@ _PROGRAMS_HELP = (
 
 
 def _size_label(o: SheetOption) -> str:
+    if o.mix:
+        return " + ".join(f"{fmt_m(m.sw)} × {fmt_m(m.sh)} m ({m.sheets_needed})" for m in o.mix)
     return f"{fmt_m(o.sw)} × {fmt_m(o.sh)} m"
+
+
+def _price_label(o: SheetOption) -> str:
+    """€/tn; a plan cut from sizes priced differently shows their average
+    over the sheet weight bought."""
+    if o.mix and len({m.adjusted_ppt for m in o.mix}) > 1:
+        return f"ka. {o.adjusted_ppt:,.2f}"
+    return f"{o.adjusted_ppt:,.2f}"
 
 
 def _table_rows(options: list[SheetOption], n_pieces: int, cheapest_idx: int | None) -> list[dict]:
@@ -125,7 +136,7 @@ def _table_rows(options: list[SheetOption], n_pieces: int, cheapest_idx: int | N
     for i, o in enumerate(options):
         row = {
             "Levykoko":          _size_label(o),
-            "Hinta (€/tn)":      f"{o.adjusted_ppt:,.2f}",
+            "Hinta (€/tn)":      _price_label(o),
             # None, not "": a number column with a text cell can't be sent
             # to the browser as Arrow and Streamlit logs a traceback.
             "Tarvittavat levyt": None,
@@ -184,6 +195,9 @@ def _render_breakdown(
     o: SheetOption,
 ) -> None:
     """Show a step-by-step table of how the chosen sheet's price was calculated."""
+    if o.mix:
+        _render_mixed_breakdown(material, thickness, margin_pct, result, o)
+        return
     n_pieces = result.n_pieces
     pieces_kg = result.pieces_kg
     cost_per_pc = round(o.total_eur / n_pieces, 2)
@@ -233,4 +247,35 @@ def _render_breakdown(
                 f"tämän takaisin kappaleille painon mukaan käyttäen efektiivistä "
                 f"hintaa {o.adjusted_ppt:,.2f} × ({o.sheet_kg:,.2f} / {pieces_kg:,.2f}) "
                 f"= **{o.bill_rate_ppt:,.2f} €/tn**."
+            )
+
+
+def _render_mixed_breakdown(material: str, thickness: str, margin_pct: float,
+                            result: GroupCost, o: SheetOption) -> None:
+    """A plan cut from several sizes: each size's sheets and price, then the
+    totals."""
+    margin_factor = 1 + margin_pct / 100
+    rows = [{
+        "Levykoko": _size_label(m),
+        "Levyjä": m.sheets_needed,
+        "Ohjelmia": m.programs,
+        "Hinta (€/tn)": f"{m.base_ppt:,.2f} × {margin_factor:.4f} = {m.adjusted_ppt:,.2f}",
+        "Levyn kg": f"{m.sheet_weight_kg:,.2f}",
+        "Levyjen kg": f"{m.sheet_kg:,.2f}",
+        "Yhteensä €": f"{m.total_eur:,.2f}",
+    } for m in o.mix]
+    rows.append({
+        "Levykoko": "Yhteensä", "Levyjä": o.sheets_needed, "Ohjelmia": o.programs,
+        "Hinta (€/tn)": "", "Levyn kg": "", "Levyjen kg": f"{o.sheet_kg:,.2f}",
+        "Yhteensä €": f"{o.total_eur:,.2f}",
+    })
+    with st.expander("Näytä laskennan erittely"):
+        st.caption(f"{material}, {thickness} mm — osat leikataan usealta levykoolta.")
+        st.dataframe(rows, width="stretch", hide_index=True)
+        if result.pieces_kg:
+            st.caption(
+                f"{o.sheet_kg:,.2f} kg levyä laskutetaan {result.pieces_kg:,.2f} kg "
+                f"todellisille kappaleille: {o.total_eur:,.2f} € / {result.pieces_kg:,.2f} kg "
+                f"= **{o.bill_rate_ppt:,.2f} €/tn**, {o.total_eur / result.n_pieces:,.2f} €/kpl "
+                f"keskimäärin."
             )

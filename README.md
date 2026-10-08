@@ -16,8 +16,9 @@ A Streamlit app that prices sheet-metal parts from supplier price lists.
   shown once and goes away once answered; files dropped later are asked
   about once, between the last old card and the first new one.
 
-Both tabs compare every priced sheet size and pick the cheapest. Parts of the
-same material and thickness share sheets. The app looks for the plan that uses
+Both tabs compare every priced sheet size and pick the cheapest, including a
+plan that cuts the parts from several sizes. Parts of the same material and
+thickness share sheets. The app looks for the plan that uses
 the fewest sheets ([Fewest sheets](#fewest-sheets-the-cutting-stock-plan)) and
 for a plan production can repeat: one sheet program cut many times (see
 [Programs](#programs-repeatable-sheet-layouts)).
@@ -143,6 +144,16 @@ yellow (over a dark blue) ×10, and the 5 violets left two to a sheet.
 2. **An integer program** (`scipy.optimize.milp`) picks how many times to cut
    each candidate: the fewest sheets, then the fewest programs. Pieces it
    makes too many come off single copies; no extra pieces are made.
+
+**Several sheet sizes.** Each size's candidate sheets are kept, also for a
+size too small for some parts, and one more integer program picks over all of
+them at each sheet's price (weight × €/tn with the margin): the big parts on a
+big sheet, the rest on a smaller one where that costs less. It is shown as one
+more row (e.g. *1.0 × 2.0 m (3) + 1.25 × 2.5 m (7) + 1.5 × 3.0 m (5)*) when it
+uses two sizes or more; the layouts are drawn per size, to one scale, and the
+price breakdown lists each size. In the example above with 1000 × 2000,
+1250 × 2500 and 1500 × 3000 at one price per tonne, the best single size
+costs 894 € and the mixed plan 834 €.
 
 Candidate sheets are checked with the box packer (instant). For DXF parts each
 real shape is placed in its box, which is always a valid layout; Sparrow's own

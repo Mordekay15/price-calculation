@@ -15,8 +15,9 @@ from pathlib import Path
 
 from core.dxf import DxfReport
 from core.geometry import bbox, bbox_wh, net_area, rotate_translate, signed_area
+from core.cutting_stock import MixedSizes
 from core.programs import choose_plans, kit_plan
-from core.rect_nesting import box_plan, keep_counts
+from core.rect_nesting import box_candidates, fewest_sheets, keep_counts
 from core.sheet_cost import (
     EdgeGaps,
     GroupCost,
@@ -496,33 +497,36 @@ def sparrow_options(
 
     ``on_progress``, if given, receives ``("size", index=, count=, w=, h=)``
     before each sheet size and ``("sheet", w=, h=, placed=, total=)`` each time
-    a sheet layout is settled.
+    a sheet layout is settled. One more option may cut the parts from several
+    sizes (see ``core.cutting_stock.MixedSizes``).
     """
     n_pieces = sum(p.quantity for p in parts)
     part_area_mm2 = sum(net_area(p.outer, p.holes) * p.quantity for p in parts)
     separation = float(rankavali_mm) if rankavali_mm else None
+    mixed = MixedSizes([p.quantity for p in parts])
 
     def pack_fn(sw: int, sh: int) -> list[Packing]:
         return _pack_on_short_side(
             parts, sw, sh, edges,
-            run_fn=run_fn, separation=separation, on_progress=on_progress,
+            run_fn=run_fn, separation=separation, on_progress=on_progress, mixed=mixed,
         )
 
     return compute_options(
         lookup, material, thickness, thickness_mm,
         n_pieces=n_pieces, part_area_mm2=part_area_mm2, pack=pack_fn,
-        margin_pct=margin_pct, on_progress=on_progress,
+        margin_pct=margin_pct, on_progress=on_progress, mix=mixed.plan,
     )
 
 
 def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
-                        on_progress=None) -> list[Packing]:
+                        on_progress=None, mixed: MixedSizes | None = None) -> list[Packing]:
     """Pack the sheet one way only: Sparrow's fixed strip height is the sheet's
     short side and the strip runs along the long side (e.g. 1000 high, up to
     2000 long on a 1000 × 2000 sheet), both less the edge gaps.
 
     Returns the fewest-sheets packing and, when it is worth showing, the
-    repeatable-program one (see ``core.programs``)."""
+    repeatable-program one (see ``core.programs``). The size's candidate
+    sheets go to ``mixed``, also when some parts don't fit it."""
     long_side, short_side = max(sw, sh), min(sw, sh)
     x0, y0, ew, eh = usable_area(sw, sh, edges)
     on_sheet = None
@@ -532,37 +536,62 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
     pack = greedy_fixed_sheets(parts, ew, eh, run_fn=run_fn, separation=separation,
                                on_sheet=on_sheet)
 
-    def packing(sheets: list[PackedSheet]) -> Packing:
+    def packing(sheets: list[PackedSheet], ok: bool = pack.ok) -> Packing:
         return Packing(sheets=sheets, sheets_needed=sum(s.count for s in sheets),
                        eff_w=ew, eff_h=eh, draw_w=long_side, draw_h=short_side,
-                       failed=0 if pack.ok else 1, reason=pack.reason, x0=x0, y0=y0)
+                       failed=0 if ok else 1, reason="" if ok else pack.reason,
+                       x0=x0, y0=y0)
 
     if not pack.ok:
+        if mixed is not None:
+            mixed.keep(_candidates(parts, [], ew, eh, separation),
+                       lambda plan: _packed(packing(_plan_sheets(parts, plan, ew, eh), ok=True)))
         return [packing(pack.sheets)]
     kit = _kit(parts, pack.sheets, ew, eh, run_fn=run_fn, separation=separation)
-    fewest = _fewest(parts, [*pack.sheets, *(kit or [])], ew, eh, separation)
+    pool = _candidates(parts, [*pack.sheets, *(kit or [])], ew, eh, separation)
+    if mixed is not None:
+        mixed.keep(pool, lambda plan: _packed(packing(_plan_sheets(parts, plan, ew, eh))))
+    fewest = fewest_sheets([p.quantity for p in parts], pool)
+    fewest = fewest and _plan_sheets(parts, fewest, ew, eh)
     return [packing(sheets) for sheets in choose_plans(pack.sheets, fewest, kit)]
 
 
-def _fewest(parts, seeds: list[PackedSheet], sheet_w, sheet_h,
-            separation) -> list[PackedSheet] | None:
-    """The cutting-stock plan (``core.cutting_stock``): Sparrow's own sheets
-    (tighter than boxes: the shapes interlock) and sheets the box packer finds,
-    combined to use the fewest sheets. A box sheet places each real shape in
-    its box. Needs no Sparrow run."""
-    by_part = lambda pl: pl.part_index  # noqa: E731
-    plan = box_plan([p.sheet_size() for p in parts], [p.quantity for p in parts], seeds,
-                    sheet_w, sheet_h, separation or 0.0,
-                    fixed=frozenset(i for i, p in enumerate(parts) if not p.turns),
-                    index=by_part)
-    if plan is None:
-        return None
+def _packed(packing: Packing) -> tuple[Packing, float]:
+    """A packing and the real part area on its sheets."""
+    return packing, sum(s.used_area * s.count for s in packing.sheets)
+
+
+def _by_part(pl) -> int:
+    return pl.part_index
+
+
+def _candidates(parts, seeds: list[PackedSheet], sheet_w, sheet_h, separation):
+    """Candidate sheets for the cutting-stock plan (``core.cutting_stock``):
+    Sparrow's own sheets (tighter than boxes: the shapes interlock) and the
+    sheets the box packer finds. Needs no Sparrow run."""
+    return box_candidates([p.sheet_size() for p in parts], [p.quantity for p in parts], seeds,
+                          sheet_w, sheet_h, separation or 0.0,
+                          fixed=frozenset(i for i, p in enumerate(parts) if not p.turns),
+                          index=_by_part)
+
+
+def _plan_sheets(parts, plan, sheet_w, sheet_h) -> list[PackedSheet]:
+    """A plan's ``[(repeats, counts, layout)]`` as sheets; a box sheet places
+    each real shape in its box."""
     sheets = []
     for repeats, counts, layout in plan:
         placed = (layout.placements if isinstance(layout, PackedSheet)
                   else [_in_box(parts, b) for b in layout.placements])
-        sheets.append(_sheet(keep_counts(placed, counts, by_part), sheet_w, sheet_h, repeats))
+        sheets.append(_sheet(keep_counts(placed, counts, _by_part), sheet_w, sheet_h, repeats))
     return sheets
+
+
+def _fewest(parts, seeds: list[PackedSheet], sheet_w, sheet_h,
+            separation) -> list[PackedSheet] | None:
+    """The plan with the fewest sheets of this size (``core.cutting_stock``)."""
+    plan = fewest_sheets([p.quantity for p in parts],
+                         _candidates(parts, seeds, sheet_w, sheet_h, separation))
+    return plan and _plan_sheets(parts, plan, sheet_w, sheet_h)
 
 
 def _in_box(parts, box) -> Placed:
