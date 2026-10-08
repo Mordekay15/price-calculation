@@ -150,6 +150,18 @@ yellow (over a dark blue) ×10, and the 5 violets left two to a sheet.
    (one Sparrow run, or the box packer in the manual tab), so it keeps no
    holes where the extra pieces were.
 
+**Same parts first** (*Levysuunnitelma* in *Lisäasetukset*, the default).
+Each part first gets full sheets of its own — as many as one sheet holds,
+cut as many times as the order fills them; with several sizes, on the size
+cheapest per piece — and only the pieces left over are mixed, on as few cheap
+sheets as possible. A part with less than one full sheet goes with the
+leftovers. Each size then shows this plan only (the plans that mix everything
+would win on price), and the mixed-size row is planned the same way. It costs
+more steel than the cheapest plan: 10 each of the seven plates, 1000 × 2000 /
+1250 × 2500 / 1500 × 3000, 806 € against 758 €; on 1250 × 2500 alone 1035 €
+against 810 €, as a sheet of only 704 mm plates is 40 % full there. *Halvin*
+(cheapest) plans as described above.
+
 **Good programs are kept.** A candidate sheet at least 80 % full (real part
 area over the sheet bought, as *käyttöaste* shows it) whose repeats use up its
 parts exactly — e.g. two light blue plates per 1 × 2 m sheet ×5 for an order of

@@ -117,6 +117,7 @@ def _edges_label(edges: tuple) -> str:
 
 # How each nesting setting reads in a one-line summary, e.g. "rankaväli 2 mm".
 NESTING_LABELS = {
+    "same_parts_first": lambda v: "suunnitelma: " + ("samat osat ensin" if v else "halvin"),
     "rankavali_mm": lambda v: f"rankaväli {v} mm",
     "edges_mm":     _edges_label,
 }
@@ -130,6 +131,9 @@ class SheetSettings:
 
     rankavali_mm: int = 0
     edges_mm: tuple[int, int, int, int] = (0, 0, 0, 0)
+    # Plan each part's full sheets on their own first, the leftovers mixed;
+    # else the cheapest plan (see core.cutting_stock.same_parts_plan).
+    same_parts_first: bool = True
 
     def gaps(self) -> EdgeGaps:
         """The unusable strip along each edge, as the packers take it."""
@@ -137,7 +141,8 @@ class SheetSettings:
 
     def values(self) -> dict:
         """The settings keyed as in ``NESTING_LABELS``."""
-        return {"rankavali_mm": self.rankavali_mm, "edges_mm": self.edges_mm}
+        return {"same_parts_first": self.same_parts_first,
+                "rankavali_mm": self.rankavali_mm, "edges_mm": self.edges_mm}
 
 
 def settings_summary(values: dict, labels: dict) -> str:
@@ -145,6 +150,12 @@ def settings_summary(values: dict, labels: dict) -> str:
     return " · ".join(label(values[k]) for k, label in labels.items())
 
 
+_PLAN_HELP = (
+    "Samat osat ensin: kustakin osasta täysiä levyjä, joilla on vain sitä "
+    "osaa, niin monta kuin määrä täyttää; vain ylijäävät kappaleet "
+    "sekoitetaan samoille levyille. Halvin: levyt yhdistellään niin, että "
+    "materiaali maksaa vähiten."
+)
 _NEST_HELP = (
     "Yhdistettynä saman materiaalin ja paksuuden tuotteet sijoitellaan "
     "samoille levyille (sekanestaus). Erikseen-vaihtoehdolla kullekin "
@@ -193,9 +204,14 @@ def render_main_settings(
 
 
 def render_nesting_inputs(*, key_prefix: str = "calc") -> SheetSettings:
-    """Rankaväli and the four edge gaps, with a small sheet diagram that
-    shows which edge is which. The caller puts them in its
+    """The sheet plan, rankaväli and the four edge gaps, with a small sheet
+    diagram that shows which edge is which. The caller puts them in its
     ``ADVANCED_LABEL`` expander."""
+    same_parts_first = st.radio(
+        "Levysuunnitelma", options=(True, False), horizontal=True,
+        format_func=lambda v: "Samat osat ensin" if v else "Halvin",
+        key=f"{key_prefix}_same_parts_first", help=_PLAN_HELP,
+    )
     rankavali_mm = int(st.columns(2)[0].number_input(
         "Rankaväli (mm)", min_value=0, value=0, step=1,
         key=f"{key_prefix}_rankavali_mm", help=_RANKAVALI_HELP,
@@ -211,7 +227,7 @@ def render_nesting_inputs(*, key_prefix: str = "calc") -> SheetSettings:
         for col, (name, label, help_text) in zip((*rows[0], *rows[1]), _EDGES)
     )
     diagram.markdown(edge_gaps_svg(edges), unsafe_allow_html=True)
-    return SheetSettings(rankavali_mm, edges)
+    return SheetSettings(rankavali_mm, edges, same_parts_first)
 
 
 # ── The per-group loop ────────────────────────────────────────────────────────

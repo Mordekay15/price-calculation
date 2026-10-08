@@ -492,23 +492,28 @@ def sparrow_options(
     edges: EdgeGaps = EdgeGaps(),
     rankavali_mm: int = 0,
     on_progress=None,
+    same_parts_first: bool = False,
 ) -> GroupCost | None:
     """``core.sheet_cost.compute_options`` with Sparrow shape nesting.
 
     ``on_progress``, if given, receives ``("size", index=, count=, w=, h=)``
     before each sheet size and ``("sheet", w=, h=, placed=, total=)`` each time
     a sheet layout is settled. One more option may cut the parts from several
-    sizes (see ``core.cutting_stock.MixedSizes``).
+    sizes (see ``core.cutting_stock.MixedSizes``). With ``same_parts_first``
+    each size has one plan, which puts each part's full sheets on their own
+    first and mixes only the leftovers, and so does the mixed-size option.
     """
     n_pieces = sum(p.quantity for p in parts)
     part_area_mm2 = sum(net_area(p.outer, p.holes) * p.quantity for p in parts)
     separation = float(rankavali_mm) if rankavali_mm else None
-    mixed = MixedSizes([p.quantity for p in parts], [net_area(p.outer, p.holes) for p in parts])
+    mixed = MixedSizes([p.quantity for p in parts], [net_area(p.outer, p.holes) for p in parts],
+                       same_parts_first=same_parts_first)
 
     def pack_fn(sw: int, sh: int) -> list[Packing]:
         return _pack_on_short_side(
             parts, sw, sh, edges,
             run_fn=run_fn, separation=separation, on_progress=on_progress, mixed=mixed,
+            same_parts_first=same_parts_first,
         )
 
     return compute_options(
@@ -519,7 +524,8 @@ def sparrow_options(
 
 
 def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
-                        on_progress=None, mixed: MixedSizes | None = None) -> list[Packing]:
+                        on_progress=None, mixed: MixedSizes | None = None,
+                        same_parts_first: bool = False) -> list[Packing]:
     """Pack the sheet one way only: Sparrow's fixed strip height is the sheet's
     short side and the strip runs along the long side (e.g. 1000 high, up to
     2000 long on a 1000 × 2000 sheet), both less the edge gaps.
@@ -550,7 +556,8 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
                                                     ok=True)),
                        sw * sh)
         return [packing(pack.sheets)]
-    kit = _kit(parts, pack.sheets, ew, eh, run_fn=run_fn, separation=separation)
+    kit = (None if same_parts_first
+           else _kit(parts, pack.sheets, ew, eh, run_fn=run_fn, separation=separation))
     pool = _candidates(parts, [*pack.sheets, *(kit or [])], ew, eh, separation)
     if pool is not None:
         pool.update(_near_miss_sheets(parts, ew, eh, **nest))
@@ -558,8 +565,12 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
         mixed.keep(pool, lambda plan: _packed(packing(_plan_sheets(parts, plan, ew, eh, **nest))),
                    sw * sh)
     fewest = fewest_sheets([p.quantity for p in parts], pool,
-                           [net_area(p.outer, p.holes) for p in parts], sw * sh)
+                           [net_area(p.outer, p.holes) for p in parts], sw * sh,
+                           same_parts_first=same_parts_first)
     fewest = fewest and _plan_sheets(parts, fewest, ew, eh, **nest)
+    if same_parts_first:
+        # The plans that mix everything would win on price: show only this.
+        return [packing(fewest or pack.sheets)]
     return [packing(sheets) for sheets in choose_plans(pack.sheets, fewest, kit)]
 
 

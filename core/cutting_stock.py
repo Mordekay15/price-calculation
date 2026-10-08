@@ -77,7 +77,10 @@ def candidate_sheets(quantities: list[int], sizes: list[tuple[float, float]],
                      max_checks: int = 4000) -> dict[Pattern, object] | None:
     """Every candidate sheet found for one sheet size, ``{counts: layout}``
     (steps 1–4); None if there is nothing to plan or no solver. A part that
-    fits no sheet of this size is left out (its quantity counts as 0)."""
+    fits no sheet of this size is left out (its quantity counts as 0).
+
+    Each part's full sheet on its own — as many as one sheet holds, the order
+    aside — is among them, for ``same_parts_plan``."""
     if not have_solver():
         return None
     q = [int(x) for x in quantities]
@@ -92,6 +95,7 @@ def candidate_sheets(quantities: list[int], sizes: list[tuple[float, float]],
     q = [n if any(p[i] for p in search.pool) else 0 for i, n in enumerate(q)]
     if sum(q) == 0:
         return None
+    full = [search.full_sheet(i) for i in range(len(q)) if q[i]]
 
     search.generate(q)
     for _ in range(_DIVES):
@@ -106,6 +110,9 @@ def candidate_sheets(quantities: list[int], sizes: list[tuple[float, float]],
         if not any(rest) or rest == q:
             break
         search.generate(rest)
+    for counts, layout in full:
+        if layout is not None:
+            search.add(counts, layout)
     return dict(search.pool)
 
 
@@ -135,6 +142,40 @@ def best_plan(quantities: list[int], pools: list[tuple], *,
         if trial is not None and trial[0] <= cheapest[0] * (1 + max_extra) + _EPS:
             best, kept = trial, kept + [entry]
     return best[1]
+
+
+def same_parts_plan(quantities: list[int], pools: list[tuple]
+                    ) -> list[tuple[int, int, Pattern, object]] | None:
+    """Same parts together first, the leftovers mixed: each part's full sheet
+    on its own (the most one sheet holds; with several sizes, the one cheapest
+    per piece), cut as many times as the order fills it; then the pieces left
+    over of every part on as few, cheap sheets as possible (``best_plan``).
+    A part with less than one full sheet goes with the leftovers. Same plan
+    entries as ``best_plan``; None when the candidates can't cover the order.
+    """
+    if not have_solver():
+        return None
+    q = [int(x) for x in quantities]
+    kept, rest = [], list(q)
+    for i in range(len(q)):
+        best = None
+        for t, (price, pool, *_) in enumerate(pools):
+            alone = [(p[i], p, layout) for p, layout in (pool or {}).items()
+                     if p[i] and not any(c for j, c in enumerate(p) if j != i)]
+            if not alone:
+                continue
+            k, p, layout = max(alone, key=lambda a: a[0])    # this size's full sheet
+            if k <= q[i] and (best is None or (price / k, -k) < best[0]):
+                best = ((price / k, -k), t, p, layout)
+        if best is not None:
+            _, t, p, layout = best
+            r = q[i] // p[i]
+            kept.append((t, r, p, layout))
+            rest[i] -= r * p[i]
+    if not any(rest):
+        return kept
+    leftovers = best_plan(rest, pools)
+    return None if leftovers is None else kept + leftovers
 
 
 def _plan_rest(q, pools, kept):
@@ -257,6 +298,22 @@ class _Search:
         p = tuple(counts)
         self.add(p, layout)
         return p
+
+    def full_sheet(self, i: int) -> tuple[Pattern, object]:
+        """The most of part i one sheet holds on its own, the order aside:
+        ``(counts, layout)`` (layout None if it fits no sheet)."""
+        def alone(k):
+            return tuple(k if j == i else 0 for j in range(self.n))
+        if self.check(alone(1)) is None:
+            return alone(0), None
+        lo = 1
+        while lo < 4096 and self.check(alone(2 * lo)) is not None:
+            lo *= 2
+        hi = 2 * lo                     # lo fits, hi doesn't (or out of checks)
+        while hi - lo > 1:
+            mid = (lo + hi) // 2
+            lo, hi = (mid, hi) if self.check(alone(mid)) is not None else (lo, mid)
+        return alone(lo), self.check(alone(lo))
 
     def by_size(self) -> list[int]:
         return sorted(range(self.n), key=lambda i: -max(self.sizes[i]))
@@ -460,9 +517,11 @@ class MixedSizes:
     sheets)``.
     """
 
-    def __init__(self, quantities: list[int], areas: list[float] | None = None):
+    def __init__(self, quantities: list[int], areas: list[float] | None = None, *,
+                 same_parts_first: bool = False):
         self.quantities = quantities
         self.areas = areas
+        self.same_parts_first = same_parts_first
         self._sizes: list[tuple[dict | None, object, float | None]] = []
 
     def keep(self, pool: dict[Pattern, object] | None, to_packing,
@@ -473,7 +532,8 @@ class MixedSizes:
         """``[(size index, Packing, part area)]``, or None when the cheapest
         plan uses one size only (that size's own rows already show it)."""
         pools = [(eur, pool, area) for eur, (pool, _, area) in zip(sheet_eur, self._sizes)]
-        plan = best_plan(self.quantities, pools, areas=self.areas)
+        plan = (same_parts_plan(self.quantities, pools) if self.same_parts_first
+                else best_plan(self.quantities, pools, areas=self.areas))
         used = sorted({t for t, *_ in plan or []})
         if len(used) < 2:
             return None

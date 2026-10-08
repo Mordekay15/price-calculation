@@ -87,7 +87,7 @@ def _nesting_diff(saved: dict, current: dict) -> str:
     """Each setting that differs, as e.g. ``hakuaika 4 s (nyt 10 s)``."""
     return ", ".join(
         f"{label(saved[k])} (nyt {label(current[k]).split(' ', 1)[1]})"
-        for k, label in _NESTING_LABELS.items() if saved[k] != current[k]
+        for k, label in _NESTING_LABELS.items() if k in saved and saved[k] != current[k]
     )
 
 
@@ -336,6 +336,7 @@ def _nester(lookup: dict, settings: _Settings, exe):
             lookup, material, thickness, thickness_mm, parts,
             run_fn=run_fn, margin_pct=settings.margin_pct,
             edges=settings.sheet.gaps(), rankavali_mm=settings.sheet.rankavali_mm,
+            same_parts_first=settings.sheet.same_parts_first,
         )
         return {"result": result, "parts": parts, "areas": areas,
                 "thickness_mm": thickness_mm, "nesting": settings.nesting()}

@@ -5,7 +5,7 @@ Identical sheets are merged into one layout with a ``count``, as Sparrow's are."
 import math
 from dataclasses import dataclass, field, replace
 
-from core.cutting_stock import MixedSizes, best_plan, candidate_sheets
+from core.cutting_stock import MixedSizes, best_plan, candidate_sheets, same_parts_plan
 from core.programs import choose_plans, kit_plan, sheets_used
 from core.sheet_cost import (
     EdgeGaps,
@@ -240,12 +240,20 @@ def box_candidates(sizes: list[tuple[float, float]], quantities: list[int], seed
 
 
 def fewest_sheets(quantities: list[int], pool: dict | None, areas: list[float] | None = None,
-                  sheet_area: float | None = None) -> list | None:
+                  sheet_area: float | None = None, *, same_parts_first: bool = False
+                  ) -> list | None:
     """The plan with the fewest sheets of one size from its candidate sheets:
     ``[(repeats, counts, layout)]``, or None. With the parts' real ``areas``
     and the ``sheet_area``, well-filled programs are kept first (see
-    ``core.cutting_stock.GOOD_FILL``)."""
-    plan = best_plan(quantities, [(1.0, pool, sheet_area)], areas=areas) if pool else None
+    ``core.cutting_stock.GOOD_FILL``). ``same_parts_first``: each part's full
+    sheets on their own first, the leftovers mixed (``same_parts_plan``)."""
+    pools = [(1.0, pool, sheet_area)]
+    if not pool:
+        plan = None
+    elif same_parts_first:
+        plan = same_parts_plan(quantities, pools)
+    else:
+        plan = best_plan(quantities, pools, areas=areas)
     return None if plan is None else [(r, p, layout) for _, r, p, layout in plan]
 
 
@@ -260,6 +268,7 @@ def rect_options(
     margin_pct: float = 0.0,
     edges: EdgeGaps = EdgeGaps(),
     rankavali_mm: int = 0,
+    same_parts_first: bool = False,
 ) -> GroupCost | None:
     """``core.sheet_cost.compute_options`` with the bounding-box packer.
 
@@ -269,13 +278,16 @@ def rect_options(
     parts may touch the sheet edge. The edge gaps shrink the usable area.
     Each size is priced with the fewest sheets and, when worth showing, with a
     repeatable program (see ``core.programs``); one more option may cut the
-    parts from several sizes (see ``core.cutting_stock.MixedSizes``).
+    parts from several sizes (see ``core.cutting_stock.MixedSizes``). With
+    ``same_parts_first`` each size has one plan, which puts each part's full
+    sheets on their own first and mixes only the leftovers, and so does the
+    mixed-size option.
     """
     quantities = [int(p["qty"]) for p in products]
     part_area_mm2 = sum(p["width"] * p["height"] * p["qty"] for p in products)
     boxes = [(int(round(p["width"])), int(round(p["height"]))) for p in products]
     areas = [p["width"] * p["height"] for p in products]
-    mixed = MixedSizes(quantities, areas)
+    mixed = MixedSizes(quantities, areas, same_parts_first=same_parts_first)
 
     def pieces_for(qty: list[int]) -> list[tuple[int, int, int, int]]:
         counted = [{**p, "qty": q} for p, q in zip(products, qty)]
@@ -312,9 +324,13 @@ def rect_options(
             reason = too_big([(product_label(p), p["width"], p["height"]) for p in products],
                              eff_w, eff_h)
             return [replace(packing(greedy, failed), reason=reason)]
+        fewest = fewest_sheets(quantities, pool, areas, sw * sh,
+                               same_parts_first=same_parts_first)
+        if same_parts_first:
+            # The plans that mix everything would win on price: show only this.
+            return [packing(standing(fewest, pack_sheets) if fewest else greedy)]
         kit = kit_plan(quantities, greedy, lambda kit: _one_sheet(*pack_sheets(kit)),
                        lambda rest: _all_fit(*pack_sheets(rest)))
-        fewest = fewest_sheets(quantities, pool, areas, sw * sh)
         return [packing(sheets) for sheets in
                 choose_plans(greedy, fewest and standing(fewest, pack_sheets), kit)]
 

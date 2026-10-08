@@ -44,6 +44,7 @@ def render(data: dict) -> None:
         result = _options(
             lookup, material, thickness, thickness_mm, prods, margin_pct,
             (gaps.top, gaps.bottom, gaps.left, gaps.right), sheet.rankavali_mm,
+            sheet.same_parts_first,
         )
         ids = "-".join(str(p["id"]) for p in prods)
         return render_group(
@@ -62,12 +63,13 @@ def render(data: dict) -> None:
 
 
 @st.cache_data(max_entries=64, show_spinner="Etsitään vähiten levyjä käyttävää suunnitelmaa…")
-def _options(lookup, material, thickness, thickness_mm, prods, margin_pct, edges, rankavali_mm):
+def _options(lookup, material, thickness, thickness_mm, prods, margin_pct, edges, rankavali_mm,
+             same_parts_first):
     """``rect_options``, kept until a part or setting changes: the
     fewest-sheets search can take a few seconds on a large order."""
     return rect_options(lookup, material, thickness, thickness_mm, prods,
                         margin_pct=margin_pct, edges=EdgeGaps(*edges),
-                        rankavali_mm=rankavali_mm)
+                        rankavali_mm=rankavali_mm, same_parts_first=same_parts_first)
 
 
 # ── Product cards ─────────────────────────────────────────────────────────────

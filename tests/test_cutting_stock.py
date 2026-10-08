@@ -242,3 +242,42 @@ def test_notched_plates_make_a_checkerboard_with_the_real_solver():
                                            rankavali_mm=5).options if o.ok),
                key=lambda o: (o.sheets_needed, o.programs))
     assert (best.sheets_needed, best.programs) == (2, 1)
+
+
+# ── Same parts first ──────────────────────────────────────────────────────────
+
+def test_same_parts_first_cuts_full_sheets_of_each_part_and_mixes_the_rest():
+    # a: 4 per sheet, b: 2 per sheet. 10 a + 5 b → a ×2 (8), b ×2 (4), and
+    # 2 a + 1 b left over on one mixed sheet.
+    from core.cutting_stock import same_parts_plan
+    pool = {(4, 0): "aaaa", (0, 2): "bb", (2, 1): "aab", (3, 0): "aaa", (1, 1): "ab"}
+    plan = sorted((r, p) for _, r, p, _ in same_parts_plan([10, 5], [(1.0, pool, 100.0)]))
+    assert plan == [(1, (2, 1)), (2, (0, 2)), (2, (4, 0))]
+
+
+def test_less_than_a_full_sheet_of_a_part_goes_with_the_leftovers():
+    from core.cutting_stock import same_parts_plan
+    pool = {(4, 0): "aaaa", (0, 2): "bb", (2, 1): "aab", (1, 1): "ab", (3, 1): "aaab"}
+    plan = sorted((r, p) for _, r, p, _ in same_parts_plan([3, 1], [(1.0, pool, 100.0)]))
+    assert plan == [(1, (3, 1))]                       # 3 a < 4: mixed with the b
+
+
+def test_each_part_takes_the_size_cheapest_per_piece():
+    # Size 0 (10 €) holds 4 a or 1 b; size 1 (25 €) holds 8 a or 4 b: a is
+    # cheaper on size 0 (2.50 € each), b on size 1 (6.25 €).
+    from core.cutting_stock import same_parts_plan
+    small = {(4, 0): "s-a", (0, 1): "s-b"}
+    big = {(8, 0): "b-a", (0, 4): "b-b"}
+    plan = sorted((t, r, p) for t, r, p, _ in
+                  same_parts_plan([8, 8], [(10.0, small, 1.0), (25.0, big, 2.0)]))
+    assert plan == [(0, 2, (4, 0)), (1, 2, (0, 4))]
+
+
+def test_with_same_parts_first_each_size_shows_that_plan_only():
+    options = rect_options(LOOKUP, "S235", "2", 2.0, plates(), rankavali_mm=5,
+                           same_parts_first=True).options
+    [option] = options
+    for sheet in option.packing.sheets:
+        kinds = {pl.product_idx for pl in sheet.placements}
+        assert len(kinds) == 1 or sheet.count == 1      # only leftovers are mixed
+    assert made(option, len(PLATES)) == [10] * len(PLATES)
