@@ -115,6 +115,46 @@ def test_dropped_files_become_cards_and_poista_removes_one():
     assert at.session_state["shown"] == ["b", "a2"]
 
 
+def test_a_file_dropped_again_is_warned_about_and_not_added():
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        from types import SimpleNamespace
+        from unittest import mock
+
+        import ezdxf
+        import streamlit as st
+
+        from tests.conftest import dxf_bytes
+        from view.dxf_tab import _evict, _render_drop_area
+
+        doc = ezdxf.new()
+        doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 50), (0, 50)], close=True)
+        data = dxf_bytes(doc)
+        drop = st.session_state.pop("drop", [])
+        files = [SimpleNamespace(file_id=i, name=n, getvalue=lambda: data) for i, n in drop]
+        if st.session_state.get("remove"):
+            _evict(st.session_state.pop("remove"))
+        with mock.patch.object(st, "file_uploader", return_value=files):
+            st.session_state["shown"] = [d.name for _, d in _render_drop_area()]
+
+    at = AppTest.from_function(page)
+    at.session_state["drop"] = [("a", "x.dxf"), ("b", "y.dxf"), ("c", "x.dxf")]
+    at.run()
+    assert at.session_state["shown"] == ["x.dxf", "y.dxf"]   # the second x.dxf skipped
+    assert "x.dxf" in at.warning[0].value and "osa #1" in at.warning[0].value
+    at.session_state["drop"] = [("d", "y.dxf"), ("e", "z.dxf")]
+    at.run()
+    assert at.session_state["shown"] == ["x.dxf", "y.dxf", "z.dxf"]
+    assert "y.dxf" in at.warning[0].value and "osa #2" in at.warning[0].value
+    at.run()
+    assert not at.warning                                     # shown once
+    at.session_state["remove"] = "a"
+    at.session_state["drop"] = [("f", "x.dxf")]               # removed, then dropped again
+    at.run()
+    assert at.session_state["shown"] == ["y.dxf", "z.dxf", "x.dxf"] and not at.warning
+
+
 def dxf_page(n):
     from streamlit.testing.v1 import AppTest
 

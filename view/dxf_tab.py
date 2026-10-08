@@ -159,7 +159,26 @@ def _render_drop_area() -> list[tuple[str, DxfFile]]:
     )
     if _ingest(uploaded):
         st.rerun()  # redraw with the drop area empty
-    return list(st.session_state.get(_STORE, {}).items())
+    parts = list(st.session_state.get(_STORE, {}).items())
+    _warn_duplicates(st.session_state.pop(_DUPES, []), parts)
+    return parts
+
+
+def _warn_duplicates(names: list[str], parts: list[tuple[str, DxfFile]]) -> None:
+    """Name each dropped file that was already a card, and that card's number.
+    Shown once, on the redraw right after the drop."""
+    if not names:
+        return
+    idx = {dxf.name: i for i, (_, dxf) in enumerate(parts)}
+    lines = [f"- **{n}** (osa #{idx[n] + 1})" if n in idx else f"- **{n}**"
+             for n in names]
+    st.warning(
+        ("Tiedosto on jo lisätty, joten sitä ei lisätty uudelleen:"
+         if len(names) == 1 else
+         "Tiedostot on jo lisätty, joten niitä ei lisätty uudelleen:")
+        + "\n\n" + "\n".join(lines)
+        + "\n\nJos tiedosto on muuttunut, poista vanha osa ensin ja lataa se sitten uudelleen."
+    )
 
 
 def _count_pending(groups, settings: _Settings, cache: dict) -> tuple[int, int]:
@@ -387,20 +406,30 @@ _REPORTS = "dxf_part_reports"  # {file_id: DxfReport}
 _CONFIG  = "dxf_part_config"   # {file_id: {"material", "thickness"}}
 _INBOX   = "dxf_inbox"         # bumped to give the uploader a fresh, empty key
 _FILL_ASKED = "dxf_fill_asked" # the "same material for the others?" question is answered
+_DUPES   = "dxf_dupes"         # names of dropped files already on a card, warned once
 
 
 def _ingest(uploaded) -> bool:
     """Move newly dropped files into the store, in upload order, and empty the
     drop area (Streamlit can't remove one file from an uploader, only start a
-    new one). True when something new came in."""
+    new one). A file whose name is already on a card is not added again; its
+    name goes to ``_DUPES`` for the warning. True when something was dropped."""
     store: dict = st.session_state.setdefault(_STORE, {})
-    new = [up for up in uploaded or [] if up.file_id not in store]
-    for up in new:
+    dropped = [up for up in uploaded or [] if up.file_id not in store]
+    names = {dxf.name for dxf in store.values()}
+    dupes = []
+    for up in dropped:
+        if up.name in names:
+            dupes.append(up.name)
+            continue
         store[up.file_id] = read_dxf(up.getvalue(), up.name)
-    if new:
+        names.add(up.name)
+    if dropped:
         st.session_state[_INBOX] = st.session_state.get(_INBOX, 0) + 1
+        st.session_state[_DUPES] = dupes
+    if len(dropped) > len(dupes):
         st.session_state.pop(_FILL_ASKED, None)  # new empty parts: ask again
-    return bool(new)
+    return bool(dropped)
 
 
 def _evict(fid: str) -> None:
