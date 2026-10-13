@@ -1,4 +1,4 @@
-"""Work pricing, pure (no Streamlit): cutting, bending, threads, welding,
+"""Work pricing, pure (no Streamlit): cutting, bending, threads, nuts, welding,
 subcontracting and setup, priced per piece.
 
 A piece's price is ``c + F / kpl``: ``c`` is what every piece costs (its
@@ -106,6 +106,8 @@ class WorkInputs:
     eur_per_bend: float = 0.20
     threads: int = 0
     eur_per_thread: float = 0.20
+    nuts: int = 0                         # pressed in (puristemutterit)
+    eur_per_nut: float = 0.50
     weld_m: float = 0.0
     subcontract_eur: float = 0.0          # per piece
     programming_eur: float = 0.0
@@ -114,8 +116,8 @@ class WorkInputs:
 
 def phases(inp: WorkInputs) -> int:
     """Work phases the part goes through: cutting, plus each of bending,
-    threading, welding and subcontracting that it has."""
-    return 1 + sum(bool(x) for x in (inp.bends, inp.threads, inp.weld_m,
+    threading, pressing nuts, welding and subcontracting that it has."""
+    return 1 + sum(bool(x) for x in (inp.bends, inp.threads, inp.nuts, inp.weld_m,
                                       inp.subcontract_eur))
 
 
@@ -135,6 +137,7 @@ class WorkCost:
     cutting: float = 0.0
     bending: float = 0.0
     threads: float = 0.0
+    nuts: float = 0.0
     welding: float = 0.0
     subcontract: float = 0.0
     setup: float = 0.0
@@ -151,7 +154,7 @@ class WorkCost:
     @property
     def per_piece(self) -> float:
         """Work per piece, the batch costs shared over the quantity."""
-        return (self.cutting + self.cut_minimum + self.bending + self.threads
+        return (self.cutting + self.cut_minimum + self.bending + self.threads + self.nuts
                 + self.welding + self.subcontract + self.batch_fixed / self.qty)
 
     @property
@@ -176,6 +179,7 @@ def work_cost(inp: WorkInputs, qty: int, rates: WorkRates) -> WorkCost:
         cutting=cutting,
         bending=inp.bends * inp.eur_per_bend,
         threads=inp.threads * inp.eur_per_thread,
+        nuts=inp.nuts * inp.eur_per_nut,
         welding=welding,
         subcontract=inp.subcontract_eur,
         setup=setup,

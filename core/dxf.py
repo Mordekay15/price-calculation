@@ -427,6 +427,15 @@ def _explode_blocks(entities):
             yield e
 
 
+_NUTS = re.compile(r"MUTTER\w*\D*?(\d+)\s*KPL", re.IGNORECASE)
+
+
+def nuts_from_texts(texts: list[str]) -> int:
+    """Press nuts the drawing's notes ask for, e.g. "M5-PURISTEMUTTERIT X4KPL"
+    and "M4-PURISTEMUTTERIT 5KPL" make 9."""
+    return sum(int(n) for t in texts for n in _NUTS.findall(t))
+
+
 def _is_bend_layer(name: str) -> bool:
     """A layer of bend lines (e.g. IV_BEND, IV_BEND_DOWN), not their extents."""
     name = name.lower()

@@ -322,6 +322,7 @@ def _render_piece_prices(priced: list, lead: str, material_total: float) -> None
             "Leikkaus €/kpl":         r(wc.cutting + wc.cut_minimum) if wc.priced else "",
             "Taivutus €/kpl":         r(wc.bending),
             "Kierteet €/kpl":         r(wc.threads),
+            "Mutterit €/kpl":         r(wc.nuts),
             "Hitsaus €/kpl":          r(wc.welding),
             "Alihankinta €/kpl":      r(wc.subcontract),
             "Asetus ym. €/kpl":       r(wc.batch_fixed / wc.qty),

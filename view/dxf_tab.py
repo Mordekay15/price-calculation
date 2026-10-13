@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 import streamlit as st
 
 from core.pricing import build_lookup, get_sizes_for_material, parse_thickness_mm
-from core.dxf import DxfFile, DxfReport, read_dxf
+from core.dxf import DxfFile, DxfReport, nuts_from_texts, read_dxf
 from core.geometry import net_area
 from core.sheet_cost import (
     group_products,
@@ -617,7 +617,8 @@ def _render_part_config(
             angles = _render_nesting_angles(fid) if per_part_angles else None
             work = render_work_inputs(fid, material=material, thickness=thickness, qty=qty,
                                       cut_length_m=report.cut_length_mm / 1000,
-                                      bends=report.bends, threads=report.threads)
+                                      bends=report.bends, threads=report.threads,
+                                      nuts=nuts_from_texts(dxf.texts))
         if angles == ():
             return None
 

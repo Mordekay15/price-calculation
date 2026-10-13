@@ -163,3 +163,12 @@ def test_manual_tab_prices_work_per_piece(tmp_path, monkeypatch):
     assert metrics["Työ yhteensä (€)"] == "71.00"
     row = at.dataframe[-1].value.iloc[0]
     assert row["Leikkaus €/kpl"] == 0.7 and row["Asetus ym. €/kpl"] == 6.0
+
+
+def test_nuts_are_counted_and_priced_each():
+    from core.dxf import nuts_from_texts
+    assert nuts_from_texts(["M5-PURISTEMUTTERIT X4KPL", "M4-PURISTEMUTTERIT 5KPL",
+                            "MATERIAALI: CR2-11 PL1,5 sinkitty"]) == 9
+    inp = WorkInputs(nuts=9, eur_per_nut=0.3)
+    cost = work_cost(inp, 1, RATES)
+    assert cost.nuts == pytest.approx(2.7) and phases(inp) == 2

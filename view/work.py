@@ -88,9 +88,9 @@ def _auto(col, label: str, key: str, auto: float | None, *, step: float,
 
 def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
                        qty: int, cut_length_m: float, bends: int = 0,
-                       threads: int = 0) -> WorkInputs:
-    """The card's "Työvaiheet": cutting, bends, threads, welding,
-    subcontracting and setup. ``cut_length_m``, ``bends`` and ``threads`` are
+                       threads: int = 0, nuts: int = 0) -> WorkInputs:
+    """The card's "Työvaiheet": cutting, bends, threads, nuts, welding,
+    subcontracting and setup. ``cut_length_m``, ``bends``, ``threads`` and ``nuts`` are
     what the drawing gives (the defaults, overwritable); the laser speed comes
     from the table. ``key`` makes the widget keys unique per card."""
     thickness_mm = parse_thickness_mm(thickness) if thickness else None
@@ -132,20 +132,29 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
                                            step=0.05, key=f"work_thread_eur_{key}")
 
         c = st.columns(4)
-        weld_m = c[0].number_input("Hitsaus (m/kpl)", min_value=0.0, value=0.0, step=0.1,
+        n_nuts = int(_auto(c[0], "Mutterit (kpl/osa)", f"work_nuts_{key}", nuts,
+                           step=1.0, fmt="%.0f",
+                           help="Puristemutterit. Luetaan piirustuksen teksteistä, "
+                                "esim. \"M5-PURISTEMUTTERIT X4KPL\"."))
+        eur_per_nut = c[1].number_input("€ / mutteri", min_value=0.0, value=0.50,
+                                        step=0.05, key=f"work_nut_eur_{key}")
+        weld_m = c[2].number_input("Hitsaus (m/kpl)", min_value=0.0, value=0.0, step=0.1,
                                    key=f"work_weld_{key}")
-        subcontract = c[1].number_input("Alihankinta (€/kpl)", min_value=0.0, value=0.0,
+        subcontract = c[3].number_input("Alihankinta (€/kpl)", min_value=0.0, value=0.0,
                                         step=0.5, key=f"work_sub_{key}",
                                         help="Esim. anodisointi tai sinkitys.")
-        programming = c[2].number_input("Ohjelmointi (€/erä)", min_value=0.0, value=0.0,
+
+        c = st.columns(4)
+        programming = c[0].number_input("Ohjelmointi (€/erä)", min_value=0.0, value=0.0,
                                         step=10.0, key=f"work_prog_{key}",
                                         help="Esim. uusi tuote.")
         inputs = WorkInputs(method=method, cut_length_m=cut_length_m, laser=laser, hits=hits,
                             bends=n_bends, eur_per_bend=eur_per_bend, threads=n_threads,
-                            eur_per_thread=eur_per_thread, weld_m=weld_m,
+                            eur_per_thread=eur_per_thread, nuts=n_nuts,
+                            eur_per_nut=eur_per_nut, weld_m=weld_m,
                             subcontract_eur=subcontract,
                             programming_eur=programming)
-        setup = _auto(c[3], "Asetus (€/erä)", f"work_setup_{key}",
+        setup = _auto(c[1], "Asetus (€/erä)", f"work_setup_{key}",
                       default_setup(inputs, rates), step=5.0, fmt="%.0f",
                       help="Oletus työvaiheiden määrän mukaan (sivupalkin Työn hinnat).")
         inputs = WorkInputs(**{**inputs.__dict__, "setup_eur": setup})
@@ -172,6 +181,8 @@ def _card_summary(inp: WorkInputs, cost: WorkCost) -> str:
         bits.append("1 taivutus" if inp.bends == 1 else f"{inp.bends} taivutusta")
     if inp.threads:
         bits.append("1 kierre" if inp.threads == 1 else f"{inp.threads} kierrettä")
+    if inp.nuts:
+        bits.append("1 mutteri" if inp.nuts == 1 else f"{inp.nuts} mutteria")
     if inp.weld_m:
         bits.append(f"hitsaus {inp.weld_m:g} m")
     bits.append(f"asetus {cost.setup:.0f} €/erä")
