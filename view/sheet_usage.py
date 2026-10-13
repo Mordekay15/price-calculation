@@ -22,8 +22,9 @@ def render_group(
     key: str,
     draw_layout,
     note=None,
-) -> tuple[float | None, float | None]:
-    """Render one group's sheet-usage table. Returns ``(total_eur, bill_rate_ppt)``.
+) -> tuple[float | None, float | None, int]:
+    """Render one group's sheet-usage table. Returns ``(total_eur, bill_rate_ppt,
+    sheets)`` of the chosen sheet size.
 
     ``draw_layout(option)`` draws the chosen sheet size's layout; ``note()``,
     if given, draws extra notes first. Returns ``(None, None)`` when no priced
@@ -34,7 +35,7 @@ def render_group(
 
     if result is None:
         _render_unpriced(material)
-        return None, None
+        return None, None, 0
 
     options = result.options
     cheapest_idx = cheapest_index(options)
@@ -55,7 +56,7 @@ def render_group(
 
     if cheapest_idx is None:
         _render_no_fit(options)
-        return None, None
+        return None, None, 0
 
     active = options[_selected_index(event, options, cheapest_idx)]
     with answer:
@@ -63,7 +64,7 @@ def render_group(
         _render_summary(active, result.n_pieces)
 
     _render_breakdown(material, thickness, thickness_mm, margin_pct, result, active)
-    return active.total_eur, active.bill_rate_ppt
+    return active.total_eur, active.bill_rate_ppt, active.sheets_needed
 
 
 def _render_unpriced(material: str) -> None:

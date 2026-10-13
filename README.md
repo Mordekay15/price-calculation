@@ -23,6 +23,31 @@ the fewest sheets ([Fewest sheets](#fewest-sheets-the-cutting-stock-plan)) and
 for a plan production can repeat: one sheet program cut many times (see
 [Programs](#programs-repeatable-sheet-layouts)).
 
+## Work (Työvaiheet)
+
+Every part card on both tabs has a folded **Työvaiheet** section, and the page
+ends with **Kappalehinnat**: the price per piece, material plus work, as
+`c + F / kpl` (what each piece costs, plus the batch's fixed costs shared over
+the quantity). Work has no margin; its rates are selling prices.
+
+- **Cutting**: *Laser* or *Levari*. Laser = cutting length (m/kpl) × seconds per
+  metre × €/s. The cutting length is read from the DXF (outline, holes and open
+  cuts; a rectangle's outline on the manual tab), the seconds and €/s from the
+  laser table in `core/work.py` (Platino 6 kW / Genius 6 kW, by material family
+  and thickness: steel, RST/HST, aluminium, copper/brass; between two rows the
+  time is interpolated). Levari = hits × €/hit. Cutting is at least the sheet
+  minimum (7 €) per sheet the group uses; what is missing is shared in
+  proportion to the parts' cutting.
+- **Bends** and **threads**: count × € each (0.20 by default). The DXF gives
+  both: bend lines on a bend layer (e.g. `IV_BEND_DOWN`) and threads drawn with
+  the ISO ¾-circle mark.
+- **Welding**: metres ÷ m/h × €/h. **Subcontracting** €/kpl. **Painting** and
+  **programming** € per batch (painting at least the minimum).
+- **Setup** per batch by the number of work phases: 40 / 60 / 80 €.
+
+A grey value in an input is the automatic one; typing replaces it, clearing the
+input goes back to it. The rates are under **Työn hinnat** in the sidebar.
+
 ## Run locally
 
 ```bash
@@ -95,6 +120,7 @@ app.py                  page setup: sidebar, then the two tabs
 core/                   pure logic, no Streamlit
   pricing.py            price lookup, materials, thickness, densities, weight_kg, copper
   sheet_cost.py         price every sheet size (SheetOption), grouping, per-piece cost
+  work.py               work: laser table, cutting / bends / threads / welding / setup, sheet minimum
   programs.py           repeatable programs: the kit search both packers share
   cutting_stock.py      the fewest-sheets plan: candidate sheets + integer program
   rect_nesting.py       bounding-box packer (manual tab)
@@ -112,6 +138,7 @@ view/                   Streamlit UI
   dxf_tab.py            DXF tab, its part cards and the Sparrow run
   common.py             inputs, the per-group loop, totals, pieces summary
   sheet_usage.py        the sheet-size table, metrics and price breakdown
+  work.py               the work rates (sidebar), Työvaiheet on the cards, work per product
   drawing.py            every SVG: sheet layouts and the DXF part preview
   sparrow_progress.py   progress bar while Sparrow runs
 

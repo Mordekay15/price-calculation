@@ -9,6 +9,7 @@ import streamlit as st
 from core.pricing import build_lookup, parse_thickness_mm
 from core.rect_nesting import rect_options
 from core.sheet_cost import EdgeGaps, group_products, reprice, size_prices
+from core.work import rect_cut_length_m
 from view.common import (
     ADVANCED_LABEL,
     NESTING_LABELS,
@@ -22,6 +23,7 @@ from view.common import (
 )
 from view.drawing import draw_rect_layout
 from view.sheet_usage import render_group
+from view.work import render_work_inputs, work_costs
 
 
 def render(data: dict) -> None:
@@ -42,7 +44,8 @@ def render(data: dict) -> None:
             return None
         gaps = sheet.gaps()
         result = _options(
-            lookup, material, thickness, thickness_mm, prods,
+            lookup, material, thickness, thickness_mm,
+            [{k: v for k, v in p.items() if k != "work"} for p in prods],
             (gaps.top, gaps.bottom, gaps.left, gaps.right), sheet.rankavali_mm,
         )
         if result is not None:
@@ -61,11 +64,13 @@ def render(data: dict) -> None:
 
     groups = group_products(products, nest_mode)
     prices: dict[str, float] = {}
+    sheets: dict[tuple, int] = {}
     if groups:
         st.divider()
-        prices, _, _ = render_groups(groups, render_one)
+        prices, _, _, sheets = render_groups(groups, render_one)
     render_pieces_summary(products, prices,
-                          weight_label="Kappaleiden yhteispaino (kg)", lead="#")
+                          weight_label="Kappaleiden yhteispaino (kg)", lead="#",
+                          work=work_costs(products, groups, sheets))
 
 
 @st.cache_data(max_entries=64, show_spinner="Etsitään vähiten levyjä käyttävää suunnitelmaa…")
@@ -131,11 +136,15 @@ def _render_product(prod: dict, index: int, materials: list[str], lookup: dict) 
             step=1, key=f"q_{pid}",
         )
 
+        work = render_work_inputs(pid, material=material, thickness=thickness, qty=q,
+                                  cut_length_m=rect_cut_length_m(w, h))
+
     prod["material"]  = material
     prod["thickness"] = thickness
     prod["width"]     = w
     prod["height"]    = h
     prod["qty"]       = q
+    prod["work"]      = work
     return delete_requested
 
 

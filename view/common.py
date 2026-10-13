@@ -15,6 +15,7 @@ from core.pricing import (
 )
 from core.cutting_stock import have_solver
 from core.sheet_cost import EdgeGaps, piece_costs
+from core.work import WorkCost
 from view.drawing import edge_gaps_svg
 
 
@@ -220,12 +221,13 @@ def render_groups(groups: dict[tuple, list[dict]], render_one):
     """Render every group and collect the prices for the pieces summary.
 
     ``render_one(key, products)`` renders one group and returns
-    ``(total_eur, price_per_tonne)`` — either may be None when unpriced — or
-    None when the group has no result yet.
+    ``(total_eur, price_per_tonne, sheets)`` — the first two may be None when
+    unpriced — or None when the group has no result yet.
 
-    Returns ``(price_by_product_id, grand_total_eur, missing)``: the price
-    each product's pieces are billed at, the summed total (None when no group
-    was priced), and whether any group had no result yet.
+    Returns ``(price_by_product_id, grand_total_eur, missing, sheets)``: the
+    price each product's pieces are billed at, the summed total (None when no
+    group was priced), whether any group had no result yet, and the sheets
+    each priced group is cut from (for the cutting minimum).
     """
     if not have_solver():
         # Without it the fewest-sheets and mixed-size plans silently vanish
@@ -235,6 +237,7 @@ def render_groups(groups: dict[tuple, list[dict]], render_one):
                    "sovellus uudelleen — muuten näytetään vain levy kerrallaan täytetyt "
                    "suunnitelmat.")
     prices: dict[str, float] = {}
+    sheets: dict[tuple, int] = {}
     grand_total = None
     missing = False
     for i, (key, prods) in enumerate(groups.items()):
@@ -244,13 +247,14 @@ def render_groups(groups: dict[tuple, list[dict]], render_one):
         if out is None:
             missing = True
             continue
-        total, ppt = out
+        total, ppt, n_sheets = out
         if total is not None:
             grand_total = (grand_total or 0.0) + total
+            sheets[key] = n_sheets
         if ppt is not None:
             for p in prods:
                 prices[p["id"]] = ppt
-    return prices, grand_total, missing
+    return prices, grand_total, missing, sheets
 
 
 # ── Pieces summary ────────────────────────────────────────────────────────────
@@ -262,13 +266,16 @@ def render_pieces_summary(
     weight_label: str,
     lead: str,
     areas_mm2: dict[str, float] | None = None,
+    work: dict[str, WorkCost] | None = None,
 ) -> None:
-    """The per-piece weight / cost table (see ``core.sheet_cost.piece_costs``)
-    and its totals. ``lead`` heads the first column: the product's name, or
-    its running number when it has none."""
+    """The per-piece weight / cost table (see ``core.sheet_cost.piece_costs``),
+    the piece prices with the work (``work`` by product id), and the totals.
+    ``lead`` heads the first column: the product's name, or its running number
+    when it has none."""
     costs = piece_costs(products, prices, areas_mm2)
     if not costs:
         return
+    work = work or {}
 
     def money(value, digits):
         return "" if value is None else round(value, digits)
@@ -288,9 +295,52 @@ def render_pieces_summary(
     total_cost_eur = sum(pc.batch_eur for pc in costs if pc.batch_eur)
 
     st.divider()
-    # The one total of the page: the sum of every priced group.
     m1, m2 = st.columns(2)
     if total_cost_eur:
         m1.metric("Materiaalikustannukset yhteensä (€)", f"{total_cost_eur:,.2f}")
     m2.metric(weight_label, f"{sum(pc.batch_kg for pc in costs):.3f}")
     st.dataframe(rows, width="stretch", hide_index=True)
+
+    priced = [(pc, work[pc.product["id"]]) for pc in costs if pc.product["id"] in work]
+    if priced:
+        _render_piece_prices(priced, lead, total_cost_eur)
+
+
+def _render_piece_prices(priced: list, lead: str, material_total: float) -> None:
+    """Price per piece: material + work, the batch costs shared over the
+    quantity (c + F / kpl), and the page's total."""
+    def r(value):
+        return round(value, 2)
+
+    rows = []
+    for pc, wc in priced:
+        unit = None if pc.eur is None or not wc.priced else pc.eur + wc.per_piece
+        rows.append({
+            lead:                     pc.product.get("name", pc.index + 1),
+            "Määrä (kpl)":            pc.product["qty"],
+            "Materiaali €/kpl":       "" if pc.eur is None else r(pc.eur),
+            "Leikkaus €/kpl":         r(wc.cutting + wc.cut_minimum) if wc.priced else "",
+            "Taivutus €/kpl":         r(wc.bending),
+            "Kierteet €/kpl":         r(wc.threads),
+            "Hitsaus €/kpl":          r(wc.welding),
+            "Alihankinta €/kpl":      r(wc.subcontract),
+            "Asetus ym. €/kpl":       r(wc.batch_fixed / wc.qty),
+            "Kpl-hinta €":            "" if unit is None else r(unit),
+            "Yhteensä €":             "" if unit is None else r(unit * pc.product["qty"]),
+        })
+    work_total = sum(wc.batch for _, wc in priced if wc.priced)
+    complete = all(pc.eur is not None and wc.priced for pc, wc in priced)
+
+    st.markdown("**Kappalehinnat**", help=(
+        "Kpl-hinta = materiaali + työ + erän kiinteät kulut (asetus, ohjelmointi, "
+        "maalaus) jaettuna kappalemäärällä. Työssä ei ole katetta. Leikkaus on "
+        "vähintään sivupalkin minimi levyä kohden."))
+    if any(wc.cut_minimum for _, wc in priced):
+        st.caption("Leikkaukseen on lisätty levykohtainen minimiveloitus.")
+    m1, m2 = st.columns(2)
+    m1.metric("Työ yhteensä (€)", f"{work_total:,.2f}")
+    m2.metric("Yhteensä (€, alv 0 %)", f"{material_total + work_total:,.2f}"
+              + ("" if complete else " *"))
+    st.dataframe(rows, width="stretch", hide_index=True)
+    if not complete:
+        st.caption("* Osalta puuttuu materiaalin tai laserin hinta; se ei ole summassa.")

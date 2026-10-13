@@ -42,6 +42,7 @@ from view.common import (
 )
 from view.drawing import draw_sparrow_layout, preview_svg
 from view.sheet_usage import render_group
+from view.work import render_work_inputs, work_costs
 from view.sparrow_progress import SparrowProgress, run_with_progress
 
 _CACHE = "dxf_sparrow_cache"    # {signature: computed group}
@@ -479,7 +480,7 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest, 
             note=note,
         )
 
-    prices, grand_total, missing = render_groups(groups, render_one)
+    prices, grand_total, missing, sheets = render_groups(groups, render_one)
     if missing and grand_total is None:
         st.info("Paina **Laske levykäyttö** laskeaksesi levytarpeen ja hinnan.")
         return bool(replanned)
@@ -491,7 +492,7 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest, 
     ready = [p for p in products if is_ready(p)]
     render_pieces_summary(ready, prices,
                           weight_label="Osien yhteispaino (kg)", lead="Osa",
-                          areas_mm2=areas)
+                          areas_mm2=areas, work=work_costs(ready, groups, sheets))
     return bool(replanned)
 
 
@@ -614,6 +615,9 @@ def _render_part_config(
             if fill is not None:
                 _offer_same_material(fid, idx, material, thickness, fill)
             angles = _render_nesting_angles(fid) if per_part_angles else None
+            work = render_work_inputs(fid, material=material, thickness=thickness, qty=qty,
+                                      cut_length_m=report.cut_length_mm / 1000,
+                                      bends=report.bends, threads=report.threads)
         if angles == ():
             return None
 
@@ -627,6 +631,7 @@ def _render_part_config(
         "qty":       qty,
         "angles":    angles,
         "report":    report,
+        "work":      work,
     }
 
 

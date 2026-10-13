@@ -29,6 +29,13 @@ def net_area(outer: list[Point], holes: list[list[Point]]) -> float:
     return area(outer) - sum(area(h) for h in holes)
 
 
+def length(points, closed: bool = False) -> float:
+    """Length of a polyline in its units; ``closed`` adds the closing edge."""
+    pts = list(points) + ([points[0]] if closed and points else [])
+    return sum(((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5
+               for (x0, y0), (x1, y1) in zip(pts, pts[1:]))
+
+
 def bbox(points) -> tuple[float, float, float, float]:
     """``(min_x, min_y, max_x, max_y)`` of a point list."""
     xs = [p[0] for p in points]

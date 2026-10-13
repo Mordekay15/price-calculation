@@ -16,6 +16,7 @@ from core.geometry import (
     area,
     bbox,
     bbox_wh,
+    length,
     min_area_angle,
     point_in_polygon,
     representative_point,
@@ -143,6 +144,17 @@ class DxfReport:
     dropped: list[list[Point]] = field(default_factory=list)      # outside the part
     # Why this part cannot be priced (empty = it can).
     problems: list[str] = field(default_factory=list)
+    # For the work price: threads drawn with the ISO mark, and bend lines.
+    threads: int = 0
+    bends: int = 0
+
+    @property
+    def cut_length_mm(self) -> float:
+        """What the laser cuts: the outline, every hole and any open cut."""
+        if self.outline is None:
+            return 0.0
+        return (sum(length(c.points, closed=True) for c in (self.outline, *self.holes))
+                + sum(length(line) for line in self.open_lines))
 
 
 @dataclass
@@ -221,9 +233,14 @@ class DxfFile:
         # that hole: drawn, not cut. Any other open line is a real gap.
         report.holes = [c for c in inner if c.closed and c.depth == 1]
         report.reference_lines = _lines_inside(main, [p.points for p in reference])
+        report.bends = len(_lines_inside(main, [p.points for p in reference
+                                                if _is_bend_layer(p.layer)]))
         rings = [c for c in inner if c.closed]
         for c in inner:
-            if c.closed and c.depth >= 2 or not c.closed and _is_thread_mark(c.points, rings):
+            if not c.closed and _is_thread_mark(c.points, rings):
+                report.threads += 1
+                report.reference_lines.append(c.points)
+            elif c.closed and c.depth >= 2:
                 report.reference_lines.append(c.points)
             elif not c.closed:
                 report.open_lines.append(c.points)
@@ -408,6 +425,13 @@ def _explode_blocks(entities):
             yield from e.attribs
         else:
             yield e
+
+
+def _is_bend_layer(name: str) -> bool:
+    """A layer of bend lines (e.g. IV_BEND, IV_BEND_DOWN), not their extents."""
+    name = name.lower()
+    return (any(k in name for k in ("bend", "taiv", "taitto", "kantti"))
+            and "extent" not in name)
 
 
 def _is_non_cut_layer(name: str) -> bool:
