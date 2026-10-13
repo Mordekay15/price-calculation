@@ -37,6 +37,12 @@ _COPPER = (                 # kupari, messinki
 )
 
 
+def nut_price(material: str | None) -> float:
+    """Default € per press nut, the nut and pressing it in: over 1 € in
+    stainless (RST / HST), at least 0.25 € otherwise."""
+    return 1.00 if re.search(r"\b(rst|hst)\b", (material or "").lower()) else 0.25
+
+
 def laser_family(material: str | None) -> tuple[str, tuple]:
     """``(name, sections)`` of the laser table for a material name."""
     name = (material or "").lower()
@@ -107,7 +113,7 @@ class WorkInputs:
     threads: int = 0
     eur_per_thread: float = 0.20
     nuts: int = 0                         # pressed in (puristemutterit)
-    eur_per_nut: float = 0.50
+    eur_per_nut: float = 0.25
     weld_m: float = 0.0
     subcontract_eur: float = 0.0          # per piece
     programming_eur: float = 0.0

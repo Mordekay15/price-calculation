@@ -16,6 +16,7 @@ from core.work import (
     default_setup,
     laser_family,
     laser_speed,
+    nut_price,
     work_cost,
 )
 
@@ -136,8 +137,9 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
                            step=1.0, fmt="%.0f",
                            help="Puristemutterit. Luetaan piirustuksen teksteistä, "
                                 "esim. \"M5-PURISTEMUTTERIT X4KPL\"."))
-        eur_per_nut = c[1].number_input("€ / mutteri", min_value=0.0, value=0.50,
-                                        step=0.05, key=f"work_nut_eur_{key}")
+        eur_per_nut = _auto(c[1], "€ / mutteri", f"work_nut_eur_{key}", nut_price(material),
+                            step=0.05, help="Mutteri ja sen puristus. Oletus: RST/HST "
+                                            "1,00 €, muut 0,25 €.")
         weld_m = c[2].number_input("Hitsaus (m/kpl)", min_value=0.0, value=0.0, step=0.1,
                                    key=f"work_weld_{key}")
         subcontract = c[3].number_input("Alihankinta (€/kpl)", min_value=0.0, value=0.0,

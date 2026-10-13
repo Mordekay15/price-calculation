@@ -165,6 +165,12 @@ def test_manual_tab_prices_work_per_piece(tmp_path, monkeypatch):
     assert row["Leikkaus €/kpl"] == 0.7 and row["Asetus ym. €/kpl"] == 6.0
 
 
+def test_nut_price_depends_on_the_material():
+    from core.work import nut_price
+    assert nut_price("RST 2B") == nut_price("HST 2B") == 1.00
+    assert nut_price("S235") == nut_price("Alumiini 5754") == 0.25
+
+
 def test_nuts_are_counted_and_priced_each():
     from core.dxf import nuts_from_texts
     assert nuts_from_texts(["M5-PURISTEMUTTERIT X4KPL", "M4-PURISTEMUTTERIT 5KPL",

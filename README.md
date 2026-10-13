@@ -41,7 +41,7 @@ the quantity). Work has no margin; its rates are selling prices.
 - **Bends** and **threads**: count × € each (0.20 by default). The DXF gives
   both: bend lines on a bend layer (e.g. `IV_BEND_DOWN`) and threads drawn with
   the ISO ¾-circle mark.
-- **Nuts** (puristemutterit): count × € each (0.50 by default). The DXF gives
+- **Nuts** (puristemutterit): count × € each, the nut and pressing it in (by default 1.00 € in RST/HST, 0.25 € otherwise). The DXF gives
   the count from notes like "M5-PURISTEMUTTERIT X4KPL".
 - **Welding**: metres ÷ m/h × €/h. **Subcontracting** €/kpl. **Programming**
   € per batch.
