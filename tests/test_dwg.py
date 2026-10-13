@@ -61,3 +61,12 @@ def test_oda_is_preferred_when_installed(monkeypatch):
     monkeypatch.setattr(dwg, "_oda_installed", lambda: True)
     monkeypatch.setattr(dwg, "libredwg_executable", lambda: "/usr/bin/dwg2dxf")
     assert dwg.converter() == "ODA"
+
+
+def test_the_unit_is_carried_into_libredwgs_minimal_dxf():
+    minimal = b"999\nLibreDWG\n  0\nSECTION\n  2\nHEADER\n  9\n$ACADVER\n  1\nAC1024\n  0\nENDSEC\n"
+    full = b"  9\n$MEASUREMENT\n 70\n     1\n  9\n$INSUNITS\n 70\n     4\n  9\n$X\n"
+    out = dwg._with_units(minimal, full)
+    assert b"$INSUNITS\n 70\n     4" in out and b"$MEASUREMENT\n 70\n     1" in out
+    assert out.index(b"$INSUNITS") < out.index(b"$ACADVER")
+    assert dwg._with_units(minimal, b"no units here") == minimal

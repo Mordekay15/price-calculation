@@ -109,17 +109,39 @@ def dwg_to_dxf(data: bytes, *, minimal: bool = False) -> bytes:
         return dst.read_bytes()
 
 
+_UNIT_VARS = (b"$INSUNITS", b"$MEASUREMENT")
+
+
+def _with_units(minimal: bytes, full: bytes) -> bytes:
+    """``minimal`` with the unit header variables of ``full`` (a minimal DXF
+    has none, so the unit would only be guessed)."""
+    lines = full.splitlines()
+    found = []
+    for i, line in enumerate(lines[:-2]):
+        if line.strip() in _UNIT_VARS:
+            found += [b"  9", line.strip(), lines[i + 1].rstrip(), lines[i + 2].rstrip()]
+    marker = b"HEADER\n"
+    at = minimal.replace(b"\r\n", b"\n").find(marker)
+    if not found or at < 0:
+        return minimal
+    text = minimal.replace(b"\r\n", b"\n")
+    at += len(marker)
+    return text[:at] + b"\n".join(found) + b"\n" + text[at:]
+
+
 def read_drawing(data: bytes, name: str) -> DxfFile:
     """Read a DXF, or a DWG converted to DXF. Never raises: a file that can't be
     read comes back with problems."""
     if not is_dwg(name):
         return read_dxf(data, name)
     try:
-        f = read_dxf(dwg_to_dxf(data), name)
+        full = dwg_to_dxf(data)
+        f = read_dxf(full, name)
         if f.problems and not f.pieces and converter() == "LibreDWG":
             # LibreDWG's full DXF can carry tables ezdxf can't read; its
-            # minimal DXF holds just the entities, which is all we need.
-            minimal = read_dxf(dwg_to_dxf(data, minimal=True), name)
+            # minimal DXF holds just the entities, which is all we need, plus
+            # the drawing's unit, taken from the full one.
+            minimal = read_dxf(_with_units(dwg_to_dxf(data, minimal=True), full), name)
             if minimal.pieces:
                 return minimal
     except ConversionError as exc:
