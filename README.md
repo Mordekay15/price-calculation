@@ -150,7 +150,8 @@ yellow (over a dark blue) ×10, and the 5 violets left two to a sheet.
    (one Sparrow run, or the box packer in the manual tab), so it keeps no
    holes where the extra pieces were.
 
-**Same parts first** (*Levysuunnitelma* in *Lisäasetukset*, the default).
+**Same parts first** (*Levysuunnitelma* in *Lisäasetukset*; the default is
+*Halvin*, the cheapest plan).
 Each part first gets full sheets of its own — as many as one sheet holds,
 cut as many times as the order fills them; with several sizes, on the size
 cheapest per piece — and only the pieces left over are mixed, on as few cheap

@@ -131,9 +131,9 @@ class SheetSettings:
 
     rankavali_mm: int = 0
     edges_mm: tuple[int, int, int, int] = (0, 0, 0, 0)
-    # Plan each part's full sheets on their own first, the leftovers mixed;
-    # else the cheapest plan (see core.cutting_stock.same_parts_plan).
-    same_parts_first: bool = True
+    # The cheapest plan (the default), or each part's full sheets on their own
+    # first, the leftovers mixed (see core.cutting_stock.same_parts_plan).
+    same_parts_first: bool = False
 
     def gaps(self) -> EdgeGaps:
         """The unusable strip along each edge, as the packers take it."""
@@ -151,10 +151,10 @@ def settings_summary(values: dict, labels: dict) -> str:
 
 
 _PLAN_HELP = (
+    "Halvin: levyt yhdistellään niin, että materiaali maksaa vähiten. "
     "Samat osat ensin: kustakin osasta täysiä levyjä, joilla on vain sitä "
     "osaa, niin monta kuin määrä täyttää; vain ylijäävät kappaleet "
-    "sekoitetaan samoille levyille. Halvin: levyt yhdistellään niin, että "
-    "materiaali maksaa vähiten."
+    "sekoitetaan samoille levyille."
 )
 _NEST_HELP = (
     "Yhdistettynä saman materiaalin ja paksuuden tuotteet sijoitellaan "
@@ -208,7 +208,7 @@ def render_nesting_inputs(*, key_prefix: str = "calc") -> SheetSettings:
     diagram that shows which edge is which. The caller puts them in its
     ``ADVANCED_LABEL`` expander."""
     same_parts_first = st.radio(
-        "Levysuunnitelma", options=(True, False), horizontal=True,
+        "Levysuunnitelma", options=(False, True), horizontal=True,
         format_func=lambda v: "Samat osat ensin" if v else "Halvin",
         key=f"{key_prefix}_same_parts_first", help=_PLAN_HELP,
     )
