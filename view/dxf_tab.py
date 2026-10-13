@@ -11,7 +11,8 @@ from dataclasses import dataclass, field
 import streamlit as st
 
 from core.pricing import build_lookup, get_sizes_for_material, parse_thickness_mm
-from core.dxf import DxfFile, DxfReport, fasteners_from_texts, read_dxf
+from core.dwg import read_drawing
+from core.dxf import DxfFile, DxfReport, fasteners_from_texts
 from core.geometry import net_area
 from core.sheet_cost import (
     group_products,
@@ -62,7 +63,7 @@ _DROPZONE_CSS = """
     gap: 0.5rem 1rem;
 }
 [class*="st-key-dxf_uploader"] [data-testid="stFileUploaderDropzone"]::before {
-    content: "Vedä ja pudota DXF-tiedostot tähän";
+    content: "Vedä ja pudota DXF- tai DWG-tiedostot tähän";
     width: 100%;
     text-align: center;
     font-weight: 600;
@@ -108,7 +109,7 @@ def render(data: dict) -> None:
 
     parts = _render_drop_area()
     if not parts:
-        st.info("Lataa vähintään yksi DXF-tiedosto aloittaaksesi.")
+        st.info("Lataa vähintään yksi DXF- tai DWG-tiedosto aloittaaksesi.")
         return
 
     # Per-part angles are chosen on the cards, drawn above the run row whose
@@ -163,13 +164,14 @@ def _render_drop_area() -> list[tuple[str, DxfFile]]:
     """The drop area; returns every part read so far, in upload order."""
     st.html(_DROPZONE_CSS)
     uploaded = st.file_uploader(
-        "Lataa DXF-tiedostot",
-        type="dxf",
+        "Lataa DXF- tai DWG-tiedostot",
+        type=["dxf", "dwg"],
         accept_multiple_files=True,
         key=f"dxf_uploader_{st.session_state.get(_INBOX, 0)}",
         help="Vedä tiedostot alueelle tai valitse ne koneelta. Voit ladata useita "
              "tiedostoja kerralla. Jokainen tiedosto on yksi tuote; ne siirtyvät "
-             "alle osakorteiksi, ja kortin Poista-painike poistaa osan.",
+             "alle osakorteiksi, ja kortin Poista-painike poistaa osan. DWG-tiedosto "
+             "muunnetaan ensin DXF:ksi (ODA File Converter tai LibreDWG).",
     )
     if _ingest(uploaded):
         st.rerun()  # redraw with the drop area empty
@@ -520,11 +522,11 @@ def _parts_for_group(products: list[dict]) -> tuple[list, dict[str, float]]:
 
 # ── Part cards ────────────────────────────────────────────────────────────────
 #
-# _ingest() reads each dropped file once with core.dxf.read_dxf into session
-# state and empties the drop area; the cards are the file list, and a card's
-# Poista button removes its file. _render_part_config() draws a
-# card — preview, measured size, material / thickness / quantity —
-# and returns the product dict the pricing uses, or None (with the reasons
+# _ingest() reads each dropped file once with core.dwg.read_drawing (a DWG is
+# converted to DXF first) into session state and empties the drop area; the
+# cards are the file list, and a card's Poista button removes its file.
+# _render_part_config() draws a card — preview, measured size, material /
+# thickness / quantity — and returns the product dict the pricing uses, or None (with the reasons
 # shown) when the part cannot be priced. The card and the pricing share the
 # same DxfReport, so what the card shows is exactly what Sparrow nests.
 
@@ -550,7 +552,7 @@ def _ingest(uploaded) -> bool:
         if up.name in names:
             dupes.append(up.name)
             continue
-        store[up.file_id] = read_dxf(up.getvalue(), up.name)
+        store[up.file_id] = read_drawing(up.getvalue(), up.name)
         names.add(up.name)
     if dropped:
         st.session_state[_INBOX] = st.session_state.get(_INBOX, 0) + 1

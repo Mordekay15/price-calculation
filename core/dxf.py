@@ -199,6 +199,8 @@ class DxfFile:
                 f"Valituilla tasoilla on elementtejä, joita ei vielä osata lukea: {listed}."
             )
 
+        if self.problems and not self.pieces:
+            return report  # the file couldn't be read: its own problem says why
         cut = [p for p in self.pieces if p.layer in chosen and p.solid]
         reference = [p for p in self.pieces if not (p.layer in chosen and p.solid)]
         contours = [Contour(p.points, True) for p in cut if p.closed]

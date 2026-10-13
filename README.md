@@ -66,6 +66,20 @@ detected automatically). They are saved as `price_data_<supplier>.json` next to
 the app, so re-upload only when a new monthly list arrives. Copper has no list
 price; set its €/kg in the sidebar.
 
+## DWG drawings
+
+The DXF tab also takes DWG files. Python can't read DWG, so each one is first
+converted to DXF (`core/dwg.py`), by the first converter found:
+
+1. **ODA File Converter** (free, most reliable): install it from the Open
+   Design Alliance site; ezdxf finds it in its default install folder.
+2. **LibreDWG** `dwg2dxf` (open source): the `LIBREDWG_BIN` environment
+   variable, `bin/dwg2dxf` (`bin/dwg2dxf.exe` on Windows), or `dwg2dxf` on the
+   `PATH`.
+
+Without either, or when a conversion fails, the part's card says why and asks
+for the drawing as DXF.
+
 ## Sparrow executable
 
 The DXF tab runs the [Sparrow](https://github.com/JeroenGar/sparrow) solver.
@@ -130,6 +144,7 @@ core/                   pure logic, no Streamlit
   rect_nesting.py       bounding-box packer (manual tab)
   sparrow.py            Sparrow: DXF part → solver run → fixed sheets → programs → cost
   dxf.py                the DXF reader: the part that is shown, nested and priced
+  dwg.py                DWG → DXF with ODA File Converter or LibreDWG, then the DXF reader
   geometry.py           polygon helpers (area, bbox, rotate, point-in-polygon)
   suppliers/            supplier list, detection, saved price lists, PDF parsers
     cells.py            cell cleaning and thickness-range helpers for the parsers
