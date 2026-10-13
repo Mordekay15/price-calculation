@@ -6,8 +6,8 @@ first one found of:
 1. **ODA File Converter** (free, most reliable): ezdxf's ``odafc`` add-on runs
    it when it is installed (``odafc.is_installed()``).
 2. **LibreDWG**'s ``dwg2dxf`` (open source): the ``LIBREDWG_BIN`` environment
-   variable, ``bin/dwg2dxf`` (``bin/dwg2dxf.exe`` on Windows), or ``dwg2dxf`` on
-   the ``PATH``.
+   variable, ``bin/dwg2dxf`` (on Windows ``bin/libredwg-win64/dwg2dxf.exe``, the
+   official build with its DLLs), or ``dwg2dxf`` on the ``PATH``.
 
 With neither, or when the conversion fails, the file comes back with a
 problem that says to save it as DXF."""
@@ -50,9 +50,11 @@ def libredwg_executable() -> str | None:
     env = os.environ.get("LIBREDWG_BIN")
     if env and pathlib.Path(env).is_file():
         return env
-    local = _BIN / ("dwg2dxf.exe" if sys.platform == "win32" else "dwg2dxf")
-    if local.is_file():
-        return str(local)
+    local = ([_BIN / "libredwg-win64" / "dwg2dxf.exe", _BIN / "dwg2dxf.exe"]
+             if sys.platform == "win32" else [_BIN / "dwg2dxf"])
+    for exe in local:
+        if exe.is_file():
+            return str(exe)
     return shutil.which("dwg2dxf")
 
 

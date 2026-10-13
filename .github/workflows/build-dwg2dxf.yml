@@ -1,6 +1,7 @@
-# Builds LibreDWG's dwg2dxf for Linux and commits it as bin/dwg2dxf, so the
-# DXF tab can read DWG files where ODA File Converter can't be installed
-# (Streamlit Community Cloud). Runs when this file changes, or by hand.
+# Builds LibreDWG's dwg2dxf for Linux (bin/dwg2dxf) and fetches the official
+# Windows build (bin/libredwg-win64/), tests both with the app's reader, and
+# commits them, so the DXF tab can read DWG files without ODA File Converter.
+# Runs when this file changes, or by hand.
 name: Build dwg2dxf
 
 on:
@@ -80,4 +81,70 @@ jobs:
           else
             git commit -m "bin/dwg2dxf: LibreDWG ${LIBREDWG_VERSION}, built by GitHub Actions"
             git push
+          fi
+
+  windows:
+    # After the Linux job, so the two commits don't race.
+    needs: build
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Fetch the official Windows build
+        run: |
+          git pull --ff-only origin "${GITHUB_REF_NAME}"
+          url="https://ftp.gnu.org/gnu/libredwg/libredwg-${LIBREDWG_VERSION}-win64.zip"
+          curl -fsSL "$url" -o libredwg.zip || curl -fsSL \
+            "https://github.com/LibreDWG/libredwg/releases/download/${LIBREDWG_VERSION}/libredwg-${LIBREDWG_VERSION}-win64.zip" \
+            -o libredwg.zip
+          mkdir -p win && unzip -q libredwg.zip -d win
+          exe=$(find win -iname dwg2dxf.exe | head -1)
+          echo "found: $exe"
+          rm -rf bin/libredwg-win64 && mkdir -p bin/libredwg-win64
+          dir=$(dirname "$exe")
+          cp "$exe" bin/libredwg-win64/
+          cp "$dir"/*.dll bin/libredwg-win64/ 2>/dev/null || true
+          ls -la bin/libredwg-win64
+          bin/libredwg-win64/dwg2dxf.exe --version
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Read a sample DWG with the app's reader
+        run: |
+          pip install -q -r requirements.txt
+          curl -fsSL "https://ftp.gnu.org/gnu/libredwg/libredwg-${LIBREDWG_VERSION}.tar.xz" -o src.tar.xz
+          tar xf src.tar.xz "libredwg-${LIBREDWG_VERSION}/test/test-data/example_2018.dwg" \
+            "libredwg-${LIBREDWG_VERSION}/test/test-data/sample_2000.dwg"
+          python - <<'EOF'
+          import glob, os
+          from core import dwg
+          dwg._oda_installed = lambda: False
+          print("converter:", dwg.converter(), dwg.libredwg_executable())
+          assert dwg.libredwg_executable().endswith("dwg2dxf.exe")
+          ok = 0
+          for path in glob.glob("libredwg-*/test/test-data/*.dwg"):
+              f = dwg.read_drawing(open(path, "rb").read(), os.path.basename(path))
+              print(os.path.basename(path), len(f.pieces), f.problems[:1])
+              ok += bool(f.pieces) and not f.problems
+          assert ok, "no sample DWG could be read"
+          EOF
+
+      - name: Commit bin/libredwg-win64
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bin/libredwg-win64
+          if git diff --cached --quiet; then
+            echo "bin/libredwg-win64 is unchanged"
+          else
+            git commit -m "bin/libredwg-win64: LibreDWG ${LIBREDWG_VERSION} for Windows"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
