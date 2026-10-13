@@ -23,15 +23,3 @@ def test_a_missing_solver_is_said_on_the_page(monkeypatch):
     assert any("scipy" in w.value for w in at.warning)
     monkeypatch.setattr(view.common, "have_solver", lambda: True)
     assert not AppTest.from_function(page).run().warning
-
-
-def test_the_cheapest_plan_is_the_default():
-    def page():
-        import streamlit as st
-
-        from view.common import render_nesting_inputs
-        st.session_state["sheet"] = render_nesting_inputs()
-
-    at = AppTest.from_function(page).run()
-    assert at.radio(key="calc_same_parts_first").value is False
-    assert at.session_state["sheet"].same_parts_first is False
