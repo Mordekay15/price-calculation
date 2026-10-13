@@ -80,6 +80,11 @@ converted to DXF (`core/dwg.py`), by the first converter found:
 Without either, or when a conversion fails, the part's card says why and asks
 for the drawing as DXF.
 
+`bin/dwg2dxf` (Linux) is built from the LibreDWG source by the GitHub Actions
+workflow `.github/workflows/build-dwg2dxf.yml`, which also checks that a plate
+survives a round trip through DWG. Run it again (Actions → Build dwg2dxf) to
+rebuild, or change `LIBREDWG_VERSION` in it to update.
+
 ## Sparrow executable
 
 The DXF tab runs the [Sparrow](https://github.com/JeroenGar/sparrow) solver.
