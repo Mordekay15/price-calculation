@@ -1,4 +1,4 @@
-"""Work pricing, pure (no Streamlit): cutting, bending, threads, nuts, welding,
+"""Work pricing, pure (no Streamlit): cutting, bending, threads, fasteners, welding,
 subcontracting and setup, priced per piece.
 
 A piece's price is ``c + F / kpl``: ``c`` is what every piece costs (its
@@ -37,10 +37,14 @@ _COPPER = (                 # kupari, messinki
 )
 
 
-def nut_price(material: str | None) -> float:
-    """Default € per press nut, the nut and pressing it in: over 1 € in
-    stainless (RST / HST), at least 0.25 € otherwise."""
-    return 1.00 if re.search(r"\b(rst|hst)\b", (material or "").lower()) else 0.25
+FASTENER_INSERT_EUR = 0.20
+
+
+def fastener_price(material: str | None) -> float:
+    """Default price of one fastener (press nut, bolt…), without putting it in.
+    With ``FASTENER_INSERT_EUR`` it makes 1.00 € in stainless (RST / HST) and
+    0.25 € otherwise, Stremet's usual minimums."""
+    return 0.80 if re.search(r"\b(rst|hst)\b", (material or "").lower()) else 0.05
 
 
 def laser_family(material: str | None) -> tuple[str, tuple]:
@@ -112,8 +116,9 @@ class WorkInputs:
     eur_per_bend: float = 0.20
     threads: int = 0
     eur_per_thread: float = 0.20
-    nuts: int = 0                         # pressed in (puristemutterit)
-    eur_per_nut: float = 0.25
+    fasteners: int = 0                    # press nuts, bolts… (kiinnikkeet)
+    eur_per_fastener: float = 0.05        # one fastener
+    eur_per_insert: float = FASTENER_INSERT_EUR   # putting one in
     weld_m: float = 0.0
     subcontract_eur: float = 0.0          # per piece
     programming_eur: float = 0.0
@@ -122,8 +127,8 @@ class WorkInputs:
 
 def phases(inp: WorkInputs) -> int:
     """Work phases the part goes through: cutting, plus each of bending,
-    threading, pressing nuts, welding and subcontracting that it has."""
-    return 1 + sum(bool(x) for x in (inp.bends, inp.threads, inp.nuts, inp.weld_m,
+    threading, fastening, welding and subcontracting that it has."""
+    return 1 + sum(bool(x) for x in (inp.bends, inp.threads, inp.fasteners, inp.weld_m,
                                       inp.subcontract_eur))
 
 
@@ -143,7 +148,7 @@ class WorkCost:
     cutting: float = 0.0
     bending: float = 0.0
     threads: float = 0.0
-    nuts: float = 0.0
+    fasteners: float = 0.0
     welding: float = 0.0
     subcontract: float = 0.0
     setup: float = 0.0
@@ -160,7 +165,7 @@ class WorkCost:
     @property
     def per_piece(self) -> float:
         """Work per piece, the batch costs shared over the quantity."""
-        return (self.cutting + self.cut_minimum + self.bending + self.threads + self.nuts
+        return (self.cutting + self.cut_minimum + self.bending + self.threads + self.fasteners
                 + self.welding + self.subcontract + self.batch_fixed / self.qty)
 
     @property
@@ -185,7 +190,7 @@ def work_cost(inp: WorkInputs, qty: int, rates: WorkRates) -> WorkCost:
         cutting=cutting,
         bending=inp.bends * inp.eur_per_bend,
         threads=inp.threads * inp.eur_per_thread,
-        nuts=inp.nuts * inp.eur_per_nut,
+        fasteners=inp.fasteners * (inp.eur_per_fastener + inp.eur_per_insert),
         welding=welding,
         subcontract=inp.subcontract_eur,
         setup=setup,

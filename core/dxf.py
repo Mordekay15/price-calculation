@@ -427,13 +427,15 @@ def _explode_blocks(entities):
             yield e
 
 
-_NUTS = re.compile(r"MUTTER\w*\D*?(\d+)\s*KPL", re.IGNORECASE)
+_FASTENERS = re.compile(r"(?:MUTTER|RUUV|PULT|NIIT|HOLK|TAPP)\w*\D*?(\d+)\s*KPL",
+                        re.IGNORECASE)
 
 
-def nuts_from_texts(texts: list[str]) -> int:
-    """Press nuts the drawing's notes ask for, e.g. "M5-PURISTEMUTTERIT X4KPL"
-    and "M4-PURISTEMUTTERIT 5KPL" make 9."""
-    return sum(int(n) for t in texts for n in _NUTS.findall(t))
+def fasteners_from_texts(texts: list[str]) -> int:
+    """Fasteners the drawing's notes ask for (nuts, screws, bolts, rivets,
+    bushes, studs), e.g. "M5-PURISTEMUTTERIT X4KPL" and "M4-PURISTEMUTTERIT
+    5KPL" make 9."""
+    return sum(int(n) for t in texts for n in _FASTENERS.findall(t))
 
 
 def _is_bend_layer(name: str) -> bool:

@@ -165,16 +165,17 @@ def test_manual_tab_prices_work_per_piece(tmp_path, monkeypatch):
     assert row["Leikkaus €/kpl"] == 0.7 and row["Asetus ym. €/kpl"] == 6.0
 
 
-def test_nut_price_depends_on_the_material():
-    from core.work import nut_price
-    assert nut_price("RST 2B") == nut_price("HST 2B") == 1.00
-    assert nut_price("S235") == nut_price("Alumiini 5754") == 0.25
+def test_a_fastener_put_in_costs_stremets_minimum_by_default():
+    from core.work import FASTENER_INSERT_EUR, fastener_price
+    assert fastener_price("RST 2B") + FASTENER_INSERT_EUR == pytest.approx(1.00)
+    assert fastener_price("S235") + FASTENER_INSERT_EUR == pytest.approx(0.25)
 
 
-def test_nuts_are_counted_and_priced_each():
-    from core.dxf import nuts_from_texts
-    assert nuts_from_texts(["M5-PURISTEMUTTERIT X4KPL", "M4-PURISTEMUTTERIT 5KPL",
+def test_fasteners_are_counted_and_priced_as_count_times_part_plus_insert():
+    from core.dxf import fasteners_from_texts
+    assert fasteners_from_texts(["M5-PURISTEMUTTERIT X4KPL", "M4-PURISTEMUTTERIT 5KPL",
                             "MATERIAALI: CR2-11 PL1,5 sinkitty"]) == 9
-    inp = WorkInputs(nuts=9, eur_per_nut=0.3)
+    assert fasteners_from_texts(["M6 PURISTERUUVIT 2 KPL", "PULTIT X3 KPL"]) == 5
+    inp = WorkInputs(fasteners=9, eur_per_fastener=0.3, eur_per_insert=0.2)
     cost = work_cost(inp, 1, RATES)
-    assert cost.nuts == pytest.approx(2.7) and phases(inp) == 2
+    assert cost.fasteners == pytest.approx(4.5) and phases(inp) == 2
