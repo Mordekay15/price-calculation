@@ -266,3 +266,49 @@ def test_poista_kaikki_removes_every_card_and_its_settings():
     assert at.session_state["dxf_store"] == {} and not at.session_state["materials"]
     assert not at.session_state["dxf_part_config"]
     assert not [k for k in at.session_state if k.startswith(("dxf_mat_", "dxf_q_"))]
+
+
+def test_a_margin_change_reprices_without_running_sparrow_again():
+    # The same group nested twice, at 15 % and 20 % margin: the second time
+    # every Sparrow question is answered from the session, and only the price
+    # changes. A new search time asks Sparrow again.
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        import ezdxf
+        import streamlit as st
+
+        import view.dxf_tab as tab
+        from core.dxf import read_dxf
+        from tests.conftest import dxf_bytes
+        from tests.test_sparrow import fake_solver
+        from view.common import SheetSettings
+
+        runs = st.session_state.setdefault("runs", [])
+
+        def counting(instance, *, executable, time_limit_sec, min_item_separation):
+            runs.append(time_limit_sec)
+            return fake_solver(instance, separation=min_item_separation)
+
+        doc = ezdxf.new()
+        doc.header["$INSUNITS"] = 4
+        doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 50), (0, 50)], close=True)
+        report = read_dxf(dxf_bytes(doc), "p.dxf").part()
+        prods = [{"id": "p", "name": "p.dxf", "report": report, "qty": 30, "angles": (0, 90)}]
+        lookup = {("2", "S235 | 1000x2000"): 900.0}
+        totals = st.session_state.setdefault("totals", [])
+        real, tab.run_sparrow = tab.run_sparrow, counting
+        try:
+            for margin, time_limit in ((15.0, 4), (20.0, 4), (20.0, 8)):
+                settings = tab._Settings("combined", SheetSettings(), time_limit, margin, lookup)
+                entry = tab._nester(lookup, settings, "sparrow")(("S235", "2"), prods)
+                totals.append((len(runs), round(entry["result"].options[0].total_eur, 2)))
+        finally:
+            tab.run_sparrow = real
+
+    at = AppTest.from_function(page).run()
+    assert not at.exception
+    (n15, eur15), (n20, eur20), (n8s, _) = at.session_state["totals"]
+    assert n15 > 0 and n20 == n15                     # margin change: no new runs
+    assert eur20 > eur15                              # but the new price
+    assert n8s > n20                                  # a new search time runs again

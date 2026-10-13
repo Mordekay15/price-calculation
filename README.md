@@ -49,6 +49,12 @@ The DXF tab runs the [Sparrow](https://github.com/JeroenGar/sparrow) solver.
 The repo ships both builds in `bin/`. For another platform, build or download
 Sparrow and set `SPARROW_BIN` or replace the file in `bin/`.
 
+Each Sparrow run takes the search time (*Sijoittelun hakuaika*). The DXF tab
+remembers every successful run for the session: the same question (parts,
+strip, cut gap, search time) is answered without running Sparrow again. So
+changing the margin or a sheet price re-prices a group instantly; changing the
+search time, a gap, a quantity or an angle runs again, as the layouts change.
+
 ## Tests
 
 ```bash
@@ -175,7 +181,7 @@ big, small over small, big, small, big) hold 4 + 4 on a 1250 × 2500 sheet,
 where their boxes need 2557 mm. So on each sheet size the app looks for *near
 misses*: for each part and each pair of parts, in the order's ratio, the most
 the boxes fit on a sheet and then one more, with how much longer the sheet
-would have to be for those boxes. The four smallest misses that have the area
+would have to be for those boxes. The two smallest misses that have the area
 are nested by Sparrow on the real shapes (one run each, `_NEAR_BUDGET` in
 `core/sparrow.py`); those that fit join the candidates. A pair whose boxes
 miss by a lot (two 704 mm plates can't share the 1250 mm height whatever

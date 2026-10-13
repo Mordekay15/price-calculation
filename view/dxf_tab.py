@@ -3,6 +3,8 @@ grouped by material + thickness and Sparrow nests the real shapes on every
 priced sheet size, behind a button and a progress bar, cached until an input
 changes."""
 
+import hashlib
+import json
 import time
 from dataclasses import dataclass, field
 
@@ -36,6 +38,8 @@ from view.sheet_usage import render_group
 from view.sparrow_progress import SparrowProgress, run_with_progress
 
 _CACHE = "dxf_sparrow_cache"    # {signature: computed group}
+_RUNS = "dxf_sparrow_runs"      # {instance key: SparrowResult}, every Sparrow run so far
+_RUNS_MAX = 2000                # the oldest runs are forgotten past this
 _RENEST = "dxf_sparrow_renest"  # {signature} of groups to re-nest on this run
 
 # Streamlit's uploader already takes dropped files, but it looks like a plain
@@ -316,13 +320,29 @@ def _group_label(key: tuple, prods: list[dict]) -> str:
 
 def _nester(lookup: dict, settings: _Settings, exe):
     """``nest(key, prods)``: one group nested with Sparrow behind a progress bar,
-    returned as a cache entry (None when its thickness can't be read)."""
+    returned as a cache entry (None when its thickness can't be read).
+
+    Every successful Sparrow run is remembered for the session: the same
+    question (parts, strip, cut gap, search time) gets the same answer without
+    running again.
+    A margin or price change re-prices a group without a single run."""
     progress = SparrowProgress()
+    # Taken here: the nesting runs in a worker thread, which has no session.
+    runs: dict = st.session_state.setdefault(_RUNS, {})
 
     def run_fn(instance, *, separation):
+        key = hashlib.sha1(json.dumps([instance, separation, settings.time_limit],
+                                      sort_keys=True).encode()).hexdigest()
+        if key in runs:
+            return runs[key]
         progress.run_started()
-        return run_sparrow(instance, executable=exe, time_limit_sec=settings.time_limit,
-                           min_item_separation=separation)
+        result = run_sparrow(instance, executable=exe, time_limit_sec=settings.time_limit,
+                             min_item_separation=separation)
+        if result.ok:                   # a failed run (say a timeout) is tried again
+            runs[key] = result
+            while len(runs) > _RUNS_MAX:
+                runs.pop(next(iter(runs)))
+        return result
 
     def nest(key: tuple, prods: list[dict]) -> dict | None:
         material, thickness = key[0], key[1]

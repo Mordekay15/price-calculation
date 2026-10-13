@@ -565,7 +565,7 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
 
 # Near misses (below) Sparrow checks on their real shapes, per sheet size, one
 # run each; and how much longer than the sheet a near miss's boxes may need.
-_NEAR_BUDGET = 4
+_NEAR_BUDGET = 2
 _NEAR_MAX_OVER = 0.25
 
 
