@@ -80,12 +80,6 @@ def test_welding_is_metres_over_metres_per_hour_times_the_hourly_rate():
     assert cost.welding == pytest.approx(30)          # 0.75 m / 1.5 m/h × 60 €/h
 
 
-def test_painting_costs_at_least_the_minimum_per_batch():
-    assert work_cost(WorkInputs(paint_eur=40), 10, RATES).painting == 90
-    assert work_cost(WorkInputs(paint_eur=150), 10, RATES).painting == 150
-    assert work_cost(WorkInputs(), 10, RATES).painting == 0
-
-
 def test_setup_follows_the_phases_unless_set():
     assert work_cost(WorkInputs(), 1, RATES).setup == 40
     assert work_cost(WorkInputs(bends=2), 1, RATES).setup == 60

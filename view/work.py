@@ -26,7 +26,6 @@ _RATE_KEYS = {          # WorkRates field -> sidebar widget key
     "min_cut_eur_per_sheet": "work_min_cut",
     "weld_m_per_h":          "work_weld_m_per_h",
     "weld_eur_per_h":        "work_weld_eur_per_h",
-    "paint_min_eur":         "work_paint_min",
 }
 _SETUP_KEYS = ("work_setup_1", "work_setup_2", "work_setup_3")
 
@@ -50,11 +49,9 @@ def render_rates() -> None:
                         key=_RATE_KEYS["weld_m_per_h"])
         c2.number_input("Hitsaus (€/h)", min_value=0.0, value=d.weld_eur_per_h, step=5.0,
                         key=_RATE_KEYS["weld_eur_per_h"])
-        st.number_input("Maalaus vähintään (€/erä)", min_value=0.0, value=d.paint_min_eur,
-                        step=5.0, key=_RATE_KEYS["paint_min_eur"])
         st.markdown("Asetus (€/erä) työvaiheiden mukaan",
                     help="Asetuskustannus ei riipu kappalemäärästä. Työvaiheita ovat "
-                         "leikkaus, taivutus, kierteet, hitsaus, maalaus ja alihankinta.")
+                         "leikkaus, taivutus, kierteet, hitsaus ja alihankinta.")
         for col, key, label, value in zip(st.columns(3), _SETUP_KEYS,
                                           ("1 vaihe", "2 vaihetta", "3+ vaihetta"),
                                           d.setup_eur):
@@ -92,7 +89,7 @@ def _auto(col, label: str, key: str, auto: float | None, *, step: float,
 def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
                        qty: int, cut_length_m: float, bends: int = 0,
                        threads: int = 0) -> WorkInputs:
-    """The card's "Työvaiheet": cutting, bends, threads, welding, painting,
+    """The card's "Työvaiheet": cutting, bends, threads, welding,
     subcontracting and setup. ``cut_length_m``, ``bends`` and ``threads`` are
     what the drawing gives (the defaults, overwritable); the laser speed comes
     from the table. ``key`` makes the widget keys unique per card."""
@@ -134,25 +131,21 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
         eur_per_thread = c[3].number_input("€ / kierre", min_value=0.0, value=0.20,
                                            step=0.05, key=f"work_thread_eur_{key}")
 
-        c = st.columns(5)
+        c = st.columns(4)
         weld_m = c[0].number_input("Hitsaus (m/kpl)", min_value=0.0, value=0.0, step=0.1,
                                    key=f"work_weld_{key}")
         subcontract = c[1].number_input("Alihankinta (€/kpl)", min_value=0.0, value=0.0,
                                         step=0.5, key=f"work_sub_{key}",
                                         help="Esim. anodisointi tai sinkitys.")
-        paint = c[2].number_input("Maalaus (€/erä)", min_value=0.0, value=0.0, step=10.0,
-                                  key=f"work_paint_{key}",
-                                  help=f"Vähintään {rates.paint_min_eur:g} €; isommat "
-                                       "tarjouksen mukaan.")
-        programming = c[3].number_input("Ohjelmointi (€/erä)", min_value=0.0, value=0.0,
+        programming = c[2].number_input("Ohjelmointi (€/erä)", min_value=0.0, value=0.0,
                                         step=10.0, key=f"work_prog_{key}",
                                         help="Esim. uusi tuote.")
         inputs = WorkInputs(method=method, cut_length_m=cut_length_m, laser=laser, hits=hits,
                             bends=n_bends, eur_per_bend=eur_per_bend, threads=n_threads,
                             eur_per_thread=eur_per_thread, weld_m=weld_m,
-                            subcontract_eur=subcontract, paint_eur=paint,
+                            subcontract_eur=subcontract,
                             programming_eur=programming)
-        setup = _auto(c[4], "Asetus (€/erä)", f"work_setup_{key}",
+        setup = _auto(c[3], "Asetus (€/erä)", f"work_setup_{key}",
                       default_setup(inputs, rates), step=5.0, fmt="%.0f",
                       help="Oletus työvaiheiden määrän mukaan (sivupalkin Työn hinnat).")
         inputs = WorkInputs(**{**inputs.__dict__, "setup_eur": setup})

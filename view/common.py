@@ -332,8 +332,8 @@ def _render_piece_prices(priced: list, lead: str, material_total: float) -> None
     complete = all(pc.eur is not None and wc.priced for pc, wc in priced)
 
     st.markdown("**Kappalehinnat**", help=(
-        "Kpl-hinta = materiaali + työ + erän kiinteät kulut (asetus, ohjelmointi, "
-        "maalaus) jaettuna kappalemäärällä. Työssä ei ole katetta. Leikkaus on "
+        "Kpl-hinta = materiaali + työ + erän kiinteät kulut (asetus, ohjelmointi) "
+        "jaettuna kappalemäärällä. Työssä ei ole katetta. Leikkaus on "
         "vähintään sivupalkin minimi levyä kohden."))
     if any(wc.cut_minimum for _, wc in priced):
         st.caption("Leikkaukseen on lisätty levykohtainen minimiveloitus.")

@@ -1,9 +1,9 @@
 """Work pricing, pure (no Streamlit): cutting, bending, threads, welding,
-subcontracting, painting and setup, priced per piece.
+subcontracting and setup, priced per piece.
 
 A piece's price is ``c + F / kpl``: ``c`` is what every piece costs (its
-material and its work), ``F`` what the batch costs once (setup, programming,
-painting), shared over the quantity. Work carries no margin: the rates here are
+material and its work), ``F`` what the batch costs once (setup and
+programming), shared over the quantity. Work carries no margin: the rates here are
 selling prices. Cutting is at least ``min_cut_eur_per_sheet`` per sheet used
 (see ``apply_sheet_minimum``)."""
 
@@ -88,14 +88,13 @@ class WorkRates:
     min_cut_eur_per_sheet: float = 7.0    # cutting, at least this per sheet
     weld_m_per_h: float = 1.5
     weld_eur_per_h: float = 60.0
-    paint_min_eur: float = 90.0           # a painted batch costs at least this
     # Setup per batch by the number of work phases: 1, 2, 3 or more.
     setup_eur: tuple[float, float, float] = (40.0, 60.0, 80.0)
 
 
 @dataclass(frozen=True)
 class WorkInputs:
-    """One part's work, as set on its card. Lengths are per piece; ``paint_eur``,
+    """One part's work, as set on its card. Lengths are per piece;
     ``programming_eur`` and ``setup_eur`` are per batch. ``setup_eur`` None
     means the default by phases (``default_setup``)."""
 
@@ -109,16 +108,15 @@ class WorkInputs:
     eur_per_thread: float = 0.20
     weld_m: float = 0.0
     subcontract_eur: float = 0.0          # per piece
-    paint_eur: float = 0.0
     programming_eur: float = 0.0
     setup_eur: float | None = None
 
 
 def phases(inp: WorkInputs) -> int:
     """Work phases the part goes through: cutting, plus each of bending,
-    threading, welding, painting and subcontracting that it has."""
+    threading, welding and subcontracting that it has."""
     return 1 + sum(bool(x) for x in (inp.bends, inp.threads, inp.weld_m,
-                                      inp.paint_eur, inp.subcontract_eur))
+                                      inp.subcontract_eur))
 
 
 def default_setup(inp: WorkInputs, rates: WorkRates) -> float:
@@ -129,8 +127,8 @@ def default_setup(inp: WorkInputs, rates: WorkRates) -> float:
 
 @dataclass(frozen=True)
 class WorkCost:
-    """One part's work. The first five are € per piece; ``setup``,
-    ``programming`` and ``painting`` € per batch. ``cut_minimum`` is what the
+    """One part's work. The first five are € per piece; ``setup``
+    and ``programming`` € per batch. ``cut_minimum`` is what the
     per-sheet minimum added to the cutting, per piece."""
 
     qty: int
@@ -141,7 +139,6 @@ class WorkCost:
     subcontract: float = 0.0
     setup: float = 0.0
     programming: float = 0.0
-    painting: float = 0.0
     cut_minimum: float = 0.0
     cut_seconds: float = 0.0              # laser, one piece
     priced: bool = True                   # False: laser speed unknown
@@ -149,7 +146,7 @@ class WorkCost:
     @property
     def batch_fixed(self) -> float:
         """F: what the batch costs once."""
-        return self.setup + self.programming + self.painting
+        return self.setup + self.programming
 
     @property
     def per_piece(self) -> float:
@@ -173,7 +170,6 @@ def work_cost(inp: WorkInputs, qty: int, rates: WorkRates) -> WorkCost:
         seconds = inp.cut_length_m * inp.laser.s_per_m
         cutting, priced = seconds * inp.laser.eur_per_s, True
     welding = inp.weld_m / rates.weld_m_per_h * rates.weld_eur_per_h if rates.weld_m_per_h else 0.0
-    painting = max(inp.paint_eur, rates.paint_min_eur) if inp.paint_eur else 0.0
     setup = default_setup(inp, rates) if inp.setup_eur is None else inp.setup_eur
     return WorkCost(
         qty=qty,
@@ -184,7 +180,6 @@ def work_cost(inp: WorkInputs, qty: int, rates: WorkRates) -> WorkCost:
         subcontract=inp.subcontract_eur,
         setup=setup,
         programming=inp.programming_eur,
-        painting=painting,
         cut_seconds=seconds,
         priced=priced,
     )

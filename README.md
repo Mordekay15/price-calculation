@@ -41,8 +41,8 @@ the quantity). Work has no margin; its rates are selling prices.
 - **Bends** and **threads**: count × € each (0.20 by default). The DXF gives
   both: bend lines on a bend layer (e.g. `IV_BEND_DOWN`) and threads drawn with
   the ISO ¾-circle mark.
-- **Welding**: metres ÷ m/h × €/h. **Subcontracting** €/kpl. **Painting** and
-  **programming** € per batch (painting at least the minimum).
+- **Welding**: metres ÷ m/h × €/h. **Subcontracting** €/kpl. **Programming**
+  € per batch.
 - **Setup** per batch by the number of work phases: 40 / 60 / 80 €.
 
 A grey value in an input is the automatic one; typing replaces it, clearing the
