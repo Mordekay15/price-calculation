@@ -8,7 +8,7 @@ import streamlit as st
 
 from core.pricing import build_lookup, parse_thickness_mm
 from core.rect_nesting import rect_options
-from core.sheet_cost import EdgeGaps, group_products
+from core.sheet_cost import EdgeGaps, group_products, reprice, size_prices
 from view.common import (
     ADVANCED_LABEL,
     NESTING_LABELS,
@@ -42,9 +42,16 @@ def render(data: dict) -> None:
             return None
         gaps = sheet.gaps()
         result = _options(
-            lookup, material, thickness, thickness_mm, prods, margin_pct,
+            lookup, material, thickness, thickness_mm, prods,
             (gaps.top, gaps.bottom, gaps.left, gaps.right), sheet.rankavali_mm,
         )
+        if result is not None:
+            # The margin only prices the plans: applied here, so changing it
+            # is instant (one factor on every sheet keeps the same plans).
+            result = reprice(result, material=material, thickness_mm=thickness_mm,
+                             base_ppt={(w, h): p for w, h, p in
+                                       size_prices(lookup, material, thickness)},
+                             margin_pct=margin_pct)
         ids = "-".join(str(p["id"]) for p in prods)
         return render_group(
             material, thickness, thickness_mm, result, margin_pct=margin_pct,
@@ -62,12 +69,12 @@ def render(data: dict) -> None:
 
 
 @st.cache_data(max_entries=64, show_spinner="Etsitään vähiten levyjä käyttävää suunnitelmaa…")
-def _options(lookup, material, thickness, thickness_mm, prods, margin_pct, edges, rankavali_mm):
-    """``rect_options``, kept until a part or setting changes: the
-    fewest-sheets search can take a few seconds on a large order."""
+def _options(lookup, material, thickness, thickness_mm, prods, edges, rankavali_mm):
+    """``rect_options`` without the margin, kept until a part or setting
+    changes: the fewest-sheets search can take a few seconds on a large
+    order. The caller applies the margin (``reprice``)."""
     return rect_options(lookup, material, thickness, thickness_mm, prods,
-                        margin_pct=margin_pct, edges=EdgeGaps(*edges),
-                        rankavali_mm=rankavali_mm)
+                        edges=EdgeGaps(*edges), rankavali_mm=rankavali_mm)
 
 
 # ── Product cards ─────────────────────────────────────────────────────────────

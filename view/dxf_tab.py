@@ -13,7 +13,14 @@ import streamlit as st
 from core.pricing import build_lookup, get_sizes_for_material, parse_thickness_mm
 from core.dxf import DxfFile, DxfReport, read_dxf
 from core.geometry import net_area
-from core.sheet_cost import group_products, is_ready
+from core.sheet_cost import (
+    group_products,
+    is_ready,
+    reprice,
+    scales_evenly,
+    sheet_eur,
+    size_prices,
+)
 from core.sparrow import (
     NESTING_ANGLES,
     find_executable,
@@ -142,9 +149,10 @@ def render(data: dict) -> None:
     run, update = _render_run_buttons(c_run, c_update, n_new, n_stale, len(groups))
     st.divider()  # the run buttons above, the results below
     renest = st.session_state.pop(_RENEST, set())
-    _show(products, groups, settings, cache, _nester(lookup, settings, exe),
-          run=run, update=update, renest=renest)
-    if run or update or renest:
+    replanned = _show(products, groups, settings, cache, _nester(lookup, settings, exe),
+                      lambda s: _nester(lookup, s, exe, remembered_only=True),
+                      run=run, update=update, renest=renest)
+    if run or update or renest or replanned:
         # The button's count was drawn before these groups were nested:
         # redraw it with the new count (e.g. "kaikki laskettu").
         st.rerun()
@@ -289,24 +297,48 @@ def _render_settings() -> tuple[float, str, SheetSettings]:
 
 
 def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
-    """Stable cache key: material + thickness, the parts (quantity, nesting
-    angles), the margin and the prices — what decides the nesting and its
-    price. With the prices in it, a price set or changed later (say copper's,
-    first left empty) makes the group new again instead of keeping the result
-    made without it.
+    """Stable cache key: what decides the nesting — the parts (quantity,
+    nesting angles) and the sheet sizes they are nested on (those with a price
+    for the material and thickness).
 
-    The nesting mode is left out: a part nested alone is the same nesting in
-    either mode, so switching to "separate" keeps a group of one part, and
-    back again keeps each single-part group. The Sparrow settings are left
-    out too: they are saved with the result (``entry["nesting"]``), so
-    changing one doesn't drop every result.
+    What only prices it is left out — material, thickness, margin, the €/tn —
+    so changing one keeps the result: ``_priced`` prices it again, or plans
+    it again from the remembered Sparrow runs, without the calculate button.
+    The nesting mode is left out too: a part nested alone is the same nesting
+    in either mode. The Sparrow settings are saved with the result
+    (``entry["nesting"]``), so changing one doesn't drop every result.
     """
-    material, thickness = key[0], key[1]
     prod_sig = ",".join(f"{p['id']}:{p['qty']}:{'/'.join(map(str, p['angles']))}"
                         for p in products)
-    prices = [(size, settings.lookup.get((thickness, f"{material} | {size}")))
-              for size in get_sizes_for_material(settings.lookup, material)]
-    return f"{material}|{thickness}|{prod_sig}|{settings.margin_pct}|{prices}"
+    sizes = sorted({(w, h) for w, h, _ in size_prices(settings.lookup, key[0], key[1])})
+    return f"{prod_sig}|{sizes}"
+
+
+def _pricing(lookup: dict, key: tuple, margin_pct: float) -> dict:
+    """What a result was priced with: material, thickness, €/tn by size, margin."""
+    return {"material": key[0], "thickness_mm": parse_thickness_mm(key[1]),
+            "prices": {(w, h): p for w, h, p in size_prices(lookup, key[0], key[1])},
+            "margin_pct": margin_pct}
+
+
+def _sheet_eur(pricing: dict) -> dict:
+    """One sheet's price by size, as ``pricing`` prices it."""
+    return {(w, h): sheet_eur(w, h, p, pricing["thickness_mm"], pricing["material"],
+                              pricing["margin_pct"])
+            for (w, h), p in pricing["prices"].items()}
+
+
+def _priced(entry: dict, now: dict):
+    """The entry's result at today's prices ``now``: as it is, re-priced when
+    every sheet's price changed by one factor (the same plans stay cheapest),
+    or None when they changed unevenly (then it must be planned again)."""
+    was = entry.get("pricing")
+    if was == now or entry["result"] is None:
+        return entry["result"]
+    if was is None or not scales_evenly(_sheet_eur(was), _sheet_eur(now)):
+        return None
+    return reprice(entry["result"], material=now["material"], thickness_mm=now["thickness_mm"],
+                   base_ppt=now["prices"], margin_pct=now["margin_pct"])
 
 
 def _group_label(key: tuple, prods: list[dict]) -> str:
@@ -318,21 +350,31 @@ def _group_label(key: tuple, prods: list[dict]) -> str:
     return label
 
 
-def _nester(lookup: dict, settings: _Settings, exe):
+class _NotRemembered(Exception):
+    """A Sparrow question with no remembered answer, in remembered-only mode."""
+
+
+def _nester(lookup: dict, settings: _Settings, exe, *, remembered_only: bool = False):
     """``nest(key, prods)``: one group nested with Sparrow behind a progress bar,
     returned as a cache entry (None when its thickness can't be read).
 
     Every successful Sparrow run is remembered for the session: the same
     question (parts, strip, cut gap, search time) gets the same answer without
-    running again.
-    A margin or price change re-prices a group without a single run."""
+    running again. ``remembered_only``: plan from remembered runs alone — no
+    progress bar; None as soon as a question has no remembered answer (then
+    the calculate button is needed). Only a planned sheet nested again
+    (``renest_fn``) may still run Sparrow: which sheets those are depends on
+    the prices."""
     progress = SparrowProgress()
     # Taken here: the nesting runs in a worker thread, which has no session.
     runs: dict = st.session_state.setdefault(_RUNS, {})
 
+    def key_of(instance, separation) -> str:
+        return hashlib.sha1(json.dumps([instance, separation, settings.time_limit],
+                                       sort_keys=True).encode()).hexdigest()
+
     def run_fn(instance, *, separation):
-        key = hashlib.sha1(json.dumps([instance, separation, settings.time_limit],
-                                      sort_keys=True).encode()).hexdigest()
+        key = key_of(instance, separation)
         if key in runs:
             return runs[key]
         progress.run_started()
@@ -344,37 +386,53 @@ def _nester(lookup: dict, settings: _Settings, exe):
                 runs.pop(next(iter(runs)))
         return result
 
+    def remembered(instance, *, separation):
+        key = key_of(instance, separation)
+        if key not in runs:
+            raise _NotRemembered
+        return runs[key]
+
     def nest(key: tuple, prods: list[dict]) -> dict | None:
         material, thickness = key[0], key[1]
         thickness_mm = parse_thickness_mm(thickness)
         if thickness_mm is None:
             return None
         parts, areas = _parts_for_group(prods)
-        result = run_with_progress(
-            progress, _group_label(key, prods),
-            sparrow_options,
-            lookup, material, thickness, thickness_mm, parts,
-            run_fn=run_fn, margin_pct=settings.margin_pct,
-            edges=settings.sheet.gaps(), rankavali_mm=settings.sheet.rankavali_mm,
-        )
+        args = (lookup, material, thickness, thickness_mm, parts)
+        kwargs = dict(margin_pct=settings.margin_pct, edges=settings.sheet.gaps(),
+                      rankavali_mm=settings.sheet.rankavali_mm)
+        if remembered_only:
+            try:
+                result = sparrow_options(*args, run_fn=remembered, renest_fn=run_fn, **kwargs)
+            except _NotRemembered:
+                return None
+        else:
+            result = run_with_progress(progress, _group_label(key, prods), sparrow_options,
+                                       *args, run_fn=run_fn, **kwargs)
         return {"result": result, "parts": parts, "areas": areas,
-                "thickness_mm": thickness_mm, "nesting": settings.nesting()}
+                "nesting": settings.nesting(),
+                "pricing": _pricing(lookup, key, settings.margin_pct)}
 
     return nest
 
 
-def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest,
+def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest, replan,
           *, run: bool = False, update: bool = False,
-          renest: set = frozenset()) -> None:
-    """Render every group's result, then the parts summary.
+          renest: set = frozenset()) -> bool:
+    """Render every group's result, then the parts summary. True when a group
+    was planned from remembered Sparrow runs (the run button's count is then
+    out of date).
 
     A group is nested in its own place first — so each result shows as soon
     as it is ready, not after the whole run — when ``run`` and it has no
     result, when ``update`` and its result is outdated, or when its signature
-    is in ``renest``.
+    is in ``renest``. A result is shown at today's prices (``_priced``); when
+    they changed unevenly, or a group has no result yet, ``replan(settings)``
+    plans it from the remembered runs without the button, if it can.
     """
     areas: dict[str, float] = {}
     current = settings.nesting()
+    replanned = []
 
     def render_one(key, prods):
         sig = _sig(key, prods, settings)
@@ -384,6 +442,21 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest,
             new = nest(key, prods)
             if new is not None:
                 cache[sig] = entry = new
+        now = _pricing(settings.lookup, key, settings.margin_pct)
+        result = None if entry is None else _priced(entry, now)
+        if entry is None or (result is None and entry["result"] is not None):
+            # No result yet, or the prices changed unevenly (another plan may
+            # be cheapest now): plan it again from the remembered runs.
+            with st.spinner("Lasketaan muistetuista sijoitteluista…"):
+                new = replan(settings if entry is None else _settings_of(entry, settings))(
+                    key, prods)
+            if new is not None:
+                cache[sig] = entry = new
+                result = entry["result"]
+                replanned.append(sig)
+            elif entry is not None:
+                cache.pop(sig)          # can't be planned again without Sparrow
+                entry = None
         if entry is None:
             st.markdown(f"**{_group_label(key, prods)}**")
             st.caption("Odottaa laskentaa.")
@@ -400,7 +473,7 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest,
                           key=f"dxf_renest::{sig}", on_click=_request_renest, args=(sig,))
 
         return render_group(
-            key[0], key[1], entry["thickness_mm"], entry["result"],
+            key[0], key[1], now["thickness_mm"], result,
             margin_pct=settings.margin_pct, key=f"dxf_su_select::{sig}",
             draw_layout=lambda active: draw_sparrow_layout(active, entry["parts"]),
             note=note,
@@ -409,7 +482,7 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest,
     prices, grand_total, missing = render_groups(groups, render_one)
     if missing and grand_total is None:
         st.info("Paina **Laske levykäyttö** laskeaksesi levytarpeen ja hinnan.")
-        return
+        return bool(replanned)
     if missing:
         st.warning("Yhteissumma sisältää vain lasketut ryhmät — paina **Laske "
                    "levykäyttö** laskeaksesi loput. Jo laskettuja ei "
@@ -419,6 +492,16 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest,
     render_pieces_summary(ready, prices,
                           weight_label="Osien yhteispaino (kg)", lead="Osa",
                           areas_mm2=areas)
+    return bool(replanned)
+
+
+def _settings_of(entry: dict, settings: _Settings) -> _Settings:
+    """``settings`` with the Sparrow settings the entry was nested with, so
+    planning it again asks the questions whose answers are remembered."""
+    nesting = entry.get("nesting", settings.nesting())
+    sheet = SheetSettings(nesting["rankavali_mm"], tuple(nesting["edges_mm"]))
+    return _Settings(settings.nest_mode, sheet, nesting["time_limit"], settings.margin_pct,
+                     settings.lookup)
 
 
 def _parts_for_group(products: list[dict]) -> tuple[list, dict[str, float]]:

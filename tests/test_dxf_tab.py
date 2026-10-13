@@ -26,8 +26,9 @@ def test_a_single_part_keeps_its_result_when_the_nesting_mode_changes():
     assert _sig(combined, two, settings()) != _sig(separate, PRODS, settings())
 
 
-def test_margin_and_quantity_change_the_cache_key():
-    assert _sig(KEY, PRODS, settings()) != _sig(KEY, PRODS, settings(margin_pct=20.0))
+def test_a_quantity_changes_the_cache_key_the_margin_does_not():
+    # The margin only prices a nesting: the result is kept and priced again.
+    assert _sig(KEY, PRODS, settings()) == _sig(KEY, PRODS, settings(margin_pct=20.0))
     assert _sig(KEY, PRODS, settings()) != _sig(KEY, [{**PRODS[0], "qty": 3}], settings())
 
 
@@ -36,7 +37,10 @@ def test_a_nesting_angle_change_re_nests_the_group():
     assert _sig(KEY, PRODS, settings()) != _sig(KEY, fixed, settings())
 
 
-def test_a_price_set_or_changed_later_makes_the_group_new_again():
+def test_a_price_set_later_nests_a_changed_price_only_prices():
+    # Copper first unpriced has no sheet size to nest on: priced later, it is
+    # nested. A changed €/kg keeps the nesting (it is priced again), as does a
+    # price for another material.
     from core.pricing import (COPPER_MATERIAL, COPPER_THICKNESSES, build_copper_section,
                               build_lookup)
 
@@ -45,10 +49,17 @@ def test_a_price_set_or_changed_later_makes_the_group_new_again():
 
     key, thickness = (COPPER_MATERIAL, COPPER_THICKNESSES[0]), COPPER_THICKNESSES[0]
     unpriced, priced = _sig(key, PRODS, copper(None)), _sig(key, PRODS, copper(15.5))
-    assert unpriced != priced                              # set later: nest again
-    assert priced != _sig(key, PRODS, copper(15.9))       # changed: nest again
+    assert unpriced != priced                              # set later: nest it
+    assert priced == _sig(key, PRODS, copper(15.9))       # changed: price it again
     steel = {"tata": [{"Paksuus (mm)": thickness, "S235 | 1000x2000": 900.0}]}
     assert priced == _sig(key, PRODS, copper(15.5, **steel))   # other material: kept
+
+
+def test_a_thickness_or_material_with_the_same_sheet_sizes_keeps_the_nesting():
+    lookup = {(t, f"{m} | 1000x2000"): 900.0 for t in ("2", "3") for m in ("S235", "S355")}
+    keep = settings(lookup=lookup)
+    assert _sig(("S235", "2"), PRODS, keep) == _sig(("S235", "3"), PRODS, keep)
+    assert _sig(("S235", "2"), PRODS, keep) == _sig(("S355", "2"), PRODS, keep)
 
 
 def test_nesting_diff_names_only_the_changed_settings():
@@ -312,3 +323,69 @@ def test_a_margin_change_reprices_without_running_sparrow_again():
     assert n15 > 0 and n20 == n15                     # margin change: no new runs
     assert eur20 > eur15                              # but the new price
     assert n8s > n20                                  # a new search time runs again
+
+
+def test_price_only_changes_update_without_the_calculate_button():
+    # Calculated once; then the margin, the thickness and one sheet size's
+    # €/tn change — each shows at once (re-priced, or planned again from the
+    # remembered runs), never running Sparrow. A new quantity waits.
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        import ezdxf
+        import streamlit as st
+
+        import view.dxf_tab as tab
+        from core.dxf import read_dxf
+        from core.sheet_cost import group_products
+        from tests.conftest import dxf_bytes
+        from tests.test_sparrow import fake_solver
+        from view.common import SheetSettings
+
+        runs = st.session_state.setdefault("runs", [0])
+
+        def counting(instance, *, executable, time_limit_sec, min_item_separation):
+            runs[0] += 1
+            return fake_solver(instance, separation=min_item_separation)
+
+        step = st.session_state.get("step", {})
+        doc = ezdxf.new()
+        doc.header["$INSUNITS"] = 4
+        doc.modelspace().add_lwpolyline([(0, 0), (300, 0), (300, 200), (0, 200)], close=True)
+        report = read_dxf(dxf_bytes(doc), "p.dxf").part()
+        lookup = {}
+        for t in ("2", "3"):
+            lookup[(t, "S235 | 1000x2000")] = 900.0
+            lookup[(t, "S235 | 1250x2500")] = step.get("price", 870.0)
+        prods = [{"id": "p", "name": "p.dxf", "material": "S235",
+                  "thickness": step.get("thickness", "2"), "width": 300, "height": 200,
+                  "qty": step.get("qty", 40), "angles": (0, 90), "report": report}]
+        settings = tab._Settings("combined", SheetSettings(), 4, step.get("margin", 15.0), lookup)
+        cache = st.session_state.setdefault(tab._CACHE, {})
+        real, tab.run_sparrow = tab.run_sparrow, counting
+        try:
+            st.session_state["replanned"] = tab._show(
+                prods, group_products(prods, "combined"), settings, cache,
+                tab._nester(lookup, settings, "sparrow"),
+                lambda s: tab._nester(lookup, s, "sparrow", remembered_only=True),
+                run=step.get("run", False))
+        finally:
+            tab.run_sparrow = real
+
+    def show(at, **step):
+        at.session_state["step"] = step
+        at.run()
+        assert not at.exception
+        total = [m.value for m in at.metric if m.label == "Yhteensä €"]
+        waiting = any("Odottaa laskentaa" in c.value for c in at.caption)
+        return at.session_state["runs"][0], (total[0] if total else None), waiting
+
+    at = AppTest.from_function(page, default_timeout=60)
+    runs, first, _ = show(at, run=True)
+    assert runs > 0 and first
+    assert show(at, margin=20.0)[:2] != (runs, first) and show(at, margin=20.0)[0] == runs
+    assert not at.session_state["replanned"]                      # just re-priced
+    assert show(at, thickness="3")[0] == runs                     # thickness: re-priced
+    after, total, waiting = show(at, price=500.0)                 # uneven: planned again
+    assert after == runs and total and not waiting and at.session_state["replanned"]
+    assert show(at, qty=41)[2]                                    # new quantity: the button

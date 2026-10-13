@@ -51,9 +51,21 @@ Sparrow and set `SPARROW_BIN` or replace the file in `bin/`.
 
 Each Sparrow run takes the search time (*Sijoittelun hakuaika*). The DXF tab
 remembers every successful run for the session: the same question (parts,
-strip, cut gap, search time) is answered without running Sparrow again. So
-changing the margin or a sheet price re-prices a group instantly; changing the
-search time, a gap, a quantity or an angle runs again, as the layouts change.
+strip, cut gap, search time) is answered without running Sparrow again.
+
+A result is stored by what decides the nesting — the parts, their quantities
+and angles, and the sheet sizes — not by what only prices it. So without
+pressing *Laske levykäyttö*:
+
+- **margin, copper €/kg, a part's thickness or material** (when every sheet
+  size's price changes by one factor): the result is re-priced at once — the
+  same plans stay cheapest;
+- **a new price list** (sizes' €/tn changing unevenly, so another plan may be
+  cheapest): planned again from the remembered runs, with no new Sparrow runs
+  (a few seconds; only a planned sheet that loses pieces may be nested again).
+
+A new part, quantity, angle, gap, search time or sheet size still needs the
+button. The manual tab applies its margin the same way, instantly.
 
 ## Tests
 

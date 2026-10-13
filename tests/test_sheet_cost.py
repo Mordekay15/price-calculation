@@ -191,3 +191,31 @@ def test_mixed_rect_parts_get_both_plans_with_exact_quantities():
                 made[pl.product_idx] += sheet.count
         assert made == [20, 5]
     assert cheapest_index(options) == 0          # the extra sheet costs more
+
+
+def test_repricing_matches_computing_again_when_prices_scale_evenly():
+    # Computed at 15 % on 2 mm, re-priced to 20 % on 3 mm: the same numbers as
+    # computing at 20 % on 3 mm, mixed-size option included.
+    from core.sheet_cost import reprice, scales_evenly, sheet_eur, size_prices
+    lookup = {(t, f"S235 | {s}"): p for t in ("2", "3")
+              for s, p in (("1000x2000", 900.0), ("1500x3000", 850.0))}
+    products = [{"id": "a", "width": 1400, "height": 1200, "qty": 1, "_global_idx": 0},
+                {"id": "b", "width": 950, "height": 950, "qty": 2, "_global_idx": 1}]
+    before = rect_options(lookup, "S235", "2", 2.0, products, margin_pct=15.0)
+    after = rect_options(lookup, "S235", "3", 3.0, products, margin_pct=20.0)
+    prices = {(w, h): p for w, h, p in size_prices(lookup, "S235", "3")}
+    again = reprice(before, material="S235", thickness_mm=3.0, base_ppt=prices, margin_pct=20.0)
+    assert any(o.mix for o in again.options)
+    for got, want in zip(again.options, after.options):
+        assert (got.sheets_needed, got.programs) == (want.sheets_needed, want.programs)
+        assert math.isclose(got.total_eur, want.total_eur)
+        assert math.isclose(got.bill_rate_ppt, want.bill_rate_ppt)
+        assert math.isclose(got.utilization, want.utilization)
+    assert math.isclose(again.pieces_kg, after.pieces_kg)
+
+    def eur(thickness_mm, margin, prices):
+        return {(w, h): sheet_eur(w, h, p, thickness_mm, "S235", margin) for w, h, p in prices}
+    two = size_prices(lookup, "S235", "2")
+    assert scales_evenly(eur(2.0, 15.0, two), eur(3.0, 20.0, two))          # margin, thickness
+    uneven = [(w, h, p * (1.1 if w == 1000 else 1.0)) for w, h, p in two]  # a new price list
+    assert not scales_evenly(eur(2.0, 15.0, two), eur(2.0, 15.0, uneven))

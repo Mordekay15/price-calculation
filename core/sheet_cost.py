@@ -6,7 +6,7 @@ pass ``mix``: a plan cut from several sheet sizes (see ``compute_options``)."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from core.pricing import get_sizes_for_material, parse_thickness_mm, weight_kg
 
@@ -97,6 +97,7 @@ class GroupCost:
     options: list[SheetOption]
     n_pieces: int
     pieces_kg: float                # real weight of every piece in the group
+    part_area_mm2: float = 0.0      # their real area, for ``reprice``
 
 
 def parse_size(size_str: str) -> list[tuple[int, int]]:
@@ -193,13 +194,7 @@ def compute_options(
     Packing, real part area on its sheets)]``, or None; that plan is one more
     option, last.
     """
-    candidates: list[tuple[int, int, float]] = []
-    for size_label in get_sizes_for_material(lookup, material):
-        price = lookup.get((thickness, f"{material} | {size_label}"))
-        if price is None:
-            continue
-        for w_mm, h_mm in parse_size(size_label):
-            candidates.append((w_mm, h_mm, price))
+    candidates = size_prices(lookup, material, thickness)
     if n_pieces <= 0 or not candidates:
         return None
 
@@ -228,13 +223,65 @@ def compute_options(
             options.append(priced(sw, sh, price_per_tonne, packing))
 
     if mix is not None:
-        sheet_eur = [weight_kg(sw * sh, thickness_mm, material) * ppt * (1 + margin_pct / 100)
-                     / 1000 for sw, sh, ppt in candidates]
-        plan = mix(sheet_eur)
+        plan = mix([sheet_eur(sw, sh, ppt, thickness_mm, material, margin_pct)
+                    for sw, sh, ppt in candidates])
         if plan:
             parts = [priced(*candidates[i], packing, area) for i, packing, area in plan]
             options.append(_mixed(parts, part_area_mm2, pieces_kg))
-    return GroupCost(options, n_pieces, pieces_kg)
+    return GroupCost(options, n_pieces, pieces_kg, part_area_mm2)
+
+
+def size_prices(lookup: dict, material: str, thickness: str) -> list[tuple[int, int, float]]:
+    """Each priced sheet size of a material and thickness: ``(w, h, €/tn)``."""
+    out: list[tuple[int, int, float]] = []
+    for size_label in get_sizes_for_material(lookup, material):
+        price = lookup.get((thickness, f"{material} | {size_label}"))
+        if price is None:
+            continue
+        for w_mm, h_mm in parse_size(size_label):
+            out.append((w_mm, h_mm, price))
+    return out
+
+
+def sheet_eur(sw: int, sh: int, price_per_tonne: float, thickness_mm: float,
+              material: str, margin_pct: float) -> float:
+    """What one sheet costs, the margin included."""
+    return (weight_kg(sw * sh, thickness_mm, material) * price_per_tonne
+            * (1 + margin_pct / 100) / 1000)
+
+
+def scales_evenly(old: dict, new: dict) -> bool:
+    """True when ``new`` is ``old`` times one factor, size for size (each a
+    ``{size: price of one sheet}``). Then every plan keeps its rank — the
+    cheapest stays the cheapest — and a result only needs ``reprice``."""
+    if set(old) != set(new) or not old:
+        return False
+    ratios = [new[k] / old[k] for k in old if old[k]]
+    return (len(ratios) == len(old)
+            and max(ratios) - min(ratios) <= 1e-9 * max(abs(r) for r in ratios))
+
+
+def reprice(result: GroupCost, *, material: str, thickness_mm: float,
+            base_ppt: dict[tuple[int, int], float], margin_pct: float) -> GroupCost:
+    """``result`` priced again — another margin, thickness, material or €/tn
+    (``base_ppt``: €/tn by sheet size) — as ``compute_options`` prices it; the
+    plans, sheets and utilisation stay. Only right when the prices scale
+    evenly (``scales_evenly``): otherwise a different plan may be cheapest."""
+    pieces_kg = weight_kg(result.part_area_mm2, thickness_mm, material)
+
+    def priced(o: SheetOption) -> SheetOption:
+        base = base_ppt.get((o.sw, o.sh), o.base_ppt)
+        new = replace(o, base_ppt=base, adjusted_ppt=base * (1 + margin_pct / 100))
+        if new.ok:
+            new.sheet_weight_kg = weight_kg(o.sw * o.sh, thickness_mm, material)
+            new.total_eur = new.adjusted_ppt * (new.sheet_kg / 1000)
+            new.bill_rate_ppt = (new.adjusted_ppt * (new.sheet_kg / pieces_kg)
+                                 if pieces_kg else new.adjusted_ppt)
+        return new
+
+    options = [_mixed([priced(m) for m in o.mix], result.part_area_mm2, pieces_kg)
+               if o.mix else priced(o) for o in result.options]
+    return replace(result, options=options, pieces_kg=pieces_kg)
 
 
 def _mixed(parts: list[SheetOption], part_area_mm2: float, pieces_kg: float) -> SheetOption:

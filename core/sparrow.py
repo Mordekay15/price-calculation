@@ -492,13 +492,16 @@ def sparrow_options(
     edges: EdgeGaps = EdgeGaps(),
     rankavali_mm: int = 0,
     on_progress=None,
+    renest_fn=None,
 ) -> GroupCost | None:
     """``core.sheet_cost.compute_options`` with Sparrow shape nesting.
 
     ``on_progress``, if given, receives ``("size", index=, count=, w=, h=)``
     before each sheet size and ``("sheet", w=, h=, placed=, total=)`` each time
     a sheet layout is settled. One more option may cut the parts from several
-    sizes (see ``core.cutting_stock.MixedSizes``).
+    sizes (see ``core.cutting_stock.MixedSizes``). ``renest_fn``, if given, is
+    the solver for nesting a planned sheet again (``_plan_sheets``) instead
+    of ``run_fn``: which sheets those are depends on the prices.
     """
     n_pieces = sum(p.quantity for p in parts)
     part_area_mm2 = sum(net_area(p.outer, p.holes) * p.quantity for p in parts)
@@ -509,6 +512,7 @@ def sparrow_options(
         return _pack_on_short_side(
             parts, sw, sh, edges,
             run_fn=run_fn, separation=separation, on_progress=on_progress, mixed=mixed,
+            renest_fn=renest_fn,
         )
 
     return compute_options(
@@ -518,7 +522,7 @@ def sparrow_options(
     )
 
 
-def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
+def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation, renest_fn=None,
                         on_progress=None, mixed: MixedSizes | None = None) -> list[Packing]:
     """Pack the sheet one way only: Sparrow's fixed strip height is the sheet's
     short side and the strip runs along the long side (e.g. 1000 high, up to
@@ -542,7 +546,7 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
                        failed=0 if ok else 1, reason="" if ok else pack.reason,
                        x0=x0, y0=y0)
 
-    nest = {"run_fn": run_fn, "separation": separation}  # re-nests a holed sheet
+    nest = {"run_fn": renest_fn or run_fn, "separation": separation}  # re-nests a holed sheet
     if not pack.ok:
         if mixed is not None:
             mixed.keep(_candidates(parts, [], ew, eh, separation),
@@ -553,7 +557,7 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
     kit = _kit(parts, pack.sheets, ew, eh, run_fn=run_fn, separation=separation)
     pool = _candidates(parts, [*pack.sheets, *(kit or [])], ew, eh, separation)
     if pool is not None:
-        pool.update(_near_miss_sheets(parts, ew, eh, **nest))
+        pool.update(_near_miss_sheets(parts, ew, eh, run_fn=run_fn, separation=separation))
     if mixed is not None:
         mixed.keep(pool, lambda plan: _packed(packing(_plan_sheets(parts, plan, ew, eh, **nest))),
                    sw * sh)
