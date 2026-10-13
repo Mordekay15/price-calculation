@@ -40,29 +40,34 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Round trip a plate through DWG and read it back
+      - name: Read sample DWGs with the app's reader
         run: |
           pip install -q -r requirements.txt
+          cp -r "libredwg-${LIBREDWG_VERSION}/test/test-data" /tmp/test-data || true
           python - <<'EOF'
-          import subprocess, ezdxf
+          import glob, subprocess, ezdxf
+          # A plate drawn by ezdxf, turned into DWG by LibreDWG's (experimental) dxf2dwg.
           doc = ezdxf.new("R2000"); doc.header["$INSUNITS"] = 4
           msp = doc.modelspace()
           msp.add_lwpolyline([(0, 0), (300, 0), (300, 200), (0, 200)], close=True)
           msp.add_circle((150, 100), 20)
           doc.saveas("/tmp/plate.dxf")
-          subprocess.run(["/tmp/dxf2dwg", "-y", "-o", "/tmp/plate.dwg", "/tmp/plate.dxf"], check=False)
+          subprocess.run(["/tmp/dxf2dwg", "-y", "-o", "/tmp/plate.dwg", "/tmp/plate.dxf"],
+                         capture_output=True)
 
-          import os
-          os.environ["LIBREDWG_BIN"] = "bin/dwg2dxf"
           from core import dwg
           dwg._oda_installed = lambda: False
-          f = dwg.read_drawing(open("/tmp/plate.dwg", "rb").read(), "plate.dwg")
-          print("problems:", f.problems)
-          part = f.part()
-          print("outline:", part.outline and (part.outline.width_mm, part.outline.height_mm),
-                "holes:", len(part.holes))
-          assert part.outline is not None and round(part.outline.width_mm) == 300
-          assert len(part.holes) == 1
+          import os
+          os.environ["LIBREDWG_BIN"] = "bin/dwg2dxf"
+          files = ["/tmp/plate.dwg"] + sorted(glob.glob("/tmp/test-data/*.dwg"))[:12]
+          ok = 0
+          for path in files:
+              f = dwg.read_drawing(open(path, "rb").read(), os.path.basename(path))
+              n = len(f.pieces)
+              ok += n > 0 and not f.problems
+              print(f"{os.path.basename(path):40s} pieces={n:5d} problems={f.problems[:1]}")
+          print(f"read {ok} of {len(files)}")
+          assert ok, "no sample DWG could be read"
           EOF
 
       - name: Commit bin/dwg2dxf

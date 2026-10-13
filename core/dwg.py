@@ -73,10 +73,11 @@ def _with_oda(src: pathlib.Path, dst: pathlib.Path) -> None:
         raise ConversionError(f"ODA File Converter ei osannut muuntaa tiedostoa ({exc}).")
 
 
-def _with_libredwg(exe: str, src: pathlib.Path, dst: pathlib.Path) -> None:
+def _with_libredwg(exe: str, src: pathlib.Path, dst: pathlib.Path,
+                   minimal: bool = False) -> None:
+    args = [exe, "-y", *(["-m"] if minimal else []), "-o", str(dst), str(src)]
     try:
-        done = subprocess.run([exe, "-y", "-o", str(dst), str(src)], capture_output=True,
-                              text=True, timeout=_TIMEOUT_S)
+        done = subprocess.run(args, capture_output=True, text=True, timeout=_TIMEOUT_S)
     except subprocess.TimeoutExpired:
         raise ConversionError(f"LibreDWG:n muunnos ei valmistunut {_TIMEOUT_S} sekunnissa.")
     except OSError as exc:
@@ -88,8 +89,9 @@ def _with_libredwg(exe: str, src: pathlib.Path, dst: pathlib.Path) -> None:
                               + (f" ({detail[-1]})." if detail else "."))
 
 
-def dwg_to_dxf(data: bytes) -> bytes:
-    """The DWG ``data`` as DXF bytes. Raises ConversionError."""
+def dwg_to_dxf(data: bytes, *, minimal: bool = False) -> bytes:
+    """The DWG ``data`` as DXF bytes. Raises ConversionError. ``minimal`` asks
+    LibreDWG for its minimal DXF (the drawing's entities only)."""
     oda = _oda_installed()
     exe = None if oda else libredwg_executable()
     if not oda and exe is None:
@@ -101,7 +103,7 @@ def dwg_to_dxf(data: bytes) -> bytes:
         if oda:
             _with_oda(src, dst)
         else:
-            _with_libredwg(exe, src, dst)
+            _with_libredwg(exe, src, dst, minimal)
         if not dst.is_file():
             raise ConversionError("Muunnin ei tuottanut DXF-tiedostoa.")
         return dst.read_bytes()
@@ -113,7 +115,15 @@ def read_drawing(data: bytes, name: str) -> DxfFile:
     if not is_dwg(name):
         return read_dxf(data, name)
     try:
-        dxf = dwg_to_dxf(data)
+        f = read_dxf(dwg_to_dxf(data), name)
+        if f.problems and not f.pieces and converter() == "LibreDWG":
+            # LibreDWG's full DXF can carry tables ezdxf can't read; its
+            # minimal DXF holds just the entities, which is all we need.
+            minimal = read_dxf(dwg_to_dxf(data, minimal=True), name)
+            if minimal.pieces:
+                return minimal
     except ConversionError as exc:
         return DxfFile(name=name, problems=[f"{exc} {SAVE_AS_DXF}"])
-    return read_dxf(dxf, name)
+    if f.problems and not f.pieces:
+        f.problems = [f"{p} {SAVE_AS_DXF}" for p in f.problems]
+    return f
