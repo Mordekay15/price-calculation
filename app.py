@@ -14,7 +14,7 @@ st.title("Stremet Price Tool")
 
 price_data = sidebar.render()
 
-tab_calc, tab_dxf = st.tabs(["Hintalaskuri", "DXF-nestaus"])
+tab_calc, tab_dxf = st.tabs(["Hintalaskuri", "DXF/DWG-nestaus"])
 with tab_calc:
     calculator_tab.render(price_data)
 with tab_dxf:
