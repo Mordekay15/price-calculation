@@ -679,7 +679,9 @@ def _checked_size(fid: str, dxf: DxfFile, report: DxfReport, badge) -> tuple | N
             badge.markdown(":orange[vahvista yksikkö]")
             return None
 
-    badge.markdown(f":gray[{width:g} × {height:g} mm · {report.unit_label}]")
+    # The drawing's own unit only when it isn't mm ("… mm · mm" said nothing).
+    drawn = "" if report.unit_label == "mm" else f" · piirretty: {report.unit_label}"
+    badge.markdown(f":gray[{width:g} × {height:g} mm{drawn}]")
     return width, height
 
 
