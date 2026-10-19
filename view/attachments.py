@@ -39,10 +39,18 @@ def docs() -> dict[str, dict]:
     return st.session_state.get(DOCS, {})
 
 
+def _linkable() -> dict[str, dict]:
+    """The files that link to one card: not STEP assemblies (they are in
+    the BOM, see ``view.bom``)."""
+    from view import bom
+
+    return {d: doc for d, doc in docs().items() if not bom.is_assembly(d)}
+
+
 def links(parts: dict[str, str]) -> dict[str, list[str]]:
     """``{part id: [doc id, …]}``: the automatic links by part number, with
     the links set by hand on top. ``parts`` maps a card's id to its file name."""
-    all_docs = docs()
+    all_docs = _linkable()
     auto = link_files(parts, {d: doc["name"] for d, doc in all_docs.items()})
     manual = st.session_state.get(_MANUAL, {})
     out: dict[str, list[str]] = {}
@@ -59,7 +67,7 @@ def links(parts: dict[str, str]) -> dict[str, list[str]]:
 def render_doc_list(parts: dict[str, str], labels: dict[str, str]) -> None:
     """The supporting files, folded under the drop area: which part each is
     linked to, changeable by hand, and a remove button."""
-    all_docs = docs()
+    all_docs = _linkable()
     if not all_docs:
         return
     linked = {d: pid for pid, ids in links(parts).items() for d in ids}
@@ -102,10 +110,20 @@ def render_card_docs(doc_ids: list[str]) -> None:
                     st.image(png, caption=doc["name"], width="stretch")
                 else:
                     st.caption(f"{doc['name']}: esikatselua ei voitu tehdä.")
+            else:
+                _step_preview(d)
             st.download_button(f"Avaa {doc['name']}", data=doc["data"],
                                file_name=doc["name"], key=f"dxf_doc_dl_{d}",
                                mime="application/pdf" if doc["kind"] == "pdf"
                                else "application/step")
+
+
+def _step_preview(doc_id: str) -> None:
+    from view import bom
+
+    part = bom.single_part(doc_id)
+    if part is not None and st.toggle(f"Näytä 3D: {part.name}", key=f"dxf_doc_3d_{doc_id}"):
+        bom.render_3d(part.shape, doc_id)
 
 
 def _preview(doc_id: str, data: bytes) -> bytes | None:

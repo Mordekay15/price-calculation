@@ -15,6 +15,7 @@ from core.dwg import read_drawing
 from core.dxf import DxfFile, DxfReport, fasteners_from_texts
 from core.geometry import net_area
 from core.quote import CleanPart
+from core.step import available as step_available
 from core.sheet_cost import (
     group_products,
     is_ready,
@@ -44,7 +45,7 @@ from view.common import (
     thicknesses_for,
 )
 from view.drawing import draw_sparrow_layout, preview_svg
-from view import attachments, material_agent
+from view import attachments, bom, material_agent
 from view.quote import render_batch_prices
 from view.sheet_usage import render_group
 from view.work import piece_size, render_work_inputs, work_costs
@@ -186,9 +187,10 @@ def _render_drop_area() -> list[tuple[str, DxfFile]]:
         st.rerun()  # redraw with the drop area empty
     parts = list(st.session_state.get(_STORE, {}).items())
     _warn_duplicates(parts)
-    attachments.render_doc_list({fid: dxf.name for fid, dxf in parts},
-                                {fid: f"#{i + 1} · {dxf.name}"
-                                 for i, (fid, dxf) in enumerate(parts)})
+    labels = {fid: f"#{i + 1} · {dxf.name}" for i, (fid, dxf) in enumerate(parts)}
+    attachments.render_doc_list({fid: dxf.name for fid, dxf in parts}, labels)
+    bom.render_bom(st.session_state.get(_STORE, {}), st.session_state.setdefault(_REPORTS, {}),
+                   labels, _evict)
     return parts
 
 
@@ -579,10 +581,16 @@ def _ingest(uploaded) -> bool:
             continue
         if attachments.is_doc(up.name):
             attachments.add_doc(up.file_id, up.name, up.getvalue())
+            if bom.is_step(up.name) and step_available():
+                bom.add_model(up.file_id, up.name, up.getvalue())
         else:
             store[up.file_id] = read_drawing(up.getvalue(), up.name)
         names.add(up.name)
     if dropped:
+        config = st.session_state.setdefault(_CONFIG, {})
+        bom.sync_cards(store, config)
+        for fid in bom.replaced_by_dxf(store):
+            _evict(fid)
         st.session_state[_INBOX] = st.session_state.get(_INBOX, 0) + 1
         st.session_state[_DUPES] = (dupes, time.time() + _DUPE_WARNING_S)
     if len(dropped) > len(dupes):
@@ -608,6 +616,7 @@ def _evict_all() -> None:
         _evict(fid)
     for doc_id in list(attachments.docs()):
         attachments.remove_doc(doc_id)
+    st.session_state.pop(bom.MODELS, None)
     st.session_state.pop(_FILL_ASKED, None)
     st.session_state.pop(_DUPES, None)  # it names cards that are gone
 
@@ -638,6 +647,7 @@ def _render_part_config(
         if dxf.texts:
             st.caption("Piirustuksen tekstit: " + " · ".join(dxf.texts))
         attachments.render_card_docs(list(doc_ids))
+        bom.render_card_model(fid)
 
         preview_col, input_col = st.columns([1, 3])
         report = _part(fid, dxf)
@@ -750,7 +760,8 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict) -> tuple:
     )
     cfg["material"] = material
     cfg["thickness"] = thickness
-    qty = int(st.number_input("Määrä (kpl)", min_value=1, value=1, step=1,
+    qty = int(st.number_input("Määrä (kpl)", min_value=1, value=int(cfg.get("qty", 1)),
+                              step=1,
                               key=f"dxf_q_{fid}"))
     return material, thickness, qty
 

@@ -112,6 +112,31 @@ which method would be cheaper.
 STEP files are also read as 3D models (see
 [STEP models](#step-models-bom-and-unfolding)).
 
+## STEP models: BOM and unfolding
+
+A STEP file dropped on the DXF tab is read with Open CASCADE (`cadquery-ocp`).
+**STEP-mallit** shows its BOM: the assembly tree with the quantity per parent
+and in the whole model. Each body is checked for sheet metal:
+
+- A sheet part has two parallel skins at one thickness, made of flat flanges
+  and cylindrical bends. One skin is laid flat face by face, with every bend
+  at its neutral radius `inner radius + K × thickness` (the **K-kerroin**,
+  default 0.44). The flat outline, holes and bend lines become a part card,
+  with the model's total as its quantity. The card's bends come from the bend
+  lines (layers `BEND_UP` / `BEND_DOWN`), so the work cost and the
+  calculators' `bends` input use them. The thickness note (`t = 2 mm`) is read
+  by the material proposals.
+- If a DXF card with the same part number exists, the DXF is used instead.
+- Other bodies (bought or machined parts, or anything too thick for its size)
+  are listed as *ei levyosa* with the reason, and are not priced.
+- **Näytä 3D** shows a body you can turn (plotly), in the BOM and on a card
+  made from a model.
+
+The unfolding handles straight bends (cylinders along a straight bend line).
+Cones, rolled parts and hems are not supported: such a part is marked as not
+sheet, and a DXF of it is needed. Without `cadquery-ocp`, STEP files are only
+attached to the cards by part number.
+
 ## Material proposals (Materiaaliehdotukset)
 
 **Etsi materiaalit** reads the material grade and thickness from each part's
@@ -226,6 +251,7 @@ core/                   pure logic, no Streamlit
   quote.py              quote PDF, Excel export, clean DXFs and their ZIP
   linking.py            PDF/STEP files → parts by part number
   materials.py          material/thickness hints, proposals, alias table, optional Claude
+  step.py               STEP: BOM with quantities, sheet unfolding, flat DXF, 3D mesh
   programs.py           repeatable programs: the kit search both packers share
   cutting_stock.py      the fewest-sheets plan: candidate sheets + integer program
   rect_nesting.py       bounding-box packer (manual tab)
@@ -248,6 +274,7 @@ view/                   Streamlit UI
   quote.py              the Tarjous header, prices per batch size and the downloads
   attachments.py        PDF/STEP files on the DXF tab, links, previews, Tarkastettu
   material_agent.py     the Materiaaliehdotukset panel
+  bom.py                STEP-mallit: BOM, cards from unfolded parts, K factor, 3D view
   drawing.py            every SVG: sheet layouts and the DXF part preview
   sparrow_progress.py   progress bar while Sparrow runs
 
@@ -426,3 +453,4 @@ ring-shaped part, so keep frames on their own layer.
 | Calculators and chains | `calculators.yaml` (or the sidebar's Laskurit) |
 | The quote PDF or Excel layout | `core/quote.py` |
 | Material grades that are recognised | `_GRADES` in `core/materials.py` |
+| How STEP bodies are unfolded, or the default K factor | `core/step.py` |

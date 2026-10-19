@@ -6,3 +6,5 @@ pyyaml
 reportlab
 openpyxl
 pypdfium2
+cadquery-ocp
+plotly
