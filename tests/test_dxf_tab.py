@@ -180,7 +180,7 @@ def dxf_page(n):
 
 def test_one_part_takes_its_nesting_angle_from_the_run_row():
     at = dxf_page(1)
-    assert [c.key for c in at.checkbox] == ["dxf_angle_0", "dxf_angle_90"]   # none on the card
+    assert [c.key for c in at.checkbox if c.key.startswith("dxf_angle")] == ["dxf_angle_0", "dxf_angle_90"]   # none on the card
     assert not at.radio
     at.checkbox(key="dxf_angle_90").uncheck().run()
     assert at.session_state["angles"] == [(0,)]
@@ -192,7 +192,7 @@ def test_several_parts_share_one_angle_or_choose_per_part():
     at.checkbox(key="dxf_angle_0").uncheck().run()
     assert at.session_state["angles"] == [(90,), (90,)]
     at.radio(key="dxf_angle_mode").set_value("Osakohtainen").run()
-    assert {c.key for c in at.checkbox} == {"dxf_angle_0_f0", "dxf_angle_90_f0",
+    assert {c.key for c in at.checkbox if c.key.startswith("dxf_angle")} == {"dxf_angle_0_f0", "dxf_angle_90_f0",
                                             "dxf_angle_0_f1", "dxf_angle_90_f1"}
     at.checkbox(key="dxf_angle_90_f1").uncheck().run()
     assert at.session_state["angles"] == [(0, 90), (0,)]
@@ -389,3 +389,25 @@ def test_price_only_changes_update_without_the_calculate_button():
     after, total, waiting = show(at, price=500.0)                 # uneven: planned again
     assert after == runs and total and not waiting and at.session_state["replanned"]
     assert show(at, qty=41)[2]                                    # new quantity: the button
+
+
+def test_a_pdf_links_to_its_part_and_its_material_can_be_applied():
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("dxf_docs_page.py", default_timeout=30).run()
+    assert not at.exception
+    assert "dxf_checked_f0" in [c.key for c in at.checkbox]
+    assert any("100325-revA.pdf" in e.label for e in at.expander)     # on card #1
+    at.text_area(key="dxf_rfq_note").set_value("Muut osat S235 2 mm").run()
+    at.button(key="dxf_find_materials").click().run()
+    at.button(key="dxf_apply_materials").click().run()
+    assert at.session_state["materials"] == [("S355MC", "3"), ("S235", "2")]
+
+
+def test_a_chain_picks_its_calculators_on_the_card():
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("dxf_docs_page.py", default_timeout=30).run()
+    at.selectbox(key="work_chain_f0").set_value("Laser-Särmäys-Maalaus").run()
+    assert at.multiselect(key="work_calcs_f0").value == ["sarmays", "maalaus"]
+    assert not at.exception

@@ -14,6 +14,7 @@ from core.pricing import build_lookup, get_sizes_for_material, parse_thickness_m
 from core.dwg import read_drawing
 from core.dxf import DxfFile, DxfReport, fasteners_from_texts
 from core.geometry import net_area
+from core.quote import CleanPart
 from core.sheet_cost import (
     group_products,
     is_ready,
@@ -40,10 +41,13 @@ from view.common import (
     SheetSettings,
     render_pieces_summary,
     settings_summary,
+    thicknesses_for,
 )
 from view.drawing import draw_sparrow_layout, preview_svg
+from view import attachments, material_agent
+from view.quote import render_batch_prices
 from view.sheet_usage import render_group
-from view.work import render_work_inputs, work_costs
+from view.work import piece_size, render_work_inputs, work_costs
 from view.sparrow_progress import SparrowProgress, run_with_progress
 
 _CACHE = "dxf_sparrow_cache"    # {signature: computed group}
@@ -63,7 +67,7 @@ _DROPZONE_CSS = """
     gap: 0.5rem 1rem;
 }
 [class*="st-key-dxf_uploader"] [data-testid="stFileUploaderDropzone"]::before {
-    content: "Vedä ja pudota DXF- tai DWG-tiedostot tähän";
+    content: "Vedä ja pudota DXF-, DWG-, PDF- tai STEP-tiedostot tähän";
     width: 100%;
     text-align: center;
     font-weight: 600;
@@ -112,10 +116,14 @@ def render(data: dict) -> None:
         st.info("Lataa vähintään yksi DXF- tai DWG-tiedosto aloittaaksesi.")
         return
 
+    materials = materials_with_copper(lookup)
+    material_agent.render(parts, attachments.links({fid: dxf.name for fid, dxf in parts}),
+                          attachments.docs(), materials,
+                          lambda m: thicknesses_for(lookup, m), _apply_material)
     # Per-part angles are chosen on the cards, drawn above the run row whose
     # switch decides it: read the switch's value from the last run.
     per_part = len(parts) > 1 and st.session_state.get(_ANGLE_MODE) == _PER_PART
-    products = _render_part_cards(parts, materials_with_copper(lookup), lookup, per_part)
+    products = _render_part_cards(parts, materials, lookup, per_part)
     margin_pct, nest_mode, sheet = _render_settings()
     if not any(is_ready(p) for p in products):
         st.info("Valitse materiaali ja paksuus vähintään yhdelle osalle.")
@@ -164,19 +172,23 @@ def _render_drop_area() -> list[tuple[str, DxfFile]]:
     """The drop area; returns every part read so far, in upload order."""
     st.html(_DROPZONE_CSS)
     uploaded = st.file_uploader(
-        "Lataa DXF- tai DWG-tiedostot",
-        type=["dxf", "dwg"],
+        "Lataa DXF-, DWG-, PDF- tai STEP-tiedostot",
+        type=["dxf", "dwg", "pdf", "step", "stp"],
         accept_multiple_files=True,
         key=f"dxf_uploader_{st.session_state.get(_INBOX, 0)}",
         help="Vedä tiedostot alueelle tai valitse ne koneelta. Voit ladata useita "
              "tiedostoja kerralla. Jokainen tiedosto on yksi tuote; ne siirtyvät "
              "alle osakorteiksi, ja kortin Poista-painike poistaa osan. DWG-tiedosto "
-             "muunnetaan ensin DXF:ksi (ODA File Converter tai LibreDWG).",
+             "muunnetaan ensin DXF:ksi (ODA File Converter tai LibreDWG). PDF- ja "
+             "STEP-tiedostot liitetään osiin osanumeron mukaan.",
     )
     if _ingest(uploaded):
         st.rerun()  # redraw with the drop area empty
     parts = list(st.session_state.get(_STORE, {}).items())
     _warn_duplicates(parts)
+    attachments.render_doc_list({fid: dxf.name for fid, dxf in parts},
+                                {fid: f"#{i + 1} · {dxf.name}"
+                                 for i, (fid, dxf) in enumerate(parts)})
     return parts
 
 
@@ -273,11 +285,13 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
         with clear.popover("Poista kaikki", width="stretch"):
             st.button(f"Kyllä, poista kaikki {len(parts)} osaa", key="dxf_del_all",
                       type="primary", on_click=_evict_all)
+    attachments.render_checked_count([fid for fid, _ in parts])
+    doc_links = attachments.links({fid: dxf.name for fid, dxf in parts})
     products, fill = [], _FillOffer()
     for idx, (fid, part) in enumerate(parts):
         fill.slot = st.empty()  # above the card: where the question goes if it asks
         product = _render_part_config(fid, part, idx, materials, lookup,
-                                      per_part_angles, fill)
+                                      per_part_angles, fill, doc_links.get(fid, []))
         if product is not None:
             products.append(product)
     return products
@@ -482,7 +496,7 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest, 
             note=note,
         )
 
-    prices, grand_total, missing, sheets = render_groups(groups, render_one)
+    prices, grand_total, missing, sheets, totals = render_groups(groups, render_one)
     if missing and grand_total is None:
         st.info("Paina **Laske levykäyttö** laskeaksesi levytarpeen ja hinnan.")
         return bool(replanned)
@@ -495,7 +509,17 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest, 
     render_pieces_summary(ready, prices,
                           weight_label="Osien yhteispaino (kg)", lead="Osa",
                           areas_mm2=areas, work=work_costs(ready, groups, sheets))
+    render_batch_prices(ready, prices, groups, sheets, totals, lead="Osa", key="dxf",
+                        areas_mm2=areas, clean_parts=[_clean_part(p) for p in ready])
     return bool(replanned)
+
+
+def _clean_part(product: dict) -> CleanPart:
+    """A part's cut geometry for the clean-DXF export, as the card shows it."""
+    report: DxfReport = product["report"]
+    return CleanPart(product["name"], product["material"] or "", product["thickness"] or "",
+                     report.outline.points, [h.points for h in report.holes],
+                     list(report.open_lines), list(report.reference_lines))
 
 
 def _settings_of(entry: dict, settings: _Settings) -> _Settings:
@@ -545,14 +569,18 @@ def _ingest(uploaded) -> bool:
     new one). A file whose name is already on a card is not added again; its
     name goes to ``_DUPES`` for the warning (a drop without one clears it). True when something was dropped."""
     store: dict = st.session_state.setdefault(_STORE, {})
-    dropped = [up for up in uploaded or [] if up.file_id not in store]
-    names = {dxf.name for dxf in store.values()}
+    docs = attachments.docs()
+    dropped = [up for up in uploaded or [] if up.file_id not in store and up.file_id not in docs]
+    names = {dxf.name for dxf in store.values()} | {d["name"] for d in docs.values()}
     dupes = []
     for up in dropped:
         if up.name in names:
             dupes.append(up.name)
             continue
-        store[up.file_id] = read_drawing(up.getvalue(), up.name)
+        if attachments.is_doc(up.name):
+            attachments.add_doc(up.file_id, up.name, up.getvalue())
+        else:
+            store[up.file_id] = read_drawing(up.getvalue(), up.name)
         names.add(up.name)
     if dropped:
         st.session_state[_INBOX] = st.session_state.get(_INBOX, 0) + 1
@@ -569,6 +597,7 @@ def _evict(fid: str) -> None:
     cfg = st.session_state.get(_CONFIG, {}).pop(fid, {})
     st.session_state.get(_REPORTS, {}).pop(fid, None)
     for key in (*_material_keys(fid, cfg), f"dxf_q_{fid}", f"dxf_unit_ok_{fid}",
+                attachments.CHECKED.format(fid),
                 *(f"dxf_angle_{a}_{fid}" for a in NESTING_ANGLES)):
         st.session_state.pop(key, None)
 
@@ -577,6 +606,8 @@ def _evict_all() -> None:
     """The "Poista kaikki" button: every card's "Poista" at once."""
     for fid in list(st.session_state.get(_STORE, {})):
         _evict(fid)
+    for doc_id in list(attachments.docs()):
+        attachments.remove_doc(doc_id)
     st.session_state.pop(_FILL_ASKED, None)
     st.session_state.pop(_DUPES, None)  # it names cards that are gone
 
@@ -589,20 +620,24 @@ def _render_part_config(
     lookup: dict,
     per_part_angles: bool = False,
     fill: "_FillOffer | None" = None,
+    doc_ids: list[str] = (),
 ) -> dict | None:
     """Draw one part's card, preview left and inputs right; return its product
     dict, or None if not priceable. Its ``angles`` are None (set later from the
     run row) unless ``per_part_angles``. ``fill`` carries the "same material?"
-    question from card to card (see ``_offer_same_material``)."""
+    question from card to card (see ``_offer_same_material``). ``doc_ids``
+    are the supporting files linked to it (see ``view.attachments``)."""
     with st.container(border=True):
-        hdr = st.columns([6, 2, 1], vertical_alignment="center")
+        hdr = st.columns([5, 2, 2, 1], vertical_alignment="center")
         hdr[0].markdown(f"**#{idx + 1}** · {dxf.name}")
-        hdr[2].button("Poista", key=f"dxf_del_{fid}", on_click=_evict, args=(fid,))
+        hdr[2].checkbox("Tarkastettu", key=attachments.CHECKED.format(fid))
+        hdr[3].button("Poista", key=f"dxf_del_{fid}", on_click=_evict, args=(fid,))
 
         # Text found in the drawing (Mat=…, Thk=…) — shown to cross-check the
         # material choice, never nested.
         if dxf.texts:
             st.caption("Piirustuksen tekstit: " + " · ".join(dxf.texts))
+        attachments.render_card_docs(list(doc_ids))
 
         preview_col, input_col = st.columns([1, 3])
         report = _part(fid, dxf)
@@ -620,7 +655,10 @@ def _render_part_config(
             work = render_work_inputs(fid, material=material, thickness=thickness, qty=qty,
                                       cut_length_m=report.cut_length_mm / 1000,
                                       bends=report.bends, threads=report.threads,
-                                      fasteners=fasteners_from_texts(dxf.texts))
+                                      fasteners=fasteners_from_texts(dxf.texts),
+                                      **piece_size(report.outline.area_mm2 - sum(
+                                          h.area_mm2 for h in report.holes),
+                                          material, thickness))
         if angles == ():
             return None
 
@@ -816,6 +854,17 @@ def _fill_material(material: str | None, thickness: str | None) -> None:
         config[f] = {**old, "material": material, "thickness": thickness,
                      "v": old.get("v", 0) + 1}
     st.session_state[_FILL_ASKED] = True
+
+
+def _apply_material(fid: str, material: str, thickness: str | None) -> None:
+    """Set one card's material and thickness (a proposal the user ticked);
+    its selectboxes get new keys so they start from the new choice."""
+    config = st.session_state.setdefault(_CONFIG, {})
+    old = config.get(fid, {})
+    for key in _material_keys(fid, old):
+        st.session_state.pop(key, None)
+    config[fid] = {**old, "material": material, "thickness": thickness,
+                   "v": old.get("v", 0) + 1}
 
 
 def _part(fid: str, dxf: DxfFile) -> DxfReport:

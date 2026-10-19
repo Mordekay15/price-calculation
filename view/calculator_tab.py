@@ -22,8 +22,9 @@ from view.common import (
     settings_summary,
 )
 from view.drawing import draw_rect_layout
+from view.quote import render_batch_prices
 from view.sheet_usage import render_group
-from view.work import render_work_inputs, work_costs
+from view.work import piece_size, render_work_inputs, work_costs
 
 
 def render(data: dict) -> None:
@@ -65,12 +66,14 @@ def render(data: dict) -> None:
     groups = group_products(products, nest_mode)
     prices: dict[str, float] = {}
     sheets: dict[tuple, int] = {}
+    totals: dict[tuple, float] = {}
     if groups:
         st.divider()
-        prices, _, _, sheets = render_groups(groups, render_one)
+        prices, _, _, sheets, totals = render_groups(groups, render_one)
     render_pieces_summary(products, prices,
                           weight_label="Kappaleiden yhteispaino (kg)", lead="#",
                           work=work_costs(products, groups, sheets))
+    render_batch_prices(products, prices, groups, sheets, totals, lead="#", key="calc")
 
 
 @st.cache_data(max_entries=64, show_spinner="Etsitään vähiten levyjä käyttävää suunnitelmaa…")
@@ -137,7 +140,8 @@ def _render_product(prod: dict, index: int, materials: list[str], lookup: dict) 
         )
 
         work = render_work_inputs(pid, material=material, thickness=thickness, qty=q,
-                                  cut_length_m=rect_cut_length_m(w, h))
+                                  cut_length_m=rect_cut_length_m(w, h),
+                                  **piece_size(w * h, material, thickness))
 
     prod["material"]  = material
     prod["thickness"] = thickness

@@ -103,6 +103,19 @@ class WorkRates:
 
 
 @dataclass(frozen=True)
+class Operation:
+    """A work phase priced by one of the shop's calculators (``core.calculators``):
+    ``per_piece_eur`` is its run time's price, ``batch_eur`` its setup's. When
+    ``replaces`` names a built-in phase (``"bending"``), that phase's own € is
+    dropped so it isn't paid twice."""
+
+    name: str
+    per_piece_eur: float = 0.0
+    batch_eur: float = 0.0
+    replaces: str | None = None
+
+
+@dataclass(frozen=True)
 class WorkInputs:
     """One part's work, as set on its card. Lengths are per piece;
     ``programming_eur`` and ``setup_eur`` are per batch. ``setup_eur`` None
@@ -123,13 +136,16 @@ class WorkInputs:
     subcontract_eur: float = 0.0          # per piece
     programming_eur: float = 0.0
     setup_eur: float | None = None
+    operations: tuple[Operation, ...] = ()   # from the shop's calculators
 
 
 def phases(inp: WorkInputs) -> int:
     """Work phases the part goes through: cutting, plus each of bending,
-    threading, fastening, welding and subcontracting that it has."""
+    threading, fastening, welding and subcontracting that it has, plus each
+    calculator operation that is not one of those."""
     return 1 + sum(bool(x) for x in (inp.bends, inp.threads, inp.fasteners, inp.weld_m,
-                                      inp.subcontract_eur))
+                                      inp.subcontract_eur)) + sum(
+        1 for op in inp.operations if op.replaces is None)
 
 
 def default_setup(inp: WorkInputs, rates: WorkRates) -> float:
@@ -156,17 +172,20 @@ class WorkCost:
     cut_minimum: float = 0.0
     cut_seconds: float = 0.0              # laser, one piece
     priced: bool = True                   # False: laser speed unknown
+    operations: float = 0.0               # calculator operations, run (€/kpl)
+    operations_setup: float = 0.0         # calculator operations, setup (€/erä)
 
     @property
     def batch_fixed(self) -> float:
         """F: what the batch costs once."""
-        return self.setup + self.programming
+        return self.setup + self.programming + self.operations_setup
 
     @property
     def per_piece(self) -> float:
         """Work per piece, the batch costs shared over the quantity."""
         return (self.cutting + self.cut_minimum + self.bending + self.threads + self.fasteners
-                + self.welding + self.subcontract + self.batch_fixed / self.qty)
+                + self.welding + self.subcontract + self.operations
+                + self.batch_fixed / self.qty)
 
     @property
     def batch(self) -> float:
@@ -185,10 +204,11 @@ def work_cost(inp: WorkInputs, qty: int, rates: WorkRates) -> WorkCost:
         cutting, priced = seconds * inp.laser.eur_per_s, True
     welding = inp.weld_m / rates.weld_m_per_h * rates.weld_eur_per_h if rates.weld_m_per_h else 0.0
     setup = default_setup(inp, rates) if inp.setup_eur is None else inp.setup_eur
+    replaced = {op.replaces for op in inp.operations}
     return WorkCost(
         qty=qty,
         cutting=cutting,
-        bending=inp.bends * inp.eur_per_bend,
+        bending=0.0 if "bending" in replaced else inp.bends * inp.eur_per_bend,
         threads=inp.threads * inp.eur_per_thread,
         fasteners=inp.fasteners * (inp.eur_per_fastener + inp.eur_per_insert),
         welding=welding,
@@ -197,6 +217,8 @@ def work_cost(inp: WorkInputs, qty: int, rates: WorkRates) -> WorkCost:
         programming=inp.programming_eur,
         cut_seconds=seconds,
         priced=priced,
+        operations=sum(op.per_piece_eur for op in inp.operations),
+        operations_setup=sum(op.batch_eur for op in inp.operations),
     )
 
 
@@ -220,3 +242,23 @@ def apply_sheet_minimum(costs: list[WorkCost], sheets: int,
 def rect_cut_length_m(width_mm: float, height_mm: float) -> float:
     """A rectangle's outline in metres."""
     return 2 * (width_mm + height_mm) / 1000
+
+
+def cutting_eur(inp: WorkInputs, method: str, rates: WorkRates) -> float | None:
+    """One piece's cutting by ``method``, None when it can't be priced that
+    way: laser needs a speed and a length, the turret punch a number of hits."""
+    if method == PUNCH:
+        return inp.hits * rates.eur_per_hit if inp.hits else None
+    if inp.laser is None or not inp.cut_length_m:
+        return None
+    return inp.cut_length_m * inp.laser.s_per_m * inp.laser.eur_per_s
+
+
+def cheaper_method(inp: WorkInputs, rates: WorkRates) -> tuple[str, float] | None:
+    """``(method, saving €/kpl)`` when the other cutting method prices lower
+    than the chosen one, else None (also when either can't be priced)."""
+    other = LASER if inp.method == PUNCH else PUNCH
+    chosen, alt = cutting_eur(inp, inp.method, rates), cutting_eur(inp, other, rates)
+    if chosen is None or alt is None or alt >= chosen - 1e-9:
+        return None
+    return other, chosen - alt

@@ -161,8 +161,13 @@ def test_manual_tab_prices_work_per_piece(tmp_path, monkeypatch):
     assert not at.exception
     metrics = {m.label: m.value for m in at.metric}
     assert metrics["Työ yhteensä (€)"] == "71.00"
-    row = at.dataframe[-1].value.iloc[0]
+    table = next(d.value for d in at.dataframe if "Leikkaus €/kpl" in d.value.columns)
+    row = table.iloc[0]
     assert row["Leikkaus €/kpl"] == 0.7 and row["Asetus ym. €/kpl"] == 6.0
+    # The batch-size table prices the nested quantity (10) exactly as above.
+    batches = next(d.value for d in at.dataframe if "10 kpl, €/kpl" in d.value.columns)
+    assert batches.iloc[0]["10 kpl, €/kpl"] == row["Kpl-hinta €"]
+    assert batches.iloc[0]["1 kpl, €/kpl"] > batches.iloc[0]["10 kpl, €/kpl"]
 
 
 def test_a_fastener_put_in_costs_stremets_minimum_by_default():

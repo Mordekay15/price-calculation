@@ -2,3 +2,7 @@ streamlit
 pdfplumber
 ezdxf
 scipy
+pyyaml
+reportlab
+openpyxl
+pypdfium2

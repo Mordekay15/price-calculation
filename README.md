@@ -52,6 +52,82 @@ the quantity). Work has no margin; its rates are selling prices.
 A grey value in an input is the automatic one; typing replaces it, clearing the
 input goes back to it. The rates are under **Työn hinnat** in the sidebar.
 
+## Quote (Tarjous) and batch sizes
+
+The folded **Tarjous** section above the tabs holds the quote's header:
+quote number, customer, contact, seller, date, validity, payment terms,
+delivery and notes. It also holds the **Eräkoot** (batch sizes, default
+`1 5 10`). Under each tab's results, **Eräkohtaiset hinnat** prices every
+part at every batch size and shows the quote's total at each one. It also
+shows **Laskenta-aika**, the time since the first part could be priced.
+
+- Parts are nested once, at the quantities on their cards. For another batch
+  size `q`, a group needs `ceil(sheets × kg(q) / kg)` whole sheets (at least
+  one), each costing as much as in the nesting. The material is shared by piece
+  weight, as in the summary. At the nested quantity this is the exact nested
+  price; at other quantities it is an estimate that keeps the nesting's scrap
+  rate.
+- Work is `work_cost` at `q`, so the batch costs are shared over `q`. The
+  sheet minimum is applied over that batch size's sheets.
+- **Lataa tarjous-PDF** makes the customer quote (reportlab). The material
+  column can be hidden. **Excel-vienti** writes a sheet `Tarjous` (one row
+  per part and batch size) and a sheet `Erittely` (material and each work
+  cost per piece).
+- On the DXF tab, **Lataa puhtaat DXF:t tuotantoon** zips one clean DXF per
+  part. Each file is R2010 in mm and has only the outline, holes and open cuts,
+  on layer `CUT`. Bend lines and other markings can be added on `MARKING`.
+  File names come from a template such as `{part}_{material}_{thickness}mm`.
+
+## Calculators (Laskurit)
+
+Extra work phases are priced by calculators defined in YAML
+(`calculators.yaml`). They are edited under **Laskurit** in the sidebar, and
+the edits are saved to `calculators.local.yaml`, which **Palauta oletus**
+removes. Each calculator has:
+
+- **Inputs.** `auto: weight_kg | area_m2 | thickness_mm | cut_length_m |
+  bends | threads | fasteners` is read from the part; anything else is typed
+  on the card (with a `default`).
+- **Step tables.** `rows: [[from, value], …]`; the value of the last row
+  whose `from` ≤ the input.
+- **Formulas.** `setup_min`, `run_min` and `eur_per_h` are arithmetic with
+  `min max ceil floor round abs` and `a if cond else b`. Price per piece =
+  (setup / q + run) / 60 × €/h.
+- `replaces: bending` drops the card's €/bend charge.
+
+**Chains** name a list of calculators, for example *Laser-Särmäys-Maalaus*.
+Picking a chain on a card's Työvaiheet sets its calculators. The card shows
+the minutes and € per piece at every batch size.
+
+## Drawings, models and checking (DXF tab)
+
+PDF and STEP files can be dropped together with the DXFs. They are linked to
+cards by part number: `100325-revA.pdf` and `100325_B.pdf` both go to
+`100325.dxf`, and an exact file name wins. **Liitetiedostot** lists them and
+lets you change or remove a link. A card shows its PDFs' first page under
+**Piirustukset**, and its **Tarkastettu** tick is counted above the cards.
+In laser mode a card also prices punching (Levari) for comparison, and says
+which method would be cheaper.
+
+STEP files are also read as 3D models (see
+[STEP models](#step-models-bom-and-unfolding)).
+
+## Material proposals (Materiaaliehdotukset)
+
+**Etsi materiaalit** reads the material grade and thickness from each part's
+DXF texts and linked PDFs. It also reads the **Tarjouspyynnön teksti** (the
+RFQ, e.g. "DXF:t tulee S355 2 mm"), which is used for parts whose own files
+say nothing. Grades are matched to the price list's materials, and
+thicknesses must be in the price list (±0.05 mm). Sources that disagree are
+listed under **Tarkistettavat**. Nothing changes until you tick rows and press
+**Käytä valitut**. With **Muista valinnat**, the text that was read is saved
+with the choice in `material_aliases.json`, and that saved choice wins next
+time.
+
+**Kysy tekoälyltä avoimet** (only when the `anthropic` package is installed
+and `ANTHROPIC_API_KEY` is set) sends the open parts' texts and the price
+list's materials to Claude and fills in its proposals with its reasons.
+
 ## Run locally
 
 ```bash
@@ -138,12 +214,18 @@ also runs the real Sparrow executable and is skipped when it is not installed.
 ## Project structure
 
 ```
-app.py                  page setup: sidebar, then the two tabs
+app.py                  page setup: sidebar, the Tarjous header, then the two tabs
+calculators.yaml        the default calculators and chains
 
 core/                   pure logic, no Streamlit
   pricing.py            price lookup, materials, thickness, densities, weight_kg, copper
   sheet_cost.py         price every sheet size (SheetOption), grouping, per-piece cost
   work.py               work: laser table, cutting / bends / threads / welding / setup, sheet minimum
+  batches.py            prices per batch size from one nesting
+  calculators.py        YAML calculators: inputs, step tables, safe formulas, chains
+  quote.py              quote PDF, Excel export, clean DXFs and their ZIP
+  linking.py            PDF/STEP files → parts by part number
+  materials.py          material/thickness hints, proposals, alias table, optional Claude
   programs.py           repeatable programs: the kit search both packers share
   cutting_stock.py      the fewest-sheets plan: candidate sheets + integer program
   rect_nesting.py       bounding-box packer (manual tab)
@@ -162,7 +244,10 @@ view/                   Streamlit UI
   dxf_tab.py            DXF tab, its part cards and the Sparrow run
   common.py             inputs, the per-group loop, totals, pieces summary
   sheet_usage.py        the sheet-size table, metrics and price breakdown
-  work.py               the work rates (sidebar), Työvaiheet on the cards, work per product
+  work.py               the work rates (sidebar), Työvaiheet on the cards, calculators, work per product
+  quote.py              the Tarjous header, prices per batch size and the downloads
+  attachments.py        PDF/STEP files on the DXF tab, links, previews, Tarkastettu
+  material_agent.py     the Materiaaliehdotukset panel
   drawing.py            every SVG: sheet layouts and the DXF part preview
   sparrow_progress.py   progress bar while Sparrow runs
 
@@ -338,3 +423,6 @@ ring-shaped part, so keep frames on their own layer.
 | Sparrow settings or the fixed-sheet search | `core/sparrow.py` |
 | Inputs shared by both tabs | `view/common.py` |
 | Colours and layout drawings | `view/drawing.py` |
+| Calculators and chains | `calculators.yaml` (or the sidebar's Laskurit) |
+| The quote PDF or Excel layout | `core/quote.py` |
+| Material grades that are recognised | `_GRADES` in `core/materials.py` |

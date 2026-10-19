@@ -33,7 +33,7 @@ _PLACEHOLDER_MAT   = "— Valitse materiaali —"
 _PLACEHOLDER_THICK = "— Valitse paksuus —"
 
 
-def _thicknesses_for(lookup: dict, material: str | None) -> list[str]:
+def thicknesses_for(lookup: dict, material: str | None) -> list[str]:
     """Thicknesses available for ``material`` (empty if none is picked)."""
     if material == COPPER_MATERIAL:
         # Copper's thicknesses are fixed and available even with no price.
@@ -75,7 +75,7 @@ def render_material_thickness(
     )
     material = mat_raw if mat_raw != _PLACEHOLDER_MAT else None
 
-    thicknesses = _thicknesses_for(lookup, material)
+    thicknesses = thicknesses_for(lookup, material)
     if thicknesses:
         th_opts = [_PLACEHOLDER_THICK] + thicknesses
         th_default = thick_default if thick_default in thicknesses else _PLACEHOLDER_THICK
@@ -224,10 +224,11 @@ def render_groups(groups: dict[tuple, list[dict]], render_one):
     ``(total_eur, price_per_tonne, sheets)`` — the first two may be None when
     unpriced — or None when the group has no result yet.
 
-    Returns ``(price_by_product_id, grand_total_eur, missing, sheets)``: the
-    price each product's pieces are billed at, the summed total (None when no
-    group was priced), whether any group had no result yet, and the sheets
-    each priced group is cut from (for the cutting minimum).
+    Returns ``(price_by_product_id, grand_total_eur, missing, sheets,
+    totals)``: the price each product's pieces are billed at, the summed total
+    (None when no group was priced), whether any group had no result yet, the
+    sheets each priced group is cut from (for the cutting minimum) and each
+    priced group's material total (for the batch-size prices).
     """
     if not have_solver():
         # Without it the fewest-sheets and mixed-size plans silently vanish
@@ -238,6 +239,7 @@ def render_groups(groups: dict[tuple, list[dict]], render_one):
                    "suunnitelmat.")
     prices: dict[str, float] = {}
     sheets: dict[tuple, int] = {}
+    totals: dict[tuple, float] = {}
     grand_total = None
     missing = False
     for i, (key, prods) in enumerate(groups.items()):
@@ -251,10 +253,11 @@ def render_groups(groups: dict[tuple, list[dict]], render_one):
         if total is not None:
             grand_total = (grand_total or 0.0) + total
             sheets[key] = n_sheets
+            totals[key] = total
         if ppt is not None:
             for p in prods:
                 prices[p["id"]] = ppt
-    return prices, grand_total, missing, sheets
+    return prices, grand_total, missing, sheets, totals
 
 
 # ── Pieces summary ────────────────────────────────────────────────────────────

@@ -13,7 +13,7 @@ from core.pricing import (
     COPPER_PRICE_STEP,
     build_copper_section,
 )
-from view.work import render_rates as render_work_rates
+from view.work import render_calculator_editor, render_rates as render_work_rates
 
 _PLACEHOLDER_SUPPLIER = "— Valitse toimittaja —"
 
@@ -55,6 +55,7 @@ def render() -> dict:
 
         st.divider()
         render_work_rates()
+        render_calculator_editor()
 
     merged.update(build_copper_section(copper_price_kg))
     return merged
