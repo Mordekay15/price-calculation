@@ -11,6 +11,7 @@ from core.materials import (
     HIGH,
     LOW,
     MEDIUM,
+    Hint,
     Proposal,
     ask_claude,
     claude_available,
@@ -24,6 +25,9 @@ from core.materials import (
 _RESULT = "dxf_material_proposals"   # list[Proposal] from the last search
 _PDF_TEXT = "dxf_doc_texts"          # {doc id: [(page, text)]}, as view.attachments.TEXTS
 _NOTE = "dxf_rfq_note"
+_AUTO = "dxf_material_auto"          # {card id: what it was filled from (see auto_fill)}
+_AUTO_NOTE = "dxf_material_auto_note"  # {card id: (material, thickness, sources)}
+AUTO_KEYS = (_AUTO, _AUTO_NOTE)
 
 _CONFIDENCE = {HIGH: "🟢 korkea", MEDIUM: "🟡 keskitaso", LOW: "🔴 matala"}
 
@@ -71,11 +75,57 @@ def render(parts: list[tuple[str, object]], doc_links: dict[str, list[str]],
             _render_result(result, apply)
 
 
+def auto_fill(parts: list[tuple[str, object]], doc_links: dict[str, list[str]],
+              docs: dict[str, dict], materials: list[str], thicknesses_for, apply,
+              filled) -> None:
+    """Give the cards that have no material yet the one their own files name,
+    without asking: a proposal with nothing to check is applied, one whose
+    files disagree is left in the panel to check. A card is searched again
+    only when its files change (so a material the user clears stays clear).
+    ``filled(card id)`` says whether a card already has a material."""
+    done = st.session_state.setdefault(_AUTO, {})
+    todo = []
+    for fid, dxf in parts:
+        sig = (tuple(dxf.texts), tuple(doc_links.get(fid, [])),
+               getattr(dxf, "step_thickness", None))
+        if not filled(fid) and done.get(fid) != sig:
+            done[fid] = sig
+            todo.append((fid, dxf))
+    if not todo:
+        return
+    notes = st.session_state.setdefault(_AUTO_NOTE, {})
+    to_check = []
+    for p in _search(todo, doc_links, docs, materials, thicknesses_for):
+        if p.material and not p.conflict:
+            apply(p.part_id, p.material, p.thickness)
+            notes[p.part_id] = (p.material, p.thickness,
+                                "; ".join(f"{h.source}: {h.raw}" for h in p.evidence))
+        elif p.conflict:
+            to_check.append(p)
+    if to_check:
+        ids = {p.part_id for p in to_check}
+        st.session_state[_RESULT] = [p for p in st.session_state.get(_RESULT) or []
+                                     if p.part_id not in ids] + to_check
+
+
+def auto_note(fid: str, material: str | None, thickness: str | None) -> str | None:
+    """The card's line saying where its material came from, while it is
+    still the one filled in automatically."""
+    note = st.session_state.get(_AUTO_NOTE, {}).get(fid)
+    if not note or (note[0], note[1]) != (material, thickness):
+        return None
+    return f"Materiaali täytetty automaattisesti: {note[2]}"
+
+
 def _search(parts, doc_links, docs, materials, thicknesses_for) -> list[Proposal]:
     texts = st.session_state.setdefault(_PDF_TEXT, {})
     by_part = {}
     for fid, dxf in parts:
         hints = extract_hints("\n".join(dxf.texts), f"{dxf.name} (DXF)")
+        step_t = getattr(dxf, "step_thickness", None)
+        if step_t:
+            hints.append(Hint("STEP-malli", f"levyn paksuus {step_t:g} mm",
+                              thickness_mm=round(step_t, 2)))
         for d in doc_links.get(fid, []):
             doc = docs.get(d)
             if doc is None or doc["kind"] != "pdf":

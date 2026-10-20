@@ -492,3 +492,33 @@ def test_a_unitless_dxf_is_confirmed_by_its_pdf_drawing():
     assert not at.exception
     assert "dxf_unit_ok_f" not in [c.key for c in at.checkbox]
     assert any("vahvistettu: PDF-piirustuksen mitta 516.4 mm" in c.value for c in at.caption)
+
+
+def test_empty_cards_get_their_drawings_material_once_and_conflicts_wait():
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        from types import SimpleNamespace
+
+        import streamlit as st
+
+        from view import material_agent
+
+        parts = [("a", SimpleNamespace(name="a.dxf", texts=["MAT=S355MC", "t=3 mm"])),
+                 ("b", SimpleNamespace(name="b.dxf", texts=["MAT=S355MC", "MAT=AISI 304"])),
+                 ("c", SimpleNamespace(name="c.dxf", texts=[], step_thickness=2.0))]
+        applied = st.session_state.setdefault("applied", [])
+        material_agent.auto_fill(
+            parts, {}, {}, ["S355MC", "RST 304"], lambda m: ["2", "3"],
+            lambda fid, m, t: applied.append((fid, m, t)),
+            lambda fid: fid in st.session_state.get("filled", ()))
+        st.session_state["to_check"] = [p.part_id for p in
+                                        st.session_state.get("dxf_material_proposals") or []]
+
+    at = AppTest.from_function(page, default_timeout=30).run()
+    assert not at.exception
+    assert at.session_state["applied"] == [("a", "S355MC", "3")]
+    assert at.session_state["to_check"] == ["b"]
+    at.session_state["filled"] = ()       # the user cleared card a: it stays clear
+    at.run()
+    assert at.session_state["applied"] == [("a", "S355MC", "3")]

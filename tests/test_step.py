@@ -153,3 +153,52 @@ def test_a_parts_flat_drawing_model_and_pdf_make_one_card():
     assert any("DRW-023179_A.pdf" in e.label for e in at.expander)
     at.selectbox(key="dxf_src_a").set_value("d|0:1:1:1/0").run()
     assert at.session_state["cards"] == [("a", "ITM-072558_A.stp")]
+
+
+def test_a_card_takes_its_bends_from_the_model_and_its_material_from_the_pdf():
+    # A flat DXF without bend lines, its model (one 90° bend, 2 mm) and the
+    # drawing naming the material: the card is filled without a click.
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        import io
+        from types import SimpleNamespace
+
+        import ezdxf
+        import streamlit as st
+        from reportlab.pdfgen import canvas
+
+        from core.step import flat_dxf, unfold
+        from tests.conftest import dxf_bytes
+        from tests.step_models import l_bracket, part_step
+        from view.dxf_tab import (_auto_fill_materials, _ingest, _render_part_cards,
+                                  _sync)
+
+        flat = ezdxf.read(io.StringIO(flat_dxf(unfold(l_bracket()), "ITM-072558")
+                                      .decode()))
+        for e in list(flat.modelspace()):
+            if e.dxf.layer.startswith("BEND"):
+                flat.modelspace().delete_entity(e)
+        buf = io.BytesIO()
+        pdf = canvas.Canvas(buf)
+        pdf.drawString(72, 720, "ITM-072558.A")
+        pdf.drawString(72, 700, "Material: S235JR")
+        pdf.save()
+        if "done" not in st.session_state:
+            st.session_state["done"] = True
+            _ingest([SimpleNamespace(file_id=i, name=n, getvalue=lambda d=d: d) for i, n, d in
+                     [("c", "ITM-072558_A.dxf", dxf_bytes(flat)),
+                      ("d", "ITM-072558_A.stp", part_step(l_bracket(), "Part1")),
+                      ("b", "ITM-072558_A.pdf", buf.getvalue())]])
+        parts = _sync()
+        lookup = {("2", "S235 | 1000x2000"): 900.0, ("3", "S235 | 1000x2000"): 950.0}
+        _auto_fill_materials(parts, ["S235"], lookup)
+        products = _render_part_cards(parts, ["S235"], lookup, False)
+        st.session_state["cards"] = [(p["name"], p["material"], p["thickness"],
+                                      p["report"].bends, p["work"].bends) for p in products]
+
+    at = AppTest.from_function(page, default_timeout=60).run()
+    assert not at.exception
+    assert at.session_state["cards"] == [("ITM-072558_A.dxf", "S235", "2", 0, 1)]
+    assert any(c.value.startswith("Materiaali täytetty automaattisesti:") and "STEP" in c.value
+               for c in at.caption)

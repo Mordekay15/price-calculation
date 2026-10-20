@@ -40,7 +40,8 @@ the quantity). Work has no margin; its rates are selling prices.
   proportion to the parts' cutting.
 - **Bends** and **threads**: count × € each (0.20 by default). The DXF gives
   both: bend lines on a bend layer (e.g. `IV_BEND_DOWN`) and threads drawn with
-  the ISO ¾-circle mark.
+  the ISO ¾-circle mark. When the card has a STEP model, the bends are the
+  model's (a flat DXF often has no bend lines).
 - **Fasteners** (kiinnikkeet: press nuts, screws, bolts, rivets…): count ×
   (one fastener's price + putting one in). By default 0.80 + 0.20 € in RST/HST
   and 0.05 + 0.20 € otherwise. The DXF gives the count from notes like
@@ -160,8 +161,14 @@ hot-dip galvanised (DX51D+Z275, HDG, kuumasinkitty; the coating picks the
 price-list row), stainless and acid-proof (1.4301, AISI 316…), aluminium
 (EN AW-5754…), copper and brass. Grades are matched to the price list's materials, and
 thicknesses must be in the price list (±0.05 mm). Sources that disagree are
-listed under **Tarkistettavat**. Nothing changes until you tick rows and press
-**Käytä valitut**. With **Muista valinnat**, the text that was read is saved
+listed under **Tarkistettavat**. A card's STEP model adds its sheet thickness
+as a source.
+
+A card without a material is filled automatically when its own files name one
+and agree; the card says what it was read from. A card whose files disagree is
+left empty and listed under **Tarkistettavat**. A card is searched again only
+when its files change, so a material you clear stays clear. The proposals in
+the panel change nothing until you tick rows and press **Käytä valitut**. With **Muista valinnat**, the text that was read is saved
 with the choice in `material_aliases.json`, and that saved choice wins next
 time.
 

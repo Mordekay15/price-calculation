@@ -121,8 +121,8 @@ def render(data: dict) -> None:
         return
 
     materials = materials_with_copper(lookup)
-    material_agent.render(_with_all_texts(parts), attachments.links(_card_names()),
-                          attachments.docs(), materials,
+    cards, doc_links = _auto_fill_materials(parts, materials, lookup)
+    material_agent.render(cards, doc_links, attachments.docs(), materials,
                           lambda m: thicknesses_for(lookup, m), _apply_material)
     # Per-part angles are chosen on the cards, drawn above the run row whose
     # switch decides it: read the switch's value from the last run.
@@ -687,7 +687,8 @@ def _card_names() -> dict[str, list[str]]:
 
 def _with_all_texts(parts: list[tuple[str, DxfFile]]) -> list[tuple[str, object]]:
     """The cards for the material search: the texts of all their files (the
-    drawing's title block names the material, the flat pattern may not)."""
+    drawing's title block names the material, the flat pattern may not) and
+    the STEP model's sheet thickness."""
     files = st.session_state.get(_FILES, {})
     items = st.session_state.get(_ITEMS, {})
     out = []
@@ -695,8 +696,46 @@ def _with_all_texts(parts: list[tuple[str, DxfFile]]) -> list[tuple[str, object]
         item = items.get(cid)
         texts = [t for m in (item.members if item else [cid]) if m in files
                  for t in files[m].texts] or list(dxf.texts)
-        out.append((cid, SimpleNamespace(name=dxf.name, texts=texts)))
+        flats = _step_flats(item)
+        out.append((cid, SimpleNamespace(
+            name=dxf.name, texts=texts,
+            step_thickness=flats[0].thickness_mm if flats else None)))
     return out
+
+
+def _auto_fill_materials(parts, materials: list[str], lookup: dict) -> tuple[list, dict]:
+    """Fill the empty cards' material and thickness from their own files (see
+    ``material_agent.auto_fill``); returns the cards for the material panel
+    and their linked files."""
+    cards, doc_links = _with_all_texts(parts), attachments.links(_card_names())
+    config = st.session_state.get(_CONFIG, {})
+    material_agent.auto_fill(cards, doc_links, attachments.docs(), materials,
+                             lambda m: thicknesses_for(lookup, m), _apply_material,
+                             lambda fid: bool(config.get(fid, {}).get("material")))
+    return cards, doc_links
+
+
+def _step_flats(item: _Item | None) -> list:
+    """The unfolded STEP parts on a card."""
+    if item is None:
+        return []
+    return [src[2] for src in map(bom.source, item.members)
+            if src is not None and src[2] is not None and src[2].is_sheet]
+
+
+def _bends(report: DxfReport, item: _Item | None) -> int:
+    """The bends of a part: the STEP model's when the card has one (a flat
+    DXF often has no bend lines), else the DXF's bend lines."""
+    flats = _step_flats(item)
+    return len(flats[0].bends) if flats else report.bends
+
+
+def _fasteners(dxf: DxfFile, item: _Item | None) -> int:
+    """The fasteners the notes of the card's files ask for (the most any one
+    file asks for: a flat and its drawing repeat the same note)."""
+    files = st.session_state.get(_FILES, {})
+    texts = [files[m].texts for m in (item.members if item else []) if m in files]
+    return max((fasteners_from_texts(t) for t in [dxf.texts, *texts]), default=0)
 
 
 def _render_item_files(fid: str, item: _Item) -> None:
@@ -765,7 +804,8 @@ def _evict_all() -> None:
     for doc_id in list(attachments.docs()):
         attachments.remove_doc(doc_id)
     for key in (bom.MODELS, _FILES, _ITEMS, _HIDDEN, _SRC_REPORTS, _FILL_ASKED,
-                _DUPES):   # the dupes warning names cards that are gone
+                _DUPES,    # the dupes warning names cards that are gone
+                *material_agent.AUTO_KEYS):
         st.session_state.pop(key, None)
 
 
@@ -816,8 +856,8 @@ def _render_part_config(
             angles = _render_nesting_angles(fid) if per_part_angles else None
             work = render_work_inputs(fid, material=material, thickness=thickness, qty=qty,
                                       cut_length_m=report.cut_length_mm / 1000,
-                                      bends=report.bends, threads=report.threads,
-                                      fasteners=fasteners_from_texts(dxf.texts),
+                                      bends=_bends(report, item), threads=report.threads,
+                                      fasteners=_fasteners(dxf, item),
                                       **piece_size(report.outline.area_mm2 - sum(
                                           h.area_mm2 for h in report.holes),
                                           material, thickness))
@@ -929,6 +969,9 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict) -> tuple:
     )
     cfg["material"] = material
     cfg["thickness"] = thickness
+    note = material_agent.auto_note(fid, material, thickness)
+    if note:
+        st.caption(note)
     qty = int(st.number_input("Määrä (kpl)", min_value=1, value=int(cfg.get("qty", 1)),
                               step=1,
                               key=f"dxf_q_{fid}"))
