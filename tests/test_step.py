@@ -231,3 +231,48 @@ def test_the_models_bend_lines_are_placed_on_a_turned_mirrored_dxf():
     (line, _), = bends_on(real, [real.outline, *real.holes])
     assert {tuple(round(c, 3) for c in p) for p in line} == {
         tuple(round(c, 3) for c in p) for p in real.bends[0].line}
+
+
+def test_an_assembly_step_becomes_an_assembly_of_its_cards():
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        from types import SimpleNamespace
+
+        import ezdxf
+        import streamlit as st
+
+        from tests.conftest import dxf_bytes
+        from tests.step_models import assembly_step
+        from view import assemblies
+        from view.dxf_tab import _card_of, _ingest, _render_part_cards, _sync
+
+        if "dropped" not in st.session_state:
+            doc = ezdxf.new()
+            doc.header["$INSUNITS"] = 4
+            doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 60), (0, 60)],
+                                            close=True)
+            data, model = dxf_bytes(doc), assembly_step()
+            _ingest([SimpleNamespace(file_id="d1", name="Pohja.dxf", getvalue=lambda: data),
+                     SimpleNamespace(file_id="s1", name="runko.step", getvalue=lambda: model)])
+            st.session_state["dropped"] = True
+        parts = _sync()
+        assemblies.sync_from_models()
+        _render_part_cards(parts, ["S235"], {("2", "S235 | 1000x2000"): 900.0}, False)
+        assemblies.render({fid: f"#{i + 1} · {d.name}" for i, (fid, d) in enumerate(parts)},
+                          _card_of())
+        st.session_state["asm"] = [(a.name, dict(a.members),
+                                    [(b.name, b.qty) for b in a.bought])
+                                   for a in assemblies.current(_card_of())]
+        st.session_state["parts"] = [(fid, d.name) for fid, d in parts]
+
+    at = AppTest.from_function(page, default_timeout=60).run()
+    assert not at.exception
+    cards = dict((name, fid) for fid, name in at.session_state["parts"])
+    # 2 × Kulma and Pohja are sheet cards; 6 × Tappi is a bought part.
+    assert at.session_state["asm"] == [
+        ("runko", {cards["Pohja.dxf"]: 1, cards["Kulma.step"]: 2}, [("Tappi", 6)])]
+    assert any("Kokoonpanossa **runko**: 2 kpl" in c.value for c in at.caption)
+    at.button(key="asm_new").click().run()                    # one by hand
+    assert [a[0] for a in at.session_state["asm"]] == ["runko", "Kokoonpano 1"]
+    assert at.session_state["asm"][1][1] == {}

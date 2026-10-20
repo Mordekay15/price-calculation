@@ -37,12 +37,19 @@ class QuoteInfo:
 
 @dataclass(frozen=True)
 class QuoteLine:
-    """One part on the quote and its price at each batch size."""
+    """One part on the quote and its price at each batch size; or one
+    assembly, with ``parts`` saying what goes into it (e.g. "Pohja × 1") and
+    its prices ``core.assemblies.AssemblyPrice``."""
 
     name: str
     material: str = ""
     thickness: str = ""
     prices: tuple[BatchPrice, ...] = ()
+    parts: tuple[str, ...] = ()
+
+    @property
+    def is_assembly(self) -> bool:
+        return bool(self.parts)
 
 
 def fmt_eur(value: float | None) -> str:
@@ -111,6 +118,9 @@ def quote_pdf(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int],
         if show_material and (line.material or line.thickness):
             name += f"<br/><font size=8 color='#555555'>{_esc(line.material)} " \
                     f"{_esc(line.thickness)}{' mm' if line.thickness else ''}</font>"
+        if line.parts:
+            name += "<br/><font size=8 color='#555555'>Kokoonpano: " \
+                    f"{_esc(', '.join(line.parts))}</font>"
         for i, p in enumerate(line.prices):
             rows.append([Paragraph(name, small) if i == 0 else "", f"{p.qty}",
                          fmt_eur(p.unit) or "–", fmt_eur(p.total) or "–"])
@@ -189,6 +199,9 @@ def quote_xlsx(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int]) -> byt
         cell.font = Font(bold=True)
     for line in lines:
         for p in line.prices:
+            if line.is_assembly:
+                ws2.append([line.name, p.qty, *("",) * 10, _round(p.unit)])
+                continue
             w = p.work
             ws2.append([
                 line.name, p.qty, _round(p.material),
@@ -198,7 +211,20 @@ def quote_xlsx(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int]) -> byt
                   if w is not None else ("",) * 8),
                 p.sheets, _round(p.unit),
             ])
-    for sheet in (ws, ws2):
+    sheets = [ws, ws2]
+    assemblies = [line for line in lines if line.is_assembly]
+    if assemblies:
+        ws3 = wb.create_sheet("Kokoonpanot")
+        sheets.append(ws3)
+        ws3.append(["Kokoonpano", "Eräkoko (kpl)", "Osat €/kok.", "Ostetut osat €/kok.",
+                    "Kokoonpanotyö €/kok.", "Yhteensä €/kok.", "Sisältö"])
+        for cell in ws3[1]:
+            cell.font = Font(bold=True)
+        for line in assemblies:
+            for p in line.prices:
+                ws3.append([line.name, p.qty, _round(p.parts), _round(p.bought),
+                            _round(p.work), _round(p.unit), ", ".join(line.parts)])
+    for sheet in sheets:
         for col in sheet.columns:
             width = max(len(str(c.value or "")) for c in col)
             sheet.column_dimensions[col[0].column_letter].width = min(max(width + 2, 10), 40)

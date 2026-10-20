@@ -153,6 +153,28 @@ Cones, rolled parts and hems are not supported: such a part is marked as not
 sheet, and a DXF of it is needed. Without `cadquery-ocp`, STEP files are only
 attached to the cards by part number.
 
+## Assemblies (Kokoonpanot)
+
+Parts sold together are one **assembly** (`core/assemblies.py`,
+`view/assemblies.py`), shown as one line on the quote, PDF and Excel. The
+Excel export gets a **Kokoonpanot** sheet with each assembly's parts, bought
+parts, work and contents.
+
+- **From a STEP assembly.** A dropped STEP file of several parts becomes an
+  assembly automatically. Its sheet parts are the cards they are on, with the
+  model's quantities as kpl / kokoonpano. Its other bodies (pins, screws,
+  machined parts) become **bought parts** with a € price to fill in. Removing
+  the STEP file removes its assembly.
+- **By hand.** **Uusi kokoonpano** makes an empty one, and you tick any cards
+  into it with their kpl / kokoonpano.
+- **Pricing.** A batch size counts assemblies. Each part is priced at
+  `batch × kpl / kokoonpano` pieces, so its setup and sheets are shared over
+  all of them. One assembly costs its parts' €/kpl × kpl/kokoonpano, plus the
+  bought parts, plus the assembly work. The work is `(setup min / batch +
+  fitting min) / 60 × €/h`, welding at the sidebar's welding rate, and
+  anything else per assembly. Each card in an assembly says so, and a part in
+  an assembly is not quoted separately.
+
 ## Material proposals (Materiaaliehdotukset)
 
 **Etsi materiaalit** (no AI) reads the material grade and thickness from each part's
@@ -274,6 +296,7 @@ core/                   pure logic, no Streamlit
   batches.py            prices per batch size from one nesting
   calculators.py        YAML calculators: inputs, step tables, safe formulas, chains
   quote.py              quote PDF, Excel export, clean DXFs and their ZIP
+  assemblies.py         assemblies: parts × kpl/kokoonpano + bought parts + assembly work
   linking.py            part numbers from file names; files → parts by name or text
   items.py              one card per part: grouping its files, choosing the shape
   materials.py          material/thickness hints, proposals, alias table, optional Claude
@@ -301,6 +324,7 @@ view/                   Streamlit UI
   attachments.py        PDF/STEP files on the DXF tab, links, previews, Tarkastettu
   material_agent.py     the Materiaaliehdotukset panel
   bom.py                STEP-mallit: BOM, cards from unfolded parts, K factor, 3D view
+  assemblies.py         Kokoonpanot: from STEP assemblies or by hand, parts, bought parts, work
   drawing.py            every SVG: sheet layouts and the DXF part preview
   sparrow_progress.py   progress bar while Sparrow runs
 
@@ -482,3 +506,4 @@ ring-shaped part, so keep frames on their own layer.
 | The quote PDF or Excel layout | `core/quote.py` |
 | Material grades that are recognised | `_GRADES` in `core/materials.py` |
 | How STEP bodies are unfolded, or the default K factor | `core/step.py` |
+| How an assembly is priced | `core/assemblies.py` |

@@ -49,7 +49,7 @@ from view.common import (
     thicknesses_for,
 )
 from view.drawing import draw_sparrow_layout, preview_svg
-from view import attachments, bom, material_agent
+from view import assemblies, attachments, bom, material_agent
 from view.quote import render_batch_prices
 from view.sheet_usage import render_group
 from view.work import piece_size, render_work_inputs, work_costs
@@ -129,6 +129,8 @@ def render(data: dict) -> None:
     # switch decides it: read the switch's value from the last run.
     per_part = len(parts) > 1 and st.session_state.get(_ANGLE_MODE) == _PER_PART
     products = _render_part_cards(parts, materials, lookup, per_part)
+    assemblies.render({fid: f"#{i + 1} · {d.name}" for i, (fid, d) in enumerate(parts)},
+                      _card_of())
     margin_pct, nest_mode, sheet = _render_settings()
     if not any(is_ready(p) for p in products):
         st.info("Valitse materiaali ja paksuus vähintään yhdelle osalle.")
@@ -190,6 +192,7 @@ def _render_drop_area() -> list[tuple[str, DxfFile]]:
     if _ingest(uploaded):
         st.rerun()  # redraw with the drop area empty
     parts = _sync()
+    assemblies.sync_from_models()
     skipped = st.session_state.get(_SKIPPED)
     if skipped:
         st.caption(f"Ohitettiin {len(skipped)} tiedostoa, joita ei tarvita "
@@ -521,7 +524,8 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest, 
                           weight_label="Osien yhteispaino (kg)", lead="Osa",
                           areas_mm2=areas, work=work_costs(ready, groups, sheets))
     render_batch_prices(ready, prices, groups, sheets, totals, lead="Osa", key="dxf",
-                        areas_mm2=areas, clean_parts=[_clean_part(p) for p in ready])
+                        areas_mm2=areas, clean_parts=[_clean_part(p) for p in ready],
+                        assemblies=assemblies.current(_card_of()))
     return bool(replanned)
 
 
@@ -692,6 +696,12 @@ def _blank_size(flat) -> tuple[float, float] | None:
     return max(xs) - min(xs), max(ys) - min(ys)
 
 
+def _card_of() -> dict[str, str]:
+    """Every file's card: ``{source id: card id}``."""
+    return {sid: cid for cid, item in st.session_state.get(_ITEMS, {}).items()
+            for sid in item.members}
+
+
 def _card_names() -> dict[str, list[str]]:
     """Every card's file names (for linking the PDFs)."""
     return {cid: list(item.names.values())
@@ -819,7 +829,7 @@ def _evict_all() -> None:
     for key in (bom.MODELS, _FILES, _ITEMS, _HIDDEN, _SRC_REPORTS, _FILL_ASKED,
                 _DUPES, _SKIPPED,   # these warnings name files that are gone
                 _BEND_LINES,
-                *material_agent.AUTO_KEYS):
+                *material_agent.AUTO_KEYS, *assemblies.KEYS):
         st.session_state.pop(key, None)
 
 
@@ -846,6 +856,8 @@ def _render_part_config(
         item = st.session_state.get(_ITEMS, {}).get(fid)
         if item is not None and len(item.members) > 1:
             _render_item_files(fid, item)
+        for name, n in assemblies.membership(fid, _card_of()):
+            st.caption(f"🧩 Kokoonpanossa **{name}**: {n} kpl / kokoonpano")
 
         # Text found in the drawing (Mat=…, Thk=…) — shown to cross-check the
         # material choice, never nested.

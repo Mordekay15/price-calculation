@@ -10,12 +10,12 @@ from datetime import date
 
 import streamlit as st
 
+from core.assemblies import Assembly, assembly_prices, per_unit
 from core.batches import (
     DEFAULT_BATCH_SIZES,
     BatchPart,
     GroupSheets,
     batch_prices,
-    batch_totals,
     parse_batch_sizes,
 )
 from core.quote import (
@@ -99,9 +99,12 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
                         groups: dict[tuple, list[dict]], sheets: dict[tuple, int],
                         totals: dict[tuple, float], *, lead: str, key: str,
                         areas_mm2: dict[str, float] | None = None,
-                        clean_parts: list[CleanPart] | None = None) -> None:
+                        clean_parts: list[CleanPart] | None = None,
+                        assemblies: list[Assembly] | None = None) -> None:
     """The price of every part at every batch size, the quote's total at each,
-    and the downloads. ``clean_parts`` (DXF tab) adds the clean-DXF ZIP."""
+    and the downloads. ``clean_parts`` (DXF tab) adds the clean-DXF ZIP.
+    A part in one of the ``assemblies`` is priced inside it: the assembly is
+    the quote line, and a batch size counts assemblies."""
     costs = piece_costs(products, prices, areas_mm2)
     group_of = {p["id"]: k for k, prods in groups.items() for p in prods}
     costs = [pc for pc in costs if pc.product["id"] in group_of]
@@ -116,14 +119,36 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
             kg = sum(pc.kg * pc.product["qty"] for pc in costs
                      if group_of[pc.product["id"]] == k)
             group_sheets[k] = GroupSheets(totals[k], sheets[k], kg)
+    assemblies = [a for a in assemblies or [] if a.members or a.bought]
+    in_assembly = per_unit(assemblies)
     parts = [BatchPart(pc.product["id"], group_of[pc.product["id"]], pc.kg,
-                       pc.product.get("work")) for pc in costs]
-    by_part = batch_prices(parts, group_sheets, sizes, current_rates())
-    quote_totals = batch_totals(by_part, sizes)
+                       pc.product.get("work"), in_assembly.get(pc.product["id"], 1))
+             for pc in costs]
+    rates = current_rates()
+    by_part = batch_prices(parts, group_sheets, sizes, rates)
 
-    lines = [QuoteLine(str(pc.product.get("name", pc.index + 1)),
-                       pc.product["material"] or "", pc.product["thickness"] or "",
-                       tuple(by_part[pc.product["id"]])) for pc in costs]
+    def name(pc) -> str:
+        return str(pc.product.get("name", pc.index + 1))
+
+    lines = [QuoteLine(name(pc), pc.product["material"] or "", pc.product["thickness"] or "",
+                       tuple(by_part[pc.product["id"]]))
+             for pc in costs if pc.product["id"] not in in_assembly]
+    names = {pc.product["id"]: name(pc) for pc in costs}
+    members: list[list[dict]] = []      # each assembly's rows in the table
+    for a in assemblies:
+        units = {pid: [p.unit for p in by_part[pid]] for pid, _ in a.members if pid in by_part}
+        contents = tuple([f"{names.get(pid, '?')} × {n}" for pid, n in a.members]
+                         + [f"{b.name} × {b.qty}" for b in a.bought])
+        lines.append(QuoteLine(a.name, prices=tuple(assembly_prices(a, units, sizes, rates)),
+                               parts=contents or ("—",)))
+        members.append(
+            [{"name": f"\u2003└ {names.get(pid, '?')} × {n}",
+              "units": units.get(pid, [None] * len(sizes))} for pid, n in a.members]
+            + [{"name": f"\u2003└ {b.name} × {b.qty} (ostettu)",
+                "units": [b.eur] * len(sizes)} for b in a.bought])
+    quote_totals = [None if any(line.prices[i].total is None for line in lines)
+                    else sum(line.prices[i].total for line in lines)
+                    for i in range(len(sizes))]
 
     st.divider()
     st.markdown("**Eräkohtaiset hinnat**", help=(
@@ -140,11 +165,17 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
         cols[-1].metric("Laskenta-aika", f"{(time.time() - started) / 60:.0f} min",
                         help="Aika siitä, kun ensimmäinen osa oli hinnoiteltavissa.")
     rows = []
+    sub = iter(members)
     for line in lines:
-        row = {lead: line.name, "Materiaali": line.material, "Paksuus": line.thickness}
-        for p in line.prices:
-            row[f"{p.qty} kpl, €/kpl"] = "" if p.unit is None else round(p.unit, 2)
+        row = {lead: ("🧩 " if line.is_assembly else "") + line.name,
+               "Materiaali": line.material, "Paksuus": line.thickness}
+        for q, p in zip(sizes, line.prices):
+            row[f"{q} kpl, €/kpl"] = "" if p.unit is None else round(p.unit, 2)
         rows.append(row)
+        for m in (next(sub) if line.is_assembly else []):
+            rows.append({lead: m["name"], "Materiaali": "", "Paksuus": "",
+                         **{f"{q} kpl, €/kpl": "" if u is None else round(u, 2)
+                            for q, u in zip(sizes, m["units"])}})
     st.dataframe(rows, width="stretch", hide_index=True)
 
     info = current_info()

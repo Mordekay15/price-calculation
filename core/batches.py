@@ -55,18 +55,22 @@ class GroupSheets:
 @dataclass(frozen=True)
 class BatchPart:
     """One part as the batch prices need it: its group, one piece's weight
-    and its work inputs (None: no work priced)."""
+    and its work inputs (None: no work priced). ``per_unit`` is how many
+    pieces one ordered item takes: 1 for a part sold on its own, its
+    kpl/kokoonpano in an assembly (``core.assemblies``)."""
 
     id: str
     group: tuple
     kg: float
     work: WorkInputs | None = None
+    per_unit: int = 1
 
 
 @dataclass(frozen=True)
 class BatchPrice:
-    """One part's price at one batch size. ``material`` and ``work`` are
-    None when unpriced (no nesting for the group, or no laser speed)."""
+    """One part's price at one batch size: ``qty`` pieces (the batch size ×
+    the part's ``per_unit``). ``material`` and ``work`` are None when
+    unpriced (no nesting for the group, or no laser speed)."""
 
     qty: int
     material: float | None        # € per piece
@@ -98,16 +102,18 @@ def batch_prices(parts: list[BatchPart], groups: dict[tuple, GroupSheets],
     for q in sizes:
         for key, members in by_group.items():
             group = groups.get(key)
-            kg = sum(p.kg for p in members) * q
+            kg = sum(p.kg * p.per_unit for p in members) * q
             sheets = group.sheets_for(kg) if group else 0
             rate = group.eur_for(kg) / kg if group and kg > 0 else None
-            works = [work_cost(p.work, q, rates) for p in members if p.work is not None]
+            works = [work_cost(p.work, q * p.per_unit, rates)
+                     for p in members if p.work is not None]
             if group and works:
                 works = apply_sheet_minimum(works, sheets, rates)
             work_of = dict(zip([p.id for p in members if p.work is not None], works))
             for p in members:
                 material = None if rate is None else p.kg * rate
-                out[p.id].append(BatchPrice(q, material, work_of.get(p.id), sheets))
+                out[p.id].append(BatchPrice(q * p.per_unit, material, work_of.get(p.id),
+                                            sheets))
     return out
 
 
