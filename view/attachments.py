@@ -114,8 +114,9 @@ def render_doc_list(parts: dict[str, str], labels: dict[str, str]) -> None:
             c3.button("Poista", key=f"dxf_doc_del_{d}", on_click=remove_doc, args=(d,))
 
 
-def render_card_docs(doc_ids: list[str]) -> None:
-    """A card's linked drawings: the first page of each PDF, folded."""
+def render_card_docs(card_id: str, doc_ids: list[str]) -> None:
+    """A card's linked drawings: the first page of each PDF, folded. One file
+    can be on several cards (numbered pieces), so the widget keys name the card."""
     all_docs = docs()
     doc_ids = [d for d in doc_ids if d in all_docs]
     if not doc_ids:
@@ -131,19 +132,19 @@ def render_card_docs(doc_ids: list[str]) -> None:
                 else:
                     st.caption(f"{doc['name']}: esikatselua ei voitu tehdä.")
             else:
-                _step_preview(d)
+                _step_preview(card_id, d)
             st.download_button(f"Avaa {doc['name']}", data=doc["data"],
-                               file_name=doc["name"], key=f"dxf_doc_dl_{d}",
+                               file_name=doc["name"], key=f"dxf_doc_dl_{card_id}_{d}",
                                mime="application/pdf" if doc["kind"] == "pdf"
                                else "application/step")
 
 
-def _step_preview(doc_id: str) -> None:
+def _step_preview(card_id: str, doc_id: str) -> None:
     from view import bom
 
     part = bom.single_part(doc_id)
-    if part is not None and st.toggle(f"Näytä 3D: {part.name}", key=f"dxf_doc_3d_{doc_id}"):
-        bom.render_3d(part.shape, doc_id)
+    if part is not None and st.toggle(f"Näytä 3D: {part.name}", key=f"dxf_doc_3d_{card_id}_{doc_id}"):
+        bom.render_3d(part.shape, f"{card_id}:{doc_id}")
 
 
 def _preview(doc_id: str, data: bytes) -> bytes | None:

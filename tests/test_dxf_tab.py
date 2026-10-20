@@ -437,3 +437,38 @@ def test_a_drawing_of_another_card_is_flagged():
     parts = [("f1", read_dxf(dxf("ITM-072558.A"), "ITM-072558_A.dxf")),
              ("f2", read_dxf(dxf("Item ID: ITM-072558.A  DRW-023179.A"), "DRW-023179_A.dxf"))]
     assert _drawing_of(parts) == {"f2": "#1 · ITM-072558_A.dxf"}
+
+
+def test_one_drawing_on_two_numbered_pieces_draws_both_cards():
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        import io
+        from types import SimpleNamespace
+
+        import ezdxf
+        import streamlit as st
+        from reportlab.pdfgen import canvas
+
+        from tests.conftest import dxf_bytes
+        from view.dxf_tab import _STORE, _ingest, _render_part_cards
+
+        doc = ezdxf.new()
+        doc.header["$INSUNITS"] = 4
+        doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 50), (0, 50)], close=True)
+        data = dxf_bytes(doc)
+        buf = io.BytesIO()
+        pdf = canvas.Canvas(buf)
+        pdf.drawString(72, 720, "3AUA0000098622")
+        pdf.save()
+        if not st.session_state.get(_STORE):
+            _ingest([SimpleNamespace(file_id=f"f{i}", name=f"3aua0000098622_{i}.dxf",
+                                     getvalue=lambda: data) for i in (1, 2)]
+                    + [SimpleNamespace(file_id="d", name="3AUA0000098622.pdf",
+                                       getvalue=lambda: buf.getvalue())])
+        _render_part_cards(list(st.session_state[_STORE].items()), ["S235"],
+                           {("2", "S235 | 1000x2000"): 900.0}, False)
+
+    at = AppTest.from_function(page, default_timeout=30).run()
+    assert not at.exception
+    assert sum("3AUA0000098622.pdf" in e.label for e in at.expander) == 2

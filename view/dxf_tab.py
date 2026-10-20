@@ -672,7 +672,7 @@ def _render_part_config(
         # material choice, never nested.
         if dxf.texts:
             st.caption("Piirustuksen tekstit: " + " · ".join(dxf.texts))
-        attachments.render_card_docs(list(doc_ids))
+        attachments.render_card_docs(fid, list(doc_ids))
         bom.render_card_model(fid)
 
         preview_col, input_col = st.columns([1, 3])
