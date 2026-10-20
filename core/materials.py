@@ -43,7 +43,12 @@ _GRADES: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r"\b(?:messinki|brass)\b", re.I), "MESSINKI", ""),
     (re.compile(r"\bs\s?(235|275|355|420|460|500|650|700)\s?(mc|jr|j0|j2|j2\+n|ml|n)?\b", re.I),
      "S", r"S\1"),
-    (re.compile(r"\b(dc0[1-6]|dx5[1-4]d|dd1[1-4])\b", re.I), "KY", r"\1"),
+    # Hot-dip galvanised: DX51D+Z275, HDG, kuumasinkitty, KU-SI. The grade is
+    # the zinc coating (Z275) when one is given.
+    (re.compile(r"\bdx5[1-4]d(?:\s*\+\s*(z\s?\d{2,3}))?", re.I), "SINK", r"\1"),
+    (re.compile(r"\b(?:hdg|hot[- ]?dip(?:ped)?(?:\s+galvani[sz]ed)?|galvani[sz]ed|"
+                r"kuumasinki\w*|sinkit\w*|sendzimir|ku-?si)\b", re.I), "SINK", ""),
+    (re.compile(r"\b(dc0[1-6]|dd1[1-4])\b", re.I), "KY", r"\1"),
 ]
 
 _THICKNESS = [
@@ -53,10 +58,14 @@ _THICKNESS = [
 ]
 
 
+_COATING = re.compile(r"\b(z\d{2,3})\b", re.I)
+
+
 @dataclass(frozen=True)
 class Hint:
     """A material or thickness found in one source. ``family`` is ``S``
-    (structural steel), ``KY`` (cold-rolled), ``RST``, ``HST``, ``ALUMIINI``,
+    (structural steel), ``KY`` (cold-rolled), ``SINK`` (hot-dip galvanised),
+    ``RST``, ``HST``, ``ALUMIINI``,
     ``KUPARI`` or ``MESSINKI``; ``grade`` its grade (``S355``, ``304``…)."""
 
     source: str                       # e.g. "100325.pdf, s. 1", "Tarjouspyyntö"
@@ -79,7 +88,10 @@ def extract_hints(text: str, source: str) -> list[Hint]:
             m = pattern.search(line)
             if m:
                 family = fam
-                grade = m.expand(grade_tpl).upper() if grade_tpl else ""
+                grade = m.expand(grade_tpl).upper().replace(" ", "") if grade_tpl else ""
+                if family == "SINK" and not grade:
+                    coat = _COATING.search(line)
+                    grade = coat.group(1).upper() if coat else ""
                 break
         thickness = _thickness(line)
         # A bare "2 mm" with no material word is too common (dimensions):
@@ -141,15 +153,17 @@ def normalize(raw: str) -> str:
     return re.sub(r"\s+", " ", raw.strip().lower())
 
 
-def load_aliases(path: Path = ALIAS_FILE) -> dict[str, dict]:
+def load_aliases(path: Path | None = None) -> dict[str, dict]:
+    path = path or ALIAS_FILE
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 
 
-def save_aliases(new: dict[str, dict], path: Path = ALIAS_FILE) -> None:
+def save_aliases(new: dict[str, dict], path: Path | None = None) -> None:
     """Add ``{raw: {"material", "thickness"}}`` to the alias table."""
+    path = path or ALIAS_FILE
     table = load_aliases(path)
     table.update({normalize(k): v for k, v in new.items()})
     path.write_text(json.dumps(table, ensure_ascii=False, indent=1, sort_keys=True),
@@ -170,6 +184,14 @@ def match_material(hint: Hint, materials: list[str]) -> list[str]:
         hits = [m for m, n in names.items() if has(grade, n)]
         # Prefer the exact grade with its suffix, then the shortest name.
         return sorted(hits, key=lambda m: (hint.grade not in names[m], len(m)))
+    if hint.family == "SINK":
+        hits = [m for m, n in names.items()
+                if "SINK" in n or "KU-SI" in n or re.search(r"DX5[1-4]D", n)]
+        hits = [m for m in hits if "SÄHKÖ" not in names[m] and " ZE" not in names[m]] or hits
+        if hint.grade:
+            exact = [m for m in hits if hint.grade in names[m].replace(" ", "")]
+            hits = exact or hits
+        return sorted(hits, key=len)
     if hint.family == "KY":
         return sorted([m for m, n in names.items() if has(hint.grade, n)], key=len)
     if hint.family in ("RST", "HST"):
@@ -229,7 +251,8 @@ def _propose_one(pid, name, hints, materials, thicknesses_for, aliases) -> Propo
             return Proposal(pid, name, alias["material"], alias.get("thickness"), HIGH,
                             (h,), via="alias", raw=h.raw)
 
-    with_family = [h for h in hints if h.family]
+    # The hint with a grade first: "DX51D+Z275" says more than "HDG STEEL".
+    with_family = sorted((h for h in hints if h.family), key=lambda h: not h.grade)
     with_thickness = [h for h in hints if h.thickness_mm is not None]
     conflicts = []
     families = {(h.family, h.grade) for h in with_family}

@@ -103,7 +103,8 @@ the minutes and € per piece at every batch size.
 
 PDF and STEP files can be dropped together with the DXFs. They are linked to
 cards by part number: `100325-revA.pdf` and `100325_B.pdf` both go to
-`100325.dxf`, and an exact file name wins. A PDF whose name is something
+`100325.dxf`, and an exact file name wins. Numbered pieces share their
+drawing: `3AUA0000098622.pdf` links to `3aua0000098622_1.dxf` and `_2.dxf`. A PDF whose name is something
 else, such as the drawing number `DRW-023179.A.pdf`, is linked by the part
 number in its text (the title block's `ITM-072558.A` goes to
 `ITM-072558_A.dxf`), but only when the text names exactly one card's part
@@ -147,10 +148,13 @@ attached to the cards by part number.
 
 ## Material proposals (Materiaaliehdotukset)
 
-**Etsi materiaalit** reads the material grade and thickness from each part's
+**Etsi materiaalit** (no AI) reads the material grade and thickness from each part's
 DXF texts and linked PDFs. It also reads the **Tarjouspyynnön teksti** (the
 RFQ, e.g. "DXF:t tulee S355 2 mm"), which is used for parts whose own files
-say nothing. Grades are matched to the price list's materials, and
+say nothing. It knows structural steels (S235, S355MC…), cold-rolled (DC01…),
+hot-dip galvanised (DX51D+Z275, HDG, kuumasinkitty; the coating picks the
+price-list row), stainless and acid-proof (1.4301, AISI 316…), aluminium
+(EN AW-5754…), copper and brass. Grades are matched to the price list's materials, and
 thicknesses must be in the price list (±0.05 mm). Sources that disagree are
 listed under **Tarkistettavat**. Nothing changes until you tick rows and press
 **Käytä valitut**. With **Muista valinnat**, the text that was read is saved

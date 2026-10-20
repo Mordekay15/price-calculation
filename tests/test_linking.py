@@ -55,3 +55,17 @@ def test_a_page_links_a_pdf_by_its_text():
     at = AppTest.from_function(page).run()
     assert not at.exception
     assert at.session_state["links"] == {"f1": ["d1"]}
+
+
+def test_a_drawing_links_to_the_numbered_pieces_of_its_part():
+    parts = {"a": "3aua0000098622_1.dxf", "b": "3aua0000098622_2.dxf", "c": "100325.dxf"}
+    files = {"pdf": "3AUA0000098622.pdf", "stp": "3AUA0000098622.stp", "x": "100325_2.pdf"}
+    assert link_files(parts, files) == {"a": ["pdf", "stp"], "b": ["pdf", "stp"]}
+
+
+def test_a_drawing_names_the_numbered_pieces_in_its_text():
+    from core.linking import link_by_text
+
+    parts = {"a": "3aua0000098622_1.dxf", "b": "3aua0000098622_2.dxf"}
+    texts = {"pdf": "Doc. No. Sheet 1\n3AUA0000098622\nDMS Number 3AXD10000037291"}
+    assert link_by_text(parts, texts) == {"a": ["pdf"], "b": ["pdf"]}

@@ -74,3 +74,15 @@ def test_match_thickness_tolerance():
     assert match_thickness(2.04, ["1.5", "2"]) == "2"
     assert match_thickness(2.1, ["1.5", "2"]) is None
     assert match_thickness(None, ["2"]) is None
+
+
+def test_hot_dip_galvanised_with_its_coating():
+    text = "Material:HDG STEEL SHEET 1,5MM\nDX51D+Z275-M-A-C\nEN 10346\n(min size 22x22 mm)"
+    hints = extract_hints(text, "3AUA0000098622.pdf")
+    assert [(h.family, h.grade, h.thickness_mm) for h in hints] == [
+        ("SINK", "", 1.5), ("SINK", "Z275", None)]
+    for materials in (["Kuumasinkitty Z275", "Sähkösinkitty ZE", "Kuumasinkitty DX51D+Z100MAC",
+                       "DC01"], ["KU-SI DX51D+Z100", "KU-SI DX51D+Z275", "DC01"]):
+        p = propose({"p": ("x.dxf", hints)}, [], materials, lambda m: ["1", "1.5"])[0]
+        assert "Z275" in p.material and p.thickness == "1.5" and p.confidence == HIGH
+        assert not p.conflict

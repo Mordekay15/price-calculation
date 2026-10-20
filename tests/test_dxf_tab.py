@@ -391,8 +391,13 @@ def test_price_only_changes_update_without_the_calculate_button():
     assert show(at, qty=41)[2]                                    # new quantity: the button
 
 
-def test_a_pdf_links_to_its_part_and_its_material_can_be_applied():
+def test_a_pdf_links_to_its_part_and_its_material_can_be_applied(tmp_path, monkeypatch):
     from streamlit.testing.v1 import AppTest
+
+    from core import materials
+
+    aliases = tmp_path / "aliases.json"     # "Muista valinnat" writes here
+    monkeypatch.setattr(materials, "ALIAS_FILE", aliases)
 
     at = AppTest.from_file("dxf_docs_page.py", default_timeout=30).run()
     assert not at.exception
@@ -402,6 +407,7 @@ def test_a_pdf_links_to_its_part_and_its_material_can_be_applied():
     at.button(key="dxf_find_materials").click().run()
     at.button(key="dxf_apply_materials").click().run()
     assert at.session_state["materials"] == [("S355MC", "3"), ("S235", "2")]
+    assert aliases.exists()
 
 
 def test_a_chain_picks_its_calculators_on_the_card():
