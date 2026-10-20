@@ -54,7 +54,7 @@ def group_sources(sources: list[Source], is_drawing=lambda source_id: True
     groups: dict[str, list[Source]] = {}
     for s in sources:
         keys = s.part_keys()
-        key = next((k for k in keys if k in groups), None) or sorted(keys)[0]
+        key = next((k for k in sorted(keys) if k in groups), None) or sorted(keys)[0]
         groups.setdefault(key, []).append(s)
 
     # A group named otherwise whose texts name exactly one other group's part
@@ -109,9 +109,10 @@ def score_dxf(report, unit_guessed: bool, texts: list[str],
     if _is_paper(w, h):
         score -= 200
         notes.append("piirustuksen kehys")
-    if report.dropped:
-        score -= 15 * min(len(report.dropped), 10)
-        notes.append(f"{len(report.dropped)} kuviota osan ulkopuolella")
+    outside = report.dropped_count
+    if outside:
+        score -= 15 * min(outside, 10)
+        notes.append(f"{outside} kuviota osan ulkopuolella")
     if texts:
         score -= 2 * min(len(texts), 20)
     if unit_guessed:
@@ -151,7 +152,7 @@ def looks_like_drawing(report) -> bool:
     if report.problems or report.outline is None:
         return True
     w, h = sorted((report.outline.width_mm, report.outline.height_mm))
-    return _is_paper(w, h) or len(report.dropped) >= 3
+    return _is_paper(w, h) or report.dropped_count >= 3
 
 
 _NUMBER = re.compile(r"(?<![\d.,])\d{2,5}(?:[.,]\d{1,2})?(?![\d])")

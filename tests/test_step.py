@@ -9,7 +9,7 @@ pytest.importorskip("OCP")
 from core.dxf import read_dxf                         # noqa: E402
 from core.step import bends_on, flat_dxf, read_step, unfold  # noqa: E402
 from tests.step_models import (                       # noqa: E402
-    assembly_step, bent_part, l_bracket, part_step, pin, plate)
+    assembly_step, bent_part, creo_step, l_bracket, part_step, pin, plate)
 
 
 def _size(flat):
@@ -25,6 +25,13 @@ def test_the_bom_counts_parts_through_subassemblies():
         (0, "Runko", 1, 1), (1, "Kulma", 2, 2), (1, "Pohja", 1, 1),
         (1, "Tappiryhmä", 2, 2), (2, "Tappi", 3, 6)]
     assert {p.name: p.qty for p in model.parts} == {"Kulma": 2, "Pohja": 1, "Tappi": 6}
+
+
+def test_a_body_named_solid_takes_its_parts_name():
+    """Creo names every body "SOLID": the part's own name is used instead, so
+    cards don't all share the key "solid"."""
+    model = read_step(creo_step(), "asm.step")
+    assert sorted((p.name, p.qty) for p in model.parts) == [("100325", 1), ("PEM-M6", 4)]
 
 
 def test_a_bad_file_has_a_problem_not_an_error():

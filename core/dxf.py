@@ -7,6 +7,8 @@ from __future__ import annotations
 import io
 import math
 import re
+import sys
+from array import array
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -102,14 +104,27 @@ _TEXT_UNIT_TO_CODE: dict[str, int] = {
 
 # ── Data model ───────────────────────────────────────────────────────────────
 
-@dataclass
 class _Piece:
-    """One flattened entity, in millimetres."""
+    """One flattened entity, in millimetres. Its points are kept as one flat
+    array of floats, not as a list of tuples: a big RFQ's drawings have
+    millions of them, and tuples take about seven times the memory."""
 
-    points: list[Point]
-    closed: bool
-    layer: str
-    solid: bool          # False for dashed / dotted (reference) linetypes
+    __slots__ = ("_xy", "closed", "layer", "solid")
+
+    def __init__(self, points: list[Point], closed: bool, layer: str, solid: bool):
+        self.points = points
+        self.closed = closed
+        self.layer = sys.intern(layer)
+        self.solid = solid   # False for dashed / dotted (reference) linetypes
+
+    @property
+    def points(self) -> list[Point]:
+        xy = self._xy
+        return list(zip(xy[0::2], xy[1::2]))
+
+    @points.setter
+    def points(self, points: list[Point]) -> None:
+        self._xy = array("d", [v for x, y in points for v in (x, y)])
 
 
 @dataclass
@@ -143,11 +158,16 @@ class DxfReport:
     reference_lines: list[list[Point]] = field(default_factory=list)
     open_lines: list[list[Point]] = field(default_factory=list)   # inside the part
     dropped: list[list[Point]] = field(default_factory=list)      # outside the part
+    dropped_more: int = 0      # shapes outside the part not kept (see _trim_dropped)
     # Why this part cannot be priced (empty = it can).
     problems: list[str] = field(default_factory=list)
     # For the work price: threads drawn with the ISO mark, and bend lines.
     threads: int = 0
     bends: int = 0
+
+    @property
+    def dropped_count(self) -> int:
+        return len(self.dropped) + self.dropped_more
 
     @property
     def cut_length_mm(self) -> float:
@@ -214,6 +234,7 @@ class DxfFile:
         if not top:
             report.problems.append("Valituilta tasoilta ei löytynyt suljettua ääriviivaa.")
             report.dropped = [c.points for c in contours]
+            _trim_dropped(report)
             return report
 
         # The main part is the largest outline; everything inside it belongs to
@@ -249,8 +270,29 @@ class DxfFile:
                 report.open_lines.append(c.points)
 
         report.problems += _part_problems(report)
+        _trim_dropped(report)
         _lay_along_length(report)
         return report
+
+
+_DROPPED_POINTS = 5000   # points kept of the shapes outside the part
+
+
+def _trim_dropped(report: DxfReport) -> None:
+    """Keep only the biggest shapes outside the part, up to ``_DROPPED_POINTS``
+    points: they are only drawn grey in a small preview, and a drawing sheet's
+    views and dimensions can be a million points (a big RFQ's memory). The
+    rest are counted in ``dropped_more``."""
+    if sum(map(len, report.dropped)) <= _DROPPED_POINTS:
+        return
+    kept, n = [], 0
+    for line in sorted(report.dropped, key=lambda ln: -sum(bbox_wh(ln))):
+        if n + len(line) > _DROPPED_POINTS:
+            continue
+        kept.append(line)
+        n += len(line)
+    report.dropped_more = len(report.dropped) - len(kept)
+    report.dropped = kept
 
 
 # A part within this many degrees of lying along its length is left as drawn,

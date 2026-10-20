@@ -184,3 +184,34 @@ def bent_part(segments, t=2.0, r=2.0, w=40.0):
         wire.Add(e)
     face = BRepBuilderAPI_MakeFace(wire.Wire()).Face()
     return BRepPrimAPI_MakePrism(face, gp_Vec(0, w, 0)).Shape()
+
+
+def creo_step() -> bytes:
+    """STEP bytes as Creo writes them: each part is an assembly of its own
+    holding a body named "SOLID". Assembly "ASM" of part "100325" (a plate)
+    and 4 × "PEM-M6" (pins)."""
+    from OCP.TCollection import TCollection_ExtendedString
+    from OCP.TDataStd import TDataStd_Name
+    from OCP.TDocStd import TDocStd_Document
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.XCAFDoc import XCAFDoc_DocumentTool
+
+    doc = TDocStd_Document(TCollection_ExtendedString("XmlXCAF"))
+    tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+
+    def named(label, name):
+        TDataStd_Name.Set_s(label, TCollection_ExtendedString(name))
+        return label
+
+    def creo_part(shape, name):
+        part = named(tool.NewShape(), name)
+        tool.AddComponent(part, named(tool.AddShape(shape, False), "SOLID"), TopLoc_Location())
+        return part
+
+    root = named(tool.NewShape(), "ASM")
+    tool.AddComponent(root, creo_part(plate(), "100325"), TopLoc_Location())
+    pem = creo_part(pin(), "PEM-M6")
+    for _ in range(4):
+        tool.AddComponent(root, pem, TopLoc_Location())
+    tool.UpdateAssemblies()
+    return _write(doc)

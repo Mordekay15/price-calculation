@@ -8,6 +8,7 @@ from core.items import (Choice, Source, choose, confirm_unit, group_sources, sco
 
 def _report(w, h, dropped=0, problems=()):
     return SimpleNamespace(problems=list(problems), dropped=[[]] * dropped,
+                           dropped_count=dropped,
                            outline=SimpleNamespace(width_mm=w, height_mm=h))
 
 

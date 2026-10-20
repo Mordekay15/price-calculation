@@ -152,10 +152,18 @@ def _read(data: bytes, model: StepModel) -> None:
     model.parts = list(parts.values())
 
 
-def _walk(tool, label, qty, mult, level, parts, bom, stem) -> None:
+# What CAD programs name a body inside a part (Creo: "SOLID" and an empty
+# "COMPOUND" under each part): not a part number, so the part's name is used.
+_GENERIC_NAME = re.compile(r"(solid|compound|shell|body|part\d*|=>\[.*\])?", re.IGNORECASE)
+
+
+def _walk(tool, label, qty, mult, level, parts, bom, parent) -> None:
+    """``parent`` is the name of the assembly the label is in (the file's
+    name at the top)."""
     from OCP.XCAFDoc import XCAFDoc_ShapeTool
 
-    name = _label_name(label) or stem
+    own = _label_name(label)
+    name = parent if _GENERIC_NAME.fullmatch(own) else own
     if XCAFDoc_ShapeTool.IsAssembly_s(label):
         bom.append(BomRow(level, name, qty, qty * mult))
         comps = _label_sequence()
@@ -165,7 +173,7 @@ def _walk(tool, label, qty, mult, level, parts, bom, stem) -> None:
             ref = _referred(comps.Value(j))
             counts.setdefault(_entry(ref), [ref, 0])[1] += 1
         for ref, n in counts.values():
-            _walk(tool, ref, n, qty * mult, level + 1, parts, bom, stem)
+            _walk(tool, ref, n, qty * mult, level + 1, parts, bom, name)
         return
     shape = XCAFDoc_ShapeTool.GetShape_s(label)
     solids = _solids(shape)

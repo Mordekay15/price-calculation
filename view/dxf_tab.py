@@ -1056,9 +1056,9 @@ def _render_preview(report: DxfReport, bends: list | None = None) -> None:
     if slits:
         st.caption(f"{slits} rakoa (suoria leikkauksia osan sisällä) on mukana "
                    "leikkuupituudessa.")
-    if report.dropped:
+    if report.dropped_count:
         st.caption(
-            f"Osan ulkopuolelta ohitettiin {len(report.dropped)} kuviota "
+            f"Osan ulkopuolelta ohitettiin {report.dropped_count} kuviota "
             "(esim. lisäkuvat tai irralliset viivat) — harmaalla esikatselussa."
         )
 

@@ -72,6 +72,16 @@ def test_the_layer_choice_can_be_changed(drawing):
     assert round(dxf.part({"EXTRA"}).outline.width_mm) == 100
 
 
+def test_a_drawing_sheets_many_outside_shapes_are_counted_not_all_kept(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    for i in range(400):                       # dimension ticks, text strokes…
+        msp.add_lwpolyline([(400 + i, 0), (400 + i, 5), (401 + i, 5)] * 5)
+    report = part_of(doc)
+    assert report.dropped_count == 400
+    assert sum(map(len, report.dropped)) <= 5000 < 400 * 15
+
+
 def test_detail_views_outside_the_part_are_dropped(drawing):
     doc, msp = drawing()
     rect(msp, 0, 0, 300, 200)
