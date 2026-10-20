@@ -113,3 +113,14 @@ def test_a_part_file_named_like_the_dxf_adds_no_card(monkeypatch):
     assert bom.sync_cards(store, {}) == []
     del store["d1"]
     assert len(bom.sync_cards(store, {})) == 1   # no DXF: the model makes the card
+
+
+def test_numbered_dxf_pieces_keep_the_step_from_adding_a_card(monkeypatch):
+    import streamlit as st
+
+    from view import bom
+
+    monkeypatch.setattr(st, "session_state", {})
+    bom.add_model("s1", "3AUA0000098622.stp", part_step(plate(), "3AUA0000098622"))
+    store = {"d1": read_dxf(flat_dxf(unfold(plate()), "x"), "3aua0000098622_1.dxf")}
+    assert bom.sync_cards(store, {}) == []

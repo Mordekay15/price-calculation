@@ -13,7 +13,7 @@ import streamlit as st
 
 from core import step
 from core.dxf import read_dxf
-from core.linking import part_key
+from core.linking import base_key, part_key
 
 MODELS = "dxf_step_models"
 K_FACTOR = "dxf_step_k"
@@ -65,7 +65,7 @@ def sync_cards(store: dict, config: dict) -> list[str]:
     """Add a card for every unfolded sheet part that has none yet and no DXF
     card of its part number; returns the new card ids. Its quantity is the
     model's total (seeded once: the card's input changes it after)."""
-    dxf_keys = {part_key(d.name) for fid, d in store.items() if _SEP not in fid}
+    dxf_keys = {base_key(d.name) for fid, d in store.items() if _SEP not in fid}
     new = []
     for file_id, m in models().items():
         for p in m["model"].parts:
@@ -83,7 +83,7 @@ def sync_cards(store: dict, config: dict) -> list[str]:
 def replaced_by_dxf(store: dict) -> list[str]:
     """Cards made from a model whose part number now has a DXF card: the DXF
     is used instead."""
-    dxf_keys = {part_key(d.name) for fid, d in store.items() if _SEP not in fid}
+    dxf_keys = {base_key(d.name) for fid, d in store.items() if _SEP not in fid}
     out = []
     for fid in store:
         src = card_source(fid)
@@ -96,9 +96,9 @@ def _keys(m: dict, part: step.StepPart) -> set[str]:
     """The part numbers a model's part goes by: its name in the model and,
     for a file of one part, the file's name (``ITM-072558_A.stp`` whose body
     is named "Part1")."""
-    keys = {part_key(part.name)}
+    keys = {base_key(part.name)}
     if len(m["model"].parts) == 1:
-        keys.add(part_key(m["name"]))
+        keys.add(base_key(m["name"]))
     return keys
 
 
@@ -150,7 +150,7 @@ def render_bom(store: dict, reports: dict, labels: dict[str, str], evict) -> Non
             st.session_state[K_FACTOR] = k
             refold(store, reports, k)
             st.rerun()
-        dxf_cards = {part_key(d.name): fid for fid, d in store.items() if _SEP not in fid}
+        dxf_cards = {base_key(d.name): fid for fid, d in store.items() if _SEP not in fid}
         for file_id, m in list(all_models.items()):
             model = m["model"]
             c1, c2 = st.columns([6, 1], vertical_alignment="center")
