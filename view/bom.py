@@ -72,7 +72,7 @@ def sync_cards(store: dict, config: dict) -> list[str]:
             flat = m["flats"].get(p.key)
             cid = card_id(file_id, p.key)
             if (flat is None or not flat.is_sheet or cid in store
-                    or part_key(p.name) in dxf_keys):
+                    or _keys(m, p) & dxf_keys):
                 continue
             store[cid] = _card_file(p, flat)
             config.setdefault(cid, {"material": None, "thickness": None})["qty"] = p.qty
@@ -87,9 +87,19 @@ def replaced_by_dxf(store: dict) -> list[str]:
     out = []
     for fid in store:
         src = card_source(fid)
-        if src is not None and part_key(src[1].name) in dxf_keys:
+        if src is not None and _keys(src[0], src[1]) & dxf_keys:
             out.append(fid)
     return out
+
+
+def _keys(m: dict, part: step.StepPart) -> set[str]:
+    """The part numbers a model's part goes by: its name in the model and,
+    for a file of one part, the file's name (``ITM-072558_A.stp`` whose body
+    is named "Part1")."""
+    keys = {part_key(part.name)}
+    if len(m["model"].parts) == 1:
+        keys.add(part_key(m["name"]))
+    return keys
 
 
 def _card_file(part: step.StepPart, flat: step.FlatPart):
@@ -173,7 +183,7 @@ def _part_columns(file_id, m, row, store, dxf_cards, labels) -> dict:
     sheet = (f"t {flat.thickness_mm:g} mm · {len(flat.bends)} taiv. · "
              f"aihio {max(xs) - min(xs):.0f} × {max(ys) - min(ys):.0f} mm")
     cid = card_id(file_id, row.part_key)
-    dxf_fid = dxf_cards.get(part_key(part.name))
+    dxf_fid = next((dxf_cards[k] for k in _keys(m, part) if k in dxf_cards), None)
     if dxf_fid:
         card = "DXF: " + labels.get(dxf_fid, store[dxf_fid].name)
     else:

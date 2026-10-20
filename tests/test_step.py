@@ -99,3 +99,17 @@ def test_an_assembly_becomes_cards_with_its_quantities():
     assert table["Kortti"][2].startswith("DXF: ")
     at.number_input(key="dxf_step_k_input").set_value(0.5).run()
     assert sorted(at.session_state["cards"][1][3:]) == [40.0, 76.7]
+
+
+def test_a_part_file_named_like_the_dxf_adds_no_card(monkeypatch):
+    # ITM-072558_A.stp whose body is named "Part1", next to ITM-072558_A.dxf.
+    import streamlit as st
+
+    from view import bom
+
+    monkeypatch.setattr(st, "session_state", {})
+    bom.add_model("s1", "ITM-072558_A.stp", part_step(plate(), "Part1"))
+    store = {"d1": read_dxf(flat_dxf(unfold(plate()), "x"), "ITM-072558_A.dxf")}
+    assert bom.sync_cards(store, {}) == []
+    del store["d1"]
+    assert len(bom.sync_cards(store, {})) == 1   # no DXF: the model makes the card

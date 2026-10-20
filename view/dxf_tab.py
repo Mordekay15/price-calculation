@@ -14,6 +14,7 @@ from core.pricing import build_lookup, get_sizes_for_material, parse_thickness_m
 from core.dwg import read_drawing
 from core.dxf import DxfFile, DxfReport, fasteners_from_texts
 from core.geometry import net_area
+from core.linking import link_by_text, part_key
 from core.quote import CleanPart
 from core.step import available as step_available
 from core.sheet_cost import (
@@ -289,14 +290,35 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
                       type="primary", on_click=_evict_all)
     attachments.render_checked_count([fid for fid, _ in parts])
     doc_links = attachments.links({fid: dxf.name for fid, dxf in parts})
+    drawings = _drawing_of(parts)
     products, fill = [], _FillOffer()
     for idx, (fid, part) in enumerate(parts):
         fill.slot = st.empty()  # above the card: where the question goes if it asks
         product = _render_part_config(fid, part, idx, materials, lookup,
-                                      per_part_angles, fill, doc_links.get(fid, []))
+                                      per_part_angles, fill, doc_links.get(fid, []),
+                                      drawings.get(fid, ""))
         if product is not None:
             products.append(product)
     return products
+
+
+def _drawing_of(parts: list[tuple[str, DxfFile]]) -> dict[str, str]:
+    """Cards whose file looks like the drawing of another card's part: its
+    texts name exactly one other card's part number (``DRW-023179_A.dwg``,
+    whose title block reads ``ITM-072558.A``, next to ``ITM-072558_A.dxf``).
+    ``{card id: label of the other card}``."""
+    names = {fid: dxf.name for fid, dxf in parts}
+    labels = {fid: f"#{i + 1} · {dxf.name}" for i, (fid, dxf) in enumerate(parts)}
+    out = {}
+    for fid, dxf in parts:
+        if not dxf.texts:
+            continue
+        own = part_key(dxf.name)
+        others = {o: n for o, n in names.items() if part_key(n) != own}
+        found = link_by_text(others, {fid: "\n".join(dxf.texts)})
+        if found:
+            out[fid] = labels[next(iter(found))]
+    return out
 
 
 def _render_settings() -> tuple[float, str, SheetSettings]:
@@ -630,6 +652,7 @@ def _render_part_config(
     per_part_angles: bool = False,
     fill: "_FillOffer | None" = None,
     doc_ids: list[str] = (),
+    drawing_of: str = "",
 ) -> dict | None:
     """Draw one part's card, preview left and inputs right; return its product
     dict, or None if not priceable. Its ``angles`` are None (set later from the
@@ -641,6 +664,9 @@ def _render_part_config(
         hdr[0].markdown(f"**#{idx + 1}** · {dxf.name}")
         hdr[2].checkbox("Tarkastettu", key=attachments.CHECKED.format(fid))
         hdr[3].button("Poista", key=f"dxf_del_{fid}", on_click=_evict, args=(fid,))
+        if drawing_of:
+            st.warning(f"Tämä tiedosto näyttää osan {drawing_of} piirustukselta, ei "
+                       "erilliseltä osalta. Poista kortti, jos osa on jo laskettu siellä.")
 
         # Text found in the drawing (Mat=…, Thk=…) — shown to cross-check the
         # material choice, never nested.
