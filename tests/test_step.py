@@ -36,6 +36,22 @@ def test_a_part_file_has_its_one_part():
     assert [(p.name, p.qty) for p in model.parts] == [("100325", 1)]
 
 
+def test_tiny_loose_bodies_in_a_part_are_left_out():
+    """A form tool can leave 5 × 5 mm crumbs in a part's model: still one part."""
+    from OCP.BRep import BRep_Builder
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
+    from OCP.TopoDS import TopoDS_Compound
+
+    compound, builder = TopoDS_Compound(), BRep_Builder()
+    builder.MakeCompound(compound)
+    builder.Add(compound, plate())
+    for x in (200.0, 220.0):
+        builder.Add(compound, BRepPrimAPI_MakeBox(gp_Pnt(x, 0, 0), 5.0, 5.0, 1.5).Shape())
+    model = read_step(part_step(compound, "43422"), "43422.step")
+    assert [(p.name, p.qty) for p in model.parts] == [("43422", 1)]
+
+
 @pytest.mark.parametrize("segments", [
     [(40, 90), (30, 0)],                      # L
     [(40, 90), (30, 90), (40, 0)],            # U

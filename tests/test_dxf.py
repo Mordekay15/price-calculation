@@ -28,6 +28,20 @@ def test_plate_with_a_hole(drawing):
     assert math.isclose(report.holes[0].area_mm2, math.pi * 40 ** 2, rel_tol=1e-2)
 
 
+def test_windows_line_ends_and_a_broken_file_read_the_same(drawing):
+    """CRLF files (Pro/ENGINEER) and files only ``recover`` can read give the
+    same part as a clean one."""
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    clean = dxf_bytes(doc)
+    crlf = clean.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+    broken = clean.replace(b"EOF", b"")          # no end marker
+    for data in (crlf, broken):
+        report = read_dxf(data, "part.dxf").part()
+        assert report.problems == []
+        assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (300, 200)
+
+
 def test_outline_drawn_as_separate_lines_is_chained(drawing):
     doc, msp = drawing()
     for a, b in [((0, 0), (400, 0)), ((400, 0), (400, 100)), ((400, 100), (100, 100)),

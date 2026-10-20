@@ -144,7 +144,9 @@ and in the whole model. Each body is checked for sheet metal:
   if there is one; the card's shape is chosen as described in
   [One card per part](#one-card-per-part-dxf-tab).
 - Other bodies (bought or machined parts, or anything too thick for its size)
-  are listed as *ei levyosa* with the reason, and are not priced.
+  are listed as *ei levyosa* with the reason, and are not priced. Tiny loose
+  bodies in a part (under 1 % of its main body, e.g. what a form tool leaves
+  behind) are left out, so such a part is still one part, not an assembly.
 - **Näytä 3D** shows a body you can turn (plotly), in the BOM and on a card
   made from a model.
 

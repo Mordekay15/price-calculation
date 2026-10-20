@@ -249,22 +249,34 @@ def _signature(solid) -> tuple:
             tuple(round(d, 1) for d in _bbox(solid)))
 
 
+_CRUMB_SHARE = 0.01   # a loose body this small next to the part's main body is CAD waste
+
+
 def _group_same(solids: list) -> list[tuple[object, int]]:
+    """The bodies, copies counted together. Crumbs are left out: tiny loose
+    bodies in a part (under 1 % of its biggest body's volume), such as the
+    pieces a form tool leaves behind, which no drawing shows."""
     groups: dict[tuple, list] = {}
     for s in solids:
         groups.setdefault(_signature(s), [s, 0])[1] += 1
-    return [(s, n) for s, n in groups.values()]
+    biggest = max(abs(sig[0]) for sig in groups)
+    return [(s, n) for sig, (s, n) in groups.items()
+            if abs(sig[0]) >= _CRUMB_SHARE * biggest]
 
 
 def _bbox(shape) -> tuple[float, float, float]:
-    """The body's box size along the model's axes, largest first."""
+    """The body's box size along the model's axes, largest first. The quick
+    box: a curved face can make it up to a few mm too big, which is fine for
+    what it is used for (telling copies apart, a thickness check), and the
+    exact one (``AddOptimal``) took most of a STEP file's reading time."""
     from OCP.Bnd import Bnd_Box
     from OCP.BRepBndLib import BRepBndLib
 
     box = Bnd_Box()
-    BRepBndLib.AddOptimal_s(shape, box, False, False)
-    lo, hi = box.CornerMin(), box.CornerMax()
-    return tuple(sorted((hi.X() - lo.X(), hi.Y() - lo.Y(), hi.Z() - lo.Z()), reverse=True))
+    BRepBndLib.Add_s(shape, box, False)
+    lo, hi, gap = box.CornerMin(), box.CornerMax(), 2 * box.GetGap()
+    return tuple(sorted((hi.X() - lo.X() - gap, hi.Y() - lo.Y() - gap, hi.Z() - lo.Z() - gap),
+                        reverse=True))
 
 
 # ── Unfolding ─────────────────────────────────────────────────────────────────
@@ -320,6 +332,8 @@ class _Face:
     def normal_on_edge(self, edge):
         from OCP.BRepAdaptor import BRepAdaptor_Curve2d
 
+        if self.kind == "plane":
+            return self.normal   # the same all over (and the slow part on a face of many holes)
         c2d = BRepAdaptor_Curve2d(edge, self.face)
         uv = c2d.Value((c2d.FirstParameter() + c2d.LastParameter()) / 2)
         return self.normal_at_uv(uv.X(), uv.Y())

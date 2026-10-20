@@ -10,6 +10,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+import ezdxf
 from ezdxf import path, recover
 
 from core.geometry import (
@@ -292,7 +293,7 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
     """Read one DXF file's bytes. Never raises: a bad file comes back with problems."""
     f = DxfFile(name=name)
     try:
-        doc, _auditor = recover.read(io.BytesIO(data))
+        doc = _load(data)
     except Exception as exc:  # noqa: BLE001 — never let a bad file crash the app
         f.problems.append(f"Tiedostoa ei voitu lukea DXF-muodossa ({exc}).")
         return f
@@ -335,6 +336,25 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
             else:
                 f.unit_label = "mm"
     return f
+
+
+def _load(data: bytes):
+    """The DXF document: read the usual way and checked (``audit``), which is
+    several times faster than ezdxf's ``recover``; a file that can't be read
+    so (broken structure, binary DXF) goes through ``recover``."""
+    if not data.startswith(b"AutoCAD Binary DXF"):
+        try:
+            from ezdxf.lldxf.validator import dxf_info
+
+            head = io.StringIO(data[:1 << 16].decode("cp1252", errors="ignore"), newline=None)
+            text = data.decode(dxf_info(head).encoding, errors="surrogateescape")
+            doc = ezdxf.read(io.StringIO(text, newline=None))   # CRLF files too
+            doc.audit()
+            return doc
+        except Exception:  # noqa: BLE001 — recover reads what it can
+            pass
+    doc, _auditor = recover.read(io.BytesIO(data))
+    return doc
 
 
 _SLIT_TOL_MM = 0.01      # a slit's points are this close to the line between its ends
