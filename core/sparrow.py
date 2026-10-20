@@ -14,7 +14,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from core.dxf import DxfReport
-from core.geometry import bbox, bbox_wh, net_area, rotate_translate, signed_area
+from core.geometry import (bbox, bbox_wh, net_area, rotate_translate, signed_area,
+                           untangle)
 from core.cutting_stock import MixedSizes
 from core.programs import choose_plans, kit_plan
 from core.rect_nesting import box_candidates, box_sheet, fewest_sheets, keep_counts
@@ -78,9 +79,9 @@ class SparrowPart:
 
     def shape_dict(self) -> dict:
         """The jagua-rs ``shape`` object for this part."""
-        outer = [list(p) for p in _clean_ring(self.outer)]
-        inner = [[list(p) for p in ring] for ring in map(_clean_ring, self.holes)
-                 if len(ring) >= 3]
+        outer = [list(p) for p in _simple_ring(self.outer, ccw=True)]
+        inner = [[list(p) for p in ring] for ring in
+                 (_simple_ring(h, ccw=False) for h in self.holes) if len(ring) >= 3]
         if not inner:
             return {"type": "simple_polygon", "data": outer}
         return {"type": "polygon", "data": {"outer": outer, "inner": inner}}
@@ -129,6 +130,20 @@ def _clean_ring(points: list[Point]) -> list[Point]:
             break
         pts.pop()
     return pts
+
+
+def _simple_ring(points: list[Point], *, ccw: bool) -> list[Point]:
+    """A ring jagua-rs accepts: cleaned (``_clean_ring``), with no edges that
+    cross or touch (a drawing's doubled line or small twist would make
+    Sparrow refuse the whole run, see ``core.geometry.untangle``), and wound
+    the standard way."""
+    pts = _clean_ring(points)
+    for _ in range(5):
+        fixed = _clean_ring(untangle(pts))
+        if fixed == pts:
+            break
+        pts = fixed
+    return _oriented(pts, ccw=ccw)
 
 
 def _oriented(points: list[Point], *, ccw: bool) -> list[Point]:

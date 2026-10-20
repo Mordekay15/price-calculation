@@ -263,3 +263,24 @@ def test_real_sparrow_binary():
     assert 199 < result.strip_width < 301
     bad = {**instance, "items": [{**instance["items"][0], "shape": {"type": "simple_polygon", "data": [[0, 0], [1, 0]]}}]}
     assert "at least 3 points" in run_sparrow(bad, executable=exe, time_limit_sec=2).message
+
+
+def test_a_ring_that_crosses_itself_is_made_simple_for_sparrow():
+    from core.geometry import area, first_crossing, untangle
+    from core.sparrow import SparrowPart
+
+    square = [(0, 0), (100, 0), (100, 50), (0, 50)]
+    assert untangle(square + [(0, 0)]) == square                  # simple: unchanged
+    # A line drawn twice (out to x=120 and back) and a small twist on the
+    # top edge: Sparrow said "Simple polygon contains intersecting edges".
+    spike = [(0, 0), (100, 0), (120, 0), (100, 0), (100, 50), (60, 50),
+             (55, 55), (55, 45), (50, 50), (0, 50)]
+    assert first_crossing(spike) is not None
+    fixed = untangle(spike)
+    assert first_crossing(fixed) is None
+    assert abs(area(fixed) - 5000) < 30
+    shape = SparrowPart("p", 1, spike, holes=[[(10, 10), (20, 20), (20, 10), (10, 20)]]
+                        ).shape_dict()
+    outer, (hole,) = shape["data"]["outer"], shape["data"]["inner"]
+    assert first_crossing([tuple(p) for p in outer]) is None
+    assert first_crossing([tuple(p) for p in hole]) is None
