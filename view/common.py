@@ -5,8 +5,6 @@ renders both tabs on every run."""
 
 from dataclasses import dataclass
 
-import streamlit as st
-
 from core.pricing import (
     COPPER_MATERIAL,
     COPPER_THICKNESSES,
@@ -17,6 +15,7 @@ from core.cutting_stock import have_solver
 from core.sheet_cost import EdgeGaps, piece_costs
 from core.work import WorkCost
 from view.drawing import edge_gaps_svg
+from view.ui import st
 
 
 def materials_with_copper(lookup: dict) -> list[str]:

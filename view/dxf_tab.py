@@ -5,11 +5,10 @@ changes."""
 
 import hashlib
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-
-import streamlit as st
 
 from core.archive import ArchiveError, is_zip, read_path, unpack
 from core.pricing import build_lookup, get_sizes_for_material, parse_thickness_mm
@@ -55,6 +54,7 @@ from view.quote import render_batch_prices
 from view.sheet_usage import render_group
 from view.work import piece_size, render_work_inputs, work_costs
 from view.sparrow_progress import SparrowProgress, run_with_progress
+from view.ui import headless, is_headless, st
 
 _CACHE = "dxf_sparrow_cache"    # {signature: computed group}
 _RUNS = "dxf_sparrow_runs"      # {instance key: SparrowResult}, every Sparrow run so far
@@ -347,15 +347,62 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
             st.button(f"Kyllä, poista kaikki {len(parts)} osaa", key="dxf_del_all",
                       type="primary", on_click=_evict_all)
     attachments.render_checked_count([fid for fid, _ in parts])
+    shown = _render_page_picker(len(parts))
+    _keep_widget_state([fid for i, (fid, _) in enumerate(parts) if i not in shown])
     doc_links = _doc_links()
     products, fill = [], _FillOffer()
     for idx, (fid, part) in enumerate(parts):
-        fill.slot = st.empty()  # above the card: where the question goes if it asks
-        product = _render_part_config(fid, part, idx, materials, lookup,
-                                      per_part_angles, fill, doc_links.get(fid, []))
+        if idx in shown:
+            fill.slot = st.empty()  # above the card: where the question goes if it asks
+            product = _render_part_config(fid, part, idx, materials, lookup,
+                                          per_part_angles, fill, doc_links.get(fid, []))
+        else:
+            with headless():    # priced as drawn, not drawn
+                product = _render_part_config(fid, part, idx, materials, lookup,
+                                              per_part_angles, None, doc_links.get(fid, []))
         if product is not None:
             products.append(product)
     return products
+
+
+_PAGE = "dxf_card_page"
+_PAGE_SIZE = 20     # cards drawn at once: hundreds would take minutes and the memory
+
+
+def _render_page_picker(n: int) -> range:
+    """Which cards are drawn: all of a few, else one page of ``_PAGE_SIZE``.
+    Every card is priced either way (see ``view.ui``)."""
+    pages = -(-n // _PAGE_SIZE)
+    if pages <= 1:
+        return range(n)
+    if st.session_state.get(_PAGE, 0) >= pages:
+        st.session_state[_PAGE] = 0
+    page = st.selectbox(
+        "Näytettävät osat", range(pages), key=_PAGE,
+        format_func=lambda i: f"#{i * _PAGE_SIZE + 1}–{min(n, (i + 1) * _PAGE_SIZE)}",
+        help=f"Osia näytetään {_PAGE_SIZE} kerrallaan, jotta sivu pysyy nopeana. Kaikki "
+             f"{n} osaa hinnoitellaan silti, myös piilossa olevat.")
+    return range(page * _PAGE_SIZE, min(n, (page + 1) * _PAGE_SIZE))
+
+
+# Keys of a card's buttons: a button's value can't be set (see _keep_widget_state).
+_BUTTON_KEYS = ("dxf_del_", "dxf_fill_yes_", "dxf_fill_no_", "dxf_doc_dl_",
+                "dxf_read_waiting", "dxf_step_del_", "dxf_doc_del_")
+
+
+def _keep_widget_state(fids: list[str]) -> None:
+    """Keep the inputs of the cards not drawn: Streamlit forgets a widget's
+    value when the widget isn't drawn, and setting it through the session
+    keeps it. (A card's widget keys end in its id, or have it before "_".)"""
+    if not fids:
+        return
+    ss = st.session_state
+    pattern = re.compile("(?:" + "|".join(map(re.escape, sorted(fids, key=len, reverse=True)))
+                         + ")(?:_|$)")
+    for key in list(ss.keys()):
+        if (isinstance(key, str) and not key.startswith(_BUTTON_KEYS)
+                and pattern.search(key)):
+            ss[key] = ss[key]
 
 
 def _render_settings() -> tuple[float, str, SheetSettings]:
@@ -1001,17 +1048,19 @@ def _render_part_config(
         # material choice, never nested.
         if dxf.texts:
             st.caption("Piirustuksen tekstit: " + " · ".join(dxf.texts))
-        attachments.render_card_docs(fid, list(doc_ids))
-        _render_waiting(list(doc_ids))
-        if item is not None:
-            bom.render_card_model(fid, [s for s in item.members if bom.is_source(s)])
+        if not is_headless():   # only drawn: nothing here changes the price
+            attachments.render_card_docs(fid, list(doc_ids))
+            _render_waiting(list(doc_ids))
+            if item is not None:
+                bom.render_card_model(fid, [s for s in item.members if bom.is_source(s)])
 
         preview_col, input_col = st.columns([1, 3])
         report = _part(fid, dxf)
         with input_col:
             size = _checked_size(fid, dxf, report, hdr[1], _unit_reason(dxf, report, item, doc_ids))
-        with preview_col:
-            _render_preview(report, _model_bends(fid, report, item))
+        if not is_headless():
+            with preview_col:
+                _render_preview(report, _model_bends(fid, report, item))
         if size is None:
             return None
         with input_col:

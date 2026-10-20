@@ -2,8 +2,6 @@
 inputs on every part card (both tabs), and each product's work cost with the
 per-sheet cutting minimum applied by group (see ``core.work``)."""
 
-import streamlit as st
-
 from core import calculators
 from core.calculators import CalculatorError, CalculatorSet
 from core.pricing import parse_thickness_mm, weight_kg
@@ -24,6 +22,7 @@ from core.work import (
     FASTENER_INSERT_EUR,
     work_cost,
 )
+from view.ui import st
 
 WORK_LABEL = "Työvaiheet"
 

@@ -177,6 +177,11 @@ with thousands of faces, up to a minute to read) is not read on load. Its card
 has a **Lue 3D-malli** button, and the drop area one for all of them; once
 read, the model brings its bends, thickness and size check to the card.
 
+With more than 20 cards, the cards are shown **20 at a time** (*Näytettävät
+osat*). Every card is still priced: the ones not shown run the same card code
+without drawing (`view/ui.py`), with their inputs kept. The attached-files list
+shows only files without a part, 30 at a time.
+
 ## Assemblies (Kokoonpanot)
 
 Parts sold together are one **assembly** (`core/assemblies.py`,

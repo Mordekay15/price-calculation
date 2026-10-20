@@ -105,6 +105,9 @@ def _text(doc_id: str, doc: dict) -> str:
     return "\n".join(text for _, text in cache[doc_id])
 
 
+_ROWS = 30   # files listed at once: a big RFQ has hundreds, each with a part picker
+
+
 def render_doc_list(parts: dict[str, str], labels: dict[str, str]) -> None:
     """The supporting files, folded under the drop area: which part each is
     linked to, changeable by hand, and a remove button."""
@@ -123,7 +126,22 @@ def render_doc_list(parts: dict[str, str], labels: dict[str, str]) -> None:
                    "osa tarvittaessa.")
         options = ["", *parts]
         manual = st.session_state.setdefault(_MANUAL, {})
-        for d, doc in list(all_docs.items()):
+        shown = [d for d in all_docs if d not in linked]
+        n_linked = len(all_docs) - len(shown)
+        if n_linked and st.toggle(f"Näytä myös osiin linkitetyt ({n_linked})",
+                                  value=len(all_docs) <= _ROWS, key="dxf_doc_show_linked"):
+            shown = list(all_docs)
+        if len(shown) > _ROWS:
+            pages = -(-len(shown) // _ROWS)
+            if st.session_state.get("dxf_doc_page", 0) >= pages:
+                st.session_state["dxf_doc_page"] = 0
+            page = st.selectbox(
+                "Näytettävät tiedostot", range(pages), key="dxf_doc_page",
+                format_func=lambda i: f"{i * _ROWS + 1}–{min(len(shown), (i + 1) * _ROWS)} "
+                                      f"/ {len(shown)}")
+            shown = shown[page * _ROWS:(page + 1) * _ROWS]
+        for d in shown:
+            doc = all_docs[d]
             c1, c2, c3 = st.columns([3, 4, 1], vertical_alignment="center")
             c1.markdown(f"{'📄' if doc['kind'] == 'pdf' else '🧊'} {doc['name']}")
             current = linked.get(d, "")

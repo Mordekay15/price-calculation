@@ -170,11 +170,11 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
         row = {lead: ("🧩 " if line.is_assembly else "") + line.name,
                "Materiaali": line.material, "Paksuus": line.thickness}
         for q, p in zip(sizes, line.prices):
-            row[f"{q} kpl, €/kpl"] = "" if p.unit is None else round(p.unit, 2)
+            row[f"{q} kpl, €/kpl"] = None if p.unit is None else round(p.unit, 2)
         rows.append(row)
         for m in (next(sub) if line.is_assembly else []):
             rows.append({lead: m["name"], "Materiaali": "", "Paksuus": "",
-                         **{f"{q} kpl, €/kpl": "" if u is None else round(u, 2)
+                         **{f"{q} kpl, €/kpl": None if u is None else round(u, 2)
                             for q, u in zip(sizes, m["units"])}})
     st.dataframe(rows, width="stretch", hide_index=True)
 

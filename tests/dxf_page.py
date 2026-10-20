@@ -38,3 +38,4 @@ products = _render_part_cards(parts, ["S235"], {("2", "S235 | 1000x2000"): 900.0
 shared = _render_angle_controls(len(parts))
 st.session_state["angles"] = [shared if shared is not None else p["angles"] for p in products]
 st.session_state["materials"] = [(p["material"], p["thickness"]) for p in products]
+st.session_state["qtys"] = [p["qty"] for p in products]
