@@ -71,3 +71,17 @@ def test_a_guessed_unit_is_confirmed_by_the_step_blank_or_the_pdf_dimensions():
     assert confirm_unit((51.64, 39.33), (393.3, 516.4), texts) is None
     assert confirm_unit((5.0, 1.5), None, ["5 1,5"]) is None        # too small to tell
     assert confirm_unit((516.4, 393.3)) is None
+
+
+def test_a_drawing_that_names_no_part_joins_the_item_in_its_folder():
+    sources = [Source("dwg", "DRW-023179_A.dwg", "dxf", ["Scale 1:2"], folder="ITM-072558"),
+               Source("dxf", "ITM-072558_A.dxf", "dxf", [], folder="ITM-072558"),
+               Source("other", "100325.dxf", "dxf", [], folder="100325"),
+               Source("lone", "DRW-9.dwg", "dxf", [], folder="")]
+    drawings = {"dwg", "lone"}
+    assert group_sources(sources, lambda sid: sid in drawings) == [
+        ["dwg", "dxf"], ["other"], ["lone"]]
+    # Two items in one folder: the drawing can't tell which, it stays apart.
+    sources[2] = Source("other", "100325.dxf", "dxf", [], folder="ITM-072558")
+    assert group_sources(sources, lambda sid: sid in drawings) == [
+        ["dwg"], ["dxf"], ["other"], ["lone"]]

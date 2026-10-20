@@ -69,9 +69,10 @@ def source(source_id: str) -> tuple[dict, step.StepPart, step.FlatPart] | None:
     return (m, part, m["flats"].get(key)) if part else None
 
 
-def sources(hidden: set[str]) -> list[Source]:
+def sources(hidden: set[str], folder_of=lambda sid: "") -> list[Source]:
     """Every sheet part of every model, as a candidate for the cards (the
-    parts removed from the cards left out)."""
+    parts removed from the cards left out). ``folder_of(source id)`` is the
+    ZIP folder its file came in."""
     out = []
     for file_id, m in models().items():
         for p in m["model"].parts:
@@ -79,7 +80,7 @@ def sources(hidden: set[str]) -> list[Source]:
             flat = m["flats"].get(p.key)
             if sid in hidden or flat is None or not flat.is_sheet:
                 continue
-            out.append(Source(sid, _file_name(m, p), "step", [], _keys(m, p)))
+            out.append(Source(sid, _file_name(m, p), "step", [], _keys(m, p), folder_of(sid)))
     return out
 
 

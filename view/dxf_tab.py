@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import streamlit as st
 
+from core.archive import ArchiveError, is_zip, unpack
 from core.pricing import build_lookup, get_sizes_for_material, parse_thickness_mm
 from core.dwg import read_drawing
 from core.dxf import DxfFile, DxfReport, fasteners_from_texts
@@ -72,7 +73,7 @@ _DROPZONE_CSS = """
     gap: 0.5rem 1rem;
 }
 [class*="st-key-dxf_uploader"] [data-testid="stFileUploaderDropzone"]::before {
-    content: "Vedä ja pudota DXF-, DWG-, PDF- tai STEP-tiedostot tähän";
+    content: "Vedä ja pudota DXF-, DWG-, PDF-, STEP- tai ZIP-tiedostot tähän";
     width: 100%;
     text-align: center;
     font-weight: 600;
@@ -179,7 +180,7 @@ def _render_drop_area() -> list[tuple[str, DxfFile]]:
     """The drop area; returns every part read so far, in upload order."""
     st.html(_DROPZONE_CSS)
     uploaded = st.file_uploader(
-        "Lataa DXF-, DWG-, PDF- tai STEP-tiedostot",
+        "Lataa DXF-, DWG-, PDF- tai STEP-tiedostot tai ZIP",
         accept_multiple_files=True,
         key=f"dxf_uploader_{st.session_state.get(_INBOX, 0)}",
         help="Vedä tiedostot alueelle tai valitse ne koneelta. Voit ladata useita "
@@ -187,16 +188,22 @@ def _render_drop_area() -> list[tuple[str, DxfFile]]:
              "kootaan yhdelle osakortille, ja paras muoto valitaan niistä "
              "automaattisesti; kortin Poista-painike poistaa osan. DWG-tiedosto "
              "muunnetaan ensin DXF:ksi (ODA File Converter tai LibreDWG). Muut "
-             "tiedostot (esim. Creon .prt- ja .drw-tiedostot) ohitetaan.",
+             "tiedostot (esim. Creon .prt- ja .drw-tiedostot) ohitetaan. ZIP-tiedosto "
+             "puretaan: jokainen kansio on yleensä yksi osa, ja kansio auttaa "
+             "yhdistämään tiedostot oikeaan osaan.",
     )
-    if _ingest(uploaded):
+    with st.spinner("Luetaan tiedostoja…"):
+        new = _ingest(uploaded)
+    if new:
         st.rerun()  # redraw with the drop area empty
     parts = _sync()
     assemblies.sync_from_models()
     skipped = st.session_state.get(_SKIPPED)
     if skipped:
+        more = len(skipped) - _SKIPPED_SHOWN
         st.caption(f"Ohitettiin {len(skipped)} tiedostoa, joita ei tarvita "
-                   f"hinnoitteluun: {', '.join(skipped)}")
+                   f"hinnoitteluun: {', '.join(skipped[:_SKIPPED_SHOWN])}"
+                   + (f" ja {more} muuta" if more > 0 else ""))
     _warn_duplicates(parts)
     labels = {fid: f"#{i + 1} · {dxf.name}" for i, (fid, dxf) in enumerate(parts)}
     attachments.render_doc_list(_card_names(), labels)
@@ -300,7 +307,7 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
             st.button(f"Kyllä, poista kaikki {len(parts)} osaa", key="dxf_del_all",
                       type="primary", on_click=_evict_all)
     attachments.render_checked_count([fid for fid, _ in parts])
-    doc_links = attachments.links(_card_names())
+    doc_links = _doc_links()
     products, fill = [], _FillOffer()
     for idx, (fid, part) in enumerate(parts):
         fill.slot = st.empty()  # above the card: where the question goes if it asks
@@ -582,7 +589,9 @@ _FILL_ASKED = "dxf_fill_asked" # the "same material for the others?" question is
 _DUPES   = "dxf_dupes"         # (names of dropped files already on a card, warn until)
 _DUPE_WARNING_S = 15           # how long that warning stays
 _SKIPPED = "dxf_skipped"       # names of the last drop's files that aren't used
+_FOLDERS = "dxf_folders"       # {file id: folder in the dropped ZIP}
 _USED = ("dxf", "dwg", "pdf", "step", "stp")
+_SKIPPED_SHOWN = 12            # names listed in the skipped line
 
 
 def _ingest(uploaded) -> bool:
@@ -592,24 +601,29 @@ def _ingest(uploaded) -> bool:
     again; its name goes to ``_DUPES`` for the warning (a drop without one
     clears it). True when something was dropped."""
     files: dict = st.session_state.setdefault(_FILES, {})
+    folders: dict = st.session_state.setdefault(_FOLDERS, {})
     docs = attachments.docs()
     dropped = [up for up in uploaded or [] if up.file_id not in files and up.file_id not in docs]
-    names = {dxf.name for dxf in files.values()} | {d["name"] for d in docs.values()}
+    names = ({(folders.get(f, ""), dxf.name) for f, dxf in files.items()}
+             | {(folders.get(d, ""), doc["name"]) for d, doc in docs.items()})
     dupes, skipped = [], []
-    for up in dropped:
+    for up in _unzipped(dropped, skipped):
+        folder = getattr(up, "folder", "")
         if up.name.rsplit(".", 1)[-1].lower() not in _USED:
             skipped.append(up.name)     # e.g. Creo's part.prt.1, part.drw.1
             continue
-        if up.name in names:
+        if (folder, up.name) in names:
             dupes.append(up.name)
             continue
+        if folder:
+            folders[up.file_id] = folder
         if attachments.is_doc(up.name):
             attachments.add_doc(up.file_id, up.name, up.getvalue())
             if bom.is_step(up.name) and step_available():
                 bom.add_model(up.file_id, up.name, up.getvalue())
         else:
             files[up.file_id] = read_drawing(up.getvalue(), up.name)
-        names.add(up.name)
+        names.add((folder, up.name))
     if dropped:
         _sync()
         st.session_state[_INBOX] = st.session_state.get(_INBOX, 0) + 1
@@ -618,6 +632,26 @@ def _ingest(uploaded) -> bool:
     if len(dropped) > len(dupes) + len(skipped):
         st.session_state.pop(_FILL_ASKED, None)  # new empty parts: ask again
     return bool(dropped)
+
+
+def _unzipped(dropped, skipped: list[str]) -> list:
+    """The dropped files with every ZIP opened: its files, folder by folder,
+    each carrying its ``folder`` (see ``core.archive``). A ZIP that can't be
+    opened goes to ``skipped``."""
+    out = []
+    for up in dropped:
+        if not is_zip(up.name):
+            out.append(up)
+            continue
+        try:
+            entries = unpack(up.getvalue())
+        except ArchiveError:
+            skipped.append(f"{up.name} (ei voitu avata)")
+            continue
+        out += [SimpleNamespace(file_id=f"{up.file_id}/{i}", name=e.name, folder=e.folder,
+                                getvalue=lambda d=e.data: d)
+                for i, e in enumerate(entries)]
+    return out
 
 
 # ── Items: one card per part ──────────────────────────────────────────────────
@@ -652,8 +686,9 @@ def _sync() -> list[tuple[str, DxfFile]]:
             reports[sid] = shape(sid).part()
         return reports[sid]
 
-    sources = ([Source(fid, d.name, "dxf", list(d.texts)) for fid, d in files.items()]
-               + bom.sources(ss.setdefault(_HIDDEN, set())))
+    sources = ([Source(fid, d.name, "dxf", list(d.texts), folder=_folder_of(fid))
+                for fid, d in files.items()]
+               + bom.sources(ss.setdefault(_HIDDEN, set()), _folder_of))
     groups = group_sources(sources, lambda sid: sid in files
                            and looks_like_drawing(report(sid)))
     store, items = {}, {}
@@ -702,6 +737,19 @@ def _card_of() -> dict[str, str]:
             for sid in item.members}
 
 
+def _folder_of(sid: str) -> str:
+    """The ZIP folder a file came in ("" when dropped on its own); a STEP
+    model's part is in its file's folder."""
+    return st.session_state.get(_FOLDERS, {}).get(sid.split("|", 1)[0], "")
+
+
+def _doc_links() -> dict[str, list[str]]:
+    """Each card's PDFs (see ``attachments.links``)."""
+    card_folders = {cid: {f for f in map(_folder_of, item.members) if f}
+                    for cid, item in st.session_state.get(_ITEMS, {}).items()}
+    return attachments.links(_card_names(), card_folders, st.session_state.get(_FOLDERS, {}))
+
+
 def _card_names() -> dict[str, list[str]]:
     """Every card's file names (for linking the PDFs)."""
     return {cid: list(item.names.values())
@@ -730,7 +778,7 @@ def _auto_fill_materials(parts, materials: list[str], lookup: dict) -> tuple[lis
     """Fill the empty cards' material and thickness from their own files (see
     ``material_agent.auto_fill``); returns the cards for the material panel
     and their linked files."""
-    cards, doc_links = _with_all_texts(parts), attachments.links(_card_names())
+    cards, doc_links = _with_all_texts(parts), _doc_links()
     config = st.session_state.get(_CONFIG, {})
     material_agent.auto_fill(cards, doc_links, attachments.docs(), materials,
                              lambda m: thicknesses_for(lookup, m), _apply_material,
@@ -794,10 +842,11 @@ def _evict(fid: str) -> None:
     state."""
     ss = st.session_state
     item = ss.get(_ITEMS, {}).get(fid)
-    doc_links = attachments.links(_card_names())
+    doc_links = _doc_links()
     files = ss.get(_FILES, {})
     for sid in (item.members if item else [fid]):
         files.pop(sid, None)
+        ss.get(_FOLDERS, {}).pop(sid, None)
         ss.get(_SRC_REPORTS, {}).pop(sid, None)
         src = bom.source(sid)
         if src is not None:
@@ -828,6 +877,7 @@ def _evict_all() -> None:
         attachments.remove_doc(doc_id)
     for key in (bom.MODELS, _FILES, _ITEMS, _HIDDEN, _SRC_REPORTS, _FILL_ASKED,
                 _DUPES, _SKIPPED,   # these warnings name files that are gone
+                _FOLDERS,
                 _BEND_LINES,
                 *material_agent.AUTO_KEYS, *assemblies.KEYS):
         st.session_state.pop(key, None)
@@ -854,6 +904,9 @@ def _render_part_config(
         hdr[2].checkbox("Tarkastettu", key=attachments.CHECKED.format(fid))
         hdr[3].button("Poista", key=f"dxf_del_{fid}", on_click=_evict, args=(fid,))
         item = st.session_state.get(_ITEMS, {}).get(fid)
+        folders = sorted({f for f in map(_folder_of, item.members if item else [fid]) if f})
+        if folders:
+            st.caption("📁 " + " · ".join(folders))
         if item is not None and len(item.members) > 1:
             _render_item_files(fid, item)
         for name, n in assemblies.membership(fid, _card_of()):

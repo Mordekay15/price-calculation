@@ -551,3 +551,61 @@ def test_files_the_app_cant_use_are_skipped_and_named():
     assert not at.exception
     assert at.session_state["shown"] == ["c"]
     assert at.session_state["skipped"] == ["3aua0000098622.prt.1", "a4_v_abb_form.frm.1"]
+
+
+def test_a_zip_of_item_folders_becomes_one_card_per_folder():
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        import io
+        import zipfile
+        from types import SimpleNamespace
+
+        import ezdxf
+        import streamlit as st
+        from reportlab.pdfgen import canvas
+
+        from tests.conftest import dxf_bytes
+        from view.dxf_tab import _ITEMS, _doc_links, _ingest, _sync
+
+        def part(w, h, frame=False):
+            doc = ezdxf.new()
+            doc.header["$INSUNITS"] = 4
+            msp = doc.modelspace()
+            if frame:                                  # a drawing sheet, naming nothing
+                msp.add_lwpolyline([(0, 0), (297, 0), (297, 210), (0, 210)], close=True)
+                msp.add_lwpolyline([(20, 20), (70, 20), (70, 60), (20, 60)], close=True)
+            else:
+                msp.add_lwpolyline([(0, 0), (w, 0), (w, h), (0, h)], close=True)
+            return dxf_bytes(doc)
+
+        pdf = io.BytesIO()
+        c = canvas.Canvas(pdf)
+        c.drawString(72, 720, "Drawing sheet")
+        c.save()
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("tilaus/ITM-072558/ITM-072558_A.dxf", part(100, 50))
+            zf.writestr("tilaus/ITM-072558/DRW-023179_A.dxf", part(0, 0, frame=True))
+            zf.writestr("tilaus/ITM-072558/DRW-023179_A.pdf", pdf.getvalue())
+            zf.writestr("tilaus/ITM-072558/ITM-072558.prt.1", b"creo")
+            zf.writestr("tilaus/100325/100325.dxf", part(80, 40))
+            zf.writestr("tilaus/100325/100325.dxf.bak", b"old")
+        if "done" not in st.session_state:
+            st.session_state["done"] = True
+            _ingest([SimpleNamespace(file_id="z", name="tilaus.zip",
+                                     getvalue=lambda: buf.getvalue())])
+        parts = _sync()
+        items = st.session_state[_ITEMS]
+        st.session_state["cards"] = [sorted(items[cid].names.values()) for cid, _ in parts]
+        st.session_state["links"] = {items[c].names[c]: len(ids)
+                                     for c, ids in _doc_links().items()}
+        st.session_state["skipped"] = st.session_state.get("dxf_skipped")
+
+    at = AppTest.from_function(page, default_timeout=30).run()
+    assert not at.exception
+    assert at.session_state["cards"] == [["100325.dxf"],
+                                         ["DRW-023179_A.dxf", "ITM-072558_A.dxf"]]
+    # The PDF names no part: it goes to the card of its folder.
+    assert at.session_state["links"] == {"DRW-023179_A.dxf": 1}
+    assert at.session_state["skipped"] == ["100325.dxf.bak", "ITM-072558.prt.1"]

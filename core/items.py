@@ -7,7 +7,8 @@ one item, and the best of them is chosen as the shape to price.
   ``_2.dxf`` and ``3AUA0000098622.stp`` are one item). A file named
   otherwise (the drawing ``DRW-023179_A.dwg``) joins the item whose part
   number its texts name (``ITM-072558.A`` in the title block), when they
-  name exactly one.
+  name exactly one, or else the one other item in its folder of a dropped
+  ZIP.
 - **Choosing.** Every candidate shape is scored: a clean flat pattern beats a
   drawing sheet (a frame the size of an A-paper, other views and the title
   block around the part, many texts); a DXF whose size matches the STEP
@@ -38,6 +39,7 @@ class Source:
     kind: str                          # "dxf" or "step"
     texts: list[str] = field(default_factory=list)
     keys: set[str] = field(default_factory=set)
+    folder: str = ""                   # the ZIP folder it came in, "" if none
 
     def part_keys(self) -> set[str]:
         return self.keys or {base_key(self.name)}
@@ -68,6 +70,19 @@ def group_sources(sources: list[Source], is_drawing=lambda source_id: True
         if found:
             target = next(iter(found))
             groups[target].extend(groups.pop(key))
+
+    # A drawing still on its own joins the one other item in its folder (a
+    # ZIP of item folders: DRW-023179_A.dwg in the folder of ITM-072558).
+    for key in list(groups):
+        members = groups.get(key)
+        if not members or any(s.kind == "step" or not is_drawing(s.id) for s in members):
+            continue
+        folders = {s.folder for s in members}
+        folder = folders.pop() if len(folders) == 1 else ""
+        others = [k for k, ms in groups.items()
+                  if folder and k != key and any(s.folder == folder for s in ms)]
+        if len(others) == 1:
+            groups[others[0]].extend(groups.pop(key))
 
     order = {s.id: i for i, s in enumerate(sources)}
     items = [sorted((s.id for s in members), key=order.get) for members in groups.values()]

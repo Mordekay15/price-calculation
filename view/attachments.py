@@ -50,10 +50,14 @@ def _linkable() -> dict[str, dict]:
     return {d: doc for d, doc in docs().items() if d not in bom.models()}
 
 
-def links(parts: dict[str, str | list[str]]) -> dict[str, list[str]]:
+def links(parts: dict[str, str | list[str]], card_folders: dict[str, set[str]] | None = None,
+          doc_folders: dict[str, str] | None = None) -> dict[str, list[str]]:
     """``{part id: [doc id, …]}``: the automatic links by part number, with
     the links set by hand on top. ``parts`` maps a card's id to its file name,
-    or to the names of all its files."""
+    or to the names of all its files. A PDF from a dropped ZIP that neither
+    links goes to the one card whose files are in its folder
+    (``card_folders``: card -> folders of its files, ``doc_folders``: doc ->
+    its folder)."""
     all_docs = _linkable()
     names = {f"{pid}\0{i}": n for pid, ns in parts.items()
              for i, n in enumerate([ns] if isinstance(ns, str) else ns)}
@@ -66,6 +70,12 @@ def links(parts: dict[str, str | list[str]]) -> dict[str, list[str]]:
         for key, ids in found.items():
             pid = key.split("\0", 1)[0]
             auto.setdefault(pid, []).extend(d for d in ids if d not in auto.get(pid, []))
+    linked = {d for ids in auto.values() for d in ids}
+    for d in unnamed:
+        folder = (doc_folders or {}).get(d)
+        cards = [c for c, fs in (card_folders or {}).items() if folder and folder in fs]
+        if d not in linked and len(cards) == 1:
+            auto.setdefault(cards[0], []).append(d)
     manual = st.session_state.get(_MANUAL, {})
     out: dict[str, list[str]] = {}
     for pid, ids in auto.items():

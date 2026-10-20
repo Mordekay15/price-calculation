@@ -153,6 +153,18 @@ Cones, rolled parts and hems are not supported: such a part is marked as not
 sheet, and a DXF of it is needed. Without `cadquery-ocp`, STEP files are only
 attached to the cards by part number.
 
+## A ZIP of item folders
+
+A dropped **ZIP** is unpacked (`core/archive.py`), ZIPs inside it too, and its
+files are taken as if dropped one by one, folder by folder. Files the app
+doesn't use (Creo `.prt`, `.drw`, `.frm`, notes…) are skipped and named under
+the drop area. Grouping works by part number as usual, and the folder helps
+where that can't: a drawing that names no part joins the one other item in
+its folder, and so does a PDF. A folder with several items keeps them
+apart, and files at the top of the ZIP are matched by name and text only.
+Each card shows its folder. Streamlit takes files up to 200 MB; for a bigger
+ZIP, set `maxUploadSize` under `[server]` in `.streamlit/config.toml`.
+
 ## Assemblies (Kokoonpanot)
 
 Parts sold together are one **assembly** (`core/assemblies.py`,
@@ -298,6 +310,7 @@ core/                   pure logic, no Streamlit
   quote.py              quote PDF, Excel export, clean DXFs and their ZIP
   assemblies.py         assemblies: parts × kpl/kokoonpano + bought parts + assembly work
   linking.py            part numbers from file names; files → parts by name or text
+  archive.py            dropped ZIPs: files folder by folder, nested ZIPs, Finnish names
   items.py              one card per part: grouping its files, choosing the shape
   materials.py          material/thickness hints, proposals, alias table, optional Claude
   step.py               STEP: BOM with quantities, sheet unfolding, flat DXF, 3D mesh
