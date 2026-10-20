@@ -162,8 +162,13 @@ the drop area. Grouping works by part number as usual, and the folder helps
 where that can't: a drawing that names no part joins the one other item in
 its folder, and so does a PDF. A folder with several items keeps them
 apart, and files at the top of the ZIP are matched by name and text only.
-Each card shows its folder. Streamlit takes files up to 200 MB; for a bigger
-ZIP, set `maxUploadSize` under `[server]` in `.streamlit/config.toml`.
+Each card shows its folder. Only the files the app uses are read, one at a
+time, with a progress bar.
+
+**A big RFQ** (Streamlit uploads stop at 200 MB, and a large upload can run
+the computer out of memory): open **Lue ZIP tai kansio koneelta**, paste the
+ZIP's or the folder's path (Explorer: Shift + right click → *Copy as path*)
+and press **Lue**. The app reads it straight from the disk it runs on.
 
 ## Assemblies (Kokoonpanot)
 

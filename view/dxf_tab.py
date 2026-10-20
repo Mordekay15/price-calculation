@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import streamlit as st
 
-from core.archive import ArchiveError, is_zip, unpack
+from core.archive import ArchiveError, is_zip, read_path, unpack
 from core.pricing import build_lookup, get_sizes_for_material, parse_thickness_mm
 from core.dwg import read_drawing
 from core.dxf import DxfFile, DxfReport, fasteners_from_texts, is_slit
@@ -192,8 +192,7 @@ def _render_drop_area() -> list[tuple[str, DxfFile]]:
              "puretaan: jokainen kansio on yleensä yksi osa, ja kansio auttaa "
              "yhdistämään tiedostot oikeaan osaan.",
     )
-    with st.spinner("Luetaan tiedostoja…"):
-        new = _ingest(uploaded)
+    new = _ingest(list(uploaded or []) + _render_path_reader())
     if new:
         st.rerun()  # redraw with the drop area empty
     parts = _sync()
@@ -590,6 +589,8 @@ _DUPES   = "dxf_dupes"         # (names of dropped files already on a card, warn
 _DUPE_WARNING_S = 15           # how long that warning stays
 _SKIPPED = "dxf_skipped"       # names of the last drop's files that aren't used
 _FOLDERS = "dxf_folders"       # {file id: folder in the dropped ZIP}
+_PATH_READS = "dxf_path_reads"  # ZIPs / folders read from disk so far (for file ids)
+_PATH_SKIPPED = "dxf_path_skipped"  # what the last disk read skipped
 _USED = ("dxf", "dwg", "pdf", "step", "stp")
 _SKIPPED_SHOWN = 12            # names listed in the skipped line
 
@@ -606,8 +607,13 @@ def _ingest(uploaded) -> bool:
     dropped = [up for up in uploaded or [] if up.file_id not in files and up.file_id not in docs]
     names = ({(folders.get(f, ""), dxf.name) for f, dxf in files.items()}
              | {(folders.get(d, ""), doc["name"]) for d, doc in docs.items()})
-    dupes, skipped = [], []
-    for up in _unzipped(dropped, skipped):
+    dupes, skipped = [], st.session_state.pop(_PATH_SKIPPED, [])
+    todo = _unzipped(dropped, skipped)
+    bar = st.progress(0.0) if len(todo) > 5 else None
+    for n, up in enumerate(todo):
+        if bar is not None:
+            bar.progress(n / len(todo), text=f"Luetaan tiedostoja {n + 1} / {len(todo)}: "
+                                             f"{up.name}")
         folder = getattr(up, "folder", "")
         if up.name.rsplit(".", 1)[-1].lower() not in _USED:
             skipped.append(up.name)     # e.g. Creo's part.prt.1, part.drw.1
@@ -617,13 +623,16 @@ def _ingest(uploaded) -> bool:
             continue
         if folder:
             folders[up.file_id] = folder
+        data = up.getvalue()
         if attachments.is_doc(up.name):
-            attachments.add_doc(up.file_id, up.name, up.getvalue())
+            attachments.add_doc(up.file_id, up.name, data)
             if bom.is_step(up.name) and step_available():
-                bom.add_model(up.file_id, up.name, up.getvalue())
+                bom.add_model(up.file_id, up.name, data)
         else:
-            files[up.file_id] = read_drawing(up.getvalue(), up.name)
+            files[up.file_id] = read_drawing(data, up.name)
         names.add((folder, up.name))
+    if bar is not None:
+        bar.empty()
     if dropped:
         _sync()
         st.session_state[_INBOX] = st.session_state.get(_INBOX, 0) + 1
@@ -632,6 +641,36 @@ def _ingest(uploaded) -> bool:
     if len(dropped) > len(dupes) + len(skipped):
         st.session_state.pop(_FILL_ASKED, None)  # new empty parts: ask again
     return bool(dropped)
+
+
+def _render_path_reader() -> list:
+    """"Lue koneelta": a ZIP or a folder read straight from this computer's
+    disk, for an RFQ too big to upload (no upload limit, and it is read one
+    file at a time). Returns its files once the button is pressed."""
+    with st.expander("Lue ZIP tai kansio koneelta (iso tarjouspyyntö)"):
+        st.caption("Liitä ZIP-tiedoston tai kansion polku, esim. "
+                   "`D:\\Tarjoukset\\RFQ 580-07.zip` (Resurssienhallinnassa: Shift + "
+                   "hiiren oikea → Kopioi polkuna). Tiedostoa ei ladata selaimen kautta, "
+                   "joten kokorajaa ei ole.")
+        c1, c2 = st.columns([5, 1], vertical_alignment="bottom")
+        path = c1.text_input("Polku", key="dxf_path", label_visibility="collapsed",
+                             placeholder="D:\\Tarjoukset\\RFQ.zip")
+        if not c2.button("Lue", key="dxf_path_read", disabled=not path.strip()):
+            return []
+    skipped = st.session_state.setdefault(_PATH_SKIPPED, [])
+    skipped.clear()
+    try:
+        entries = read_path(path, _is_used, skipped)
+    except ArchiveError as exc:
+        st.error(str(exc))
+        return []
+    n = st.session_state[_PATH_READS] = st.session_state.get(_PATH_READS, 0) + 1
+    return [SimpleNamespace(file_id=f"disk{n}/{i}", name=e.name, folder=e.folder,
+                            getvalue=e.load) for i, e in enumerate(entries)]
+
+
+def _is_used(name: str) -> bool:
+    return name.rsplit(".", 1)[-1].lower() in _USED
 
 
 def _unzipped(dropped, skipped: list[str]) -> list:
@@ -644,12 +683,12 @@ def _unzipped(dropped, skipped: list[str]) -> list:
             out.append(up)
             continue
         try:
-            entries = unpack(up.getvalue())
+            entries = unpack(up.getvalue(), _is_used, skipped)
         except ArchiveError:
             skipped.append(f"{up.name} (ei voitu avata)")
             continue
         out += [SimpleNamespace(file_id=f"{up.file_id}/{i}", name=e.name, folder=e.folder,
-                                getvalue=lambda d=e.data: d)
+                                getvalue=e.load)
                 for i, e in enumerate(entries)]
     return out
 

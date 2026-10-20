@@ -608,4 +608,39 @@ def test_a_zip_of_item_folders_becomes_one_card_per_folder():
                                          ["DRW-023179_A.dxf", "ITM-072558_A.dxf"]]
     # The PDF names no part: it goes to the card of its folder.
     assert at.session_state["links"] == {"DRW-023179_A.dxf": 1}
-    assert at.session_state["skipped"] == ["100325.dxf.bak", "ITM-072558.prt.1"]
+    assert sorted(at.session_state["skipped"]) == ["100325.dxf.bak", "ITM-072558.prt.1"]
+
+
+def test_a_zip_on_this_computer_is_read_by_its_path(tmp_path):
+    import io
+    import zipfile
+
+    import ezdxf
+    from streamlit.testing.v1 import AppTest
+
+    from tests.conftest import dxf_bytes
+
+    doc = ezdxf.new()
+    doc.header["$INSUNITS"] = 4
+    doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 50), (0, 50)], close=True)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("RFQ/100325/100325.dxf", dxf_bytes(doc))
+        zf.writestr("RFQ/100325/100325.prt.1", b"creo")
+        zf.writestr("RFQ/200400/200400.dxf", dxf_bytes(doc))
+    path = tmp_path / "RFQ 580.zip"
+    path.write_bytes(buf.getvalue())
+
+    def page():
+        import streamlit as st
+
+        from view.dxf_tab import _render_drop_area
+
+        st.session_state["cards"] = [d.name for _, d in _render_drop_area()]
+
+    at = AppTest.from_function(page, default_timeout=30).run()
+    at.text_input(key="dxf_path").set_value(f'"{path}"').run()
+    at.button(key="dxf_path_read").click().run()
+    assert not at.exception
+    assert at.session_state["cards"] == ["100325.dxf", "200400.dxf"]
+    assert any("100325.prt.1" in c.value for c in at.caption)
