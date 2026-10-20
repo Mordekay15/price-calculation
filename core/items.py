@@ -1,0 +1,143 @@
+"""One card per item, pure (no Streamlit): the files dropped for one part
+(its flat DXF, a DWG or DXF of the drawing, a STEP model) are grouped into
+one item, and the best of them is chosen as the shape to price.
+
+- **Grouping.** Files of one part number go together (``core.linking``:
+  revisions and numbered pieces ignored, so ``3aua0000098622_1.dxf``,
+  ``_2.dxf`` and ``3AUA0000098622.stp`` are one item). A file named
+  otherwise (the drawing ``DRW-023179_A.dwg``) joins the item whose part
+  number its texts name (``ITM-072558.A`` in the title block), when they
+  name exactly one.
+- **Choosing.** Every candidate shape is scored: a clean flat pattern beats a
+  drawing sheet (a frame the size of an A-paper, other views and the title
+  block around the part, many texts); a DXF whose size matches the STEP
+  model's unfolded blank is confirmed by it. The STEP blank itself is clean
+  by construction and is used when no DXF agrees with it.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from core.linking import base_key, link_by_text
+
+# Paper sheets (mm, short × long): an outline this size is a drawing frame.
+_PAPER = [(210, 297), (297, 420), (420, 594), (594, 841), (841, 1189)]
+_PAPER_TOL = 0.03
+_SIZE_TOL = 0.03          # a DXF within 3 % of the STEP blank is the same part
+
+
+@dataclass
+class Source:
+    """One candidate file for an item: a DXF/DWG, or a part of a STEP model
+    (``keys``: the part numbers it goes by, see ``view.bom``)."""
+
+    id: str
+    name: str
+    kind: str                          # "dxf" or "step"
+    texts: list[str] = field(default_factory=list)
+    keys: set[str] = field(default_factory=set)
+
+    def part_keys(self) -> set[str]:
+        return self.keys or {base_key(self.name)}
+
+
+def group_sources(sources: list[Source], is_drawing=lambda source_id: True
+                  ) -> list[list[str]]:
+    """The items: lists of source ids, each in drop order, the items in the
+    order of their first file. A group joins another by its texts only when
+    ``is_drawing`` says each of its files is a drawing (not a flat part of
+    its own that merely mentions another part number)."""
+    groups: dict[str, list[Source]] = {}
+    for s in sources:
+        keys = s.part_keys()
+        key = next((k for k in keys if k in groups), None) or sorted(keys)[0]
+        groups.setdefault(key, []).append(s)
+
+    # A group named otherwise whose texts name exactly one other group's part
+    # number is that part's drawing: it joins it.
+    names = {key: key for key in groups}
+    for key in list(groups):
+        members = groups.get(key)
+        if not members or any(s.kind == "step" or not is_drawing(s.id) for s in members):
+            continue
+        texts = "\n".join(t for s in members for t in s.texts)
+        others = {k: n for k, n in names.items() if k != key and k in groups}
+        found = link_by_text(others, {"x": texts})
+        if found:
+            target = next(iter(found))
+            groups[target].extend(groups.pop(key))
+
+    order = {s.id: i for i, s in enumerate(sources)}
+    items = [sorted((s.id for s in members), key=order.get) for members in groups.values()]
+    return sorted(items, key=lambda ids: order[ids[0]])
+
+
+@dataclass
+class Choice:
+    id: str
+    score: float
+    note: str                          # why, in Finnish, for the card
+    valid: bool = True
+
+
+def score_dxf(report, unit_guessed: bool, texts: list[str],
+              blank_mm: tuple[float, float] | None) -> Choice:
+    """How much a DXF/DWG looks like the part's flat pattern (higher is
+    better). ``report`` is its ``DxfReport``, ``blank_mm`` the STEP blank's
+    size when the item has a model."""
+    if report.problems or report.outline is None:
+        return Choice("", -1e9, "ei luettavaa ääriviivaa", valid=False)
+    w, h = sorted((report.outline.width_mm, report.outline.height_mm))
+    score, notes = 100.0, []
+    if _is_paper(w, h):
+        score -= 200
+        notes.append("piirustuksen kehys")
+    if report.dropped:
+        score -= 15 * min(len(report.dropped), 10)
+        notes.append(f"{len(report.dropped)} kuviota osan ulkopuolella")
+    if texts:
+        score -= 2 * min(len(texts), 20)
+    if unit_guessed:
+        score -= 10
+        notes.append("mittayksikkö puuttuu")
+    if blank_mm is not None:
+        bw, bh = sorted(blank_mm)
+        if abs(w - bw) <= _SIZE_TOL * bw and abs(h - bh) <= _SIZE_TOL * bh:
+            score += 50
+            notes.insert(0, "vastaa STEP-mallin aihiota")
+        else:
+            score -= 30
+            notes.append("eri koko kuin STEP-mallin aihio")
+    if not notes:
+        notes.append("puhdas aihio")
+    return Choice("", score, ", ".join(notes))
+
+
+def score_step(is_sheet: bool, reason: str = "") -> Choice:
+    if not is_sheet:
+        return Choice("", -1e9, reason or "ei levyosa", valid=False)
+    return Choice("", 90.0, "avattu STEP-mallista")
+
+
+def choose(scored: dict[str, Choice], override: str | None = None) -> str | None:
+    """The source to price: the user's choice when it is still there and
+    valid, else the best score (the first dropped on a tie)."""
+    if override in scored and scored[override].valid:
+        return override
+    valid = [(c.score, -i, sid) for i, (sid, c) in enumerate(scored.items()) if c.valid]
+    return max(valid)[2] if valid else None
+
+
+def looks_like_drawing(report) -> bool:
+    """A drawing sheet rather than a part: unreadable, a paper-size frame, or
+    other views and the title block around the part."""
+    if report.problems or report.outline is None:
+        return True
+    w, h = sorted((report.outline.width_mm, report.outline.height_mm))
+    return _is_paper(w, h) or len(report.dropped) >= 3
+
+
+def _is_paper(w: float, h: float) -> bool:
+    return any(abs(w - pw) <= _PAPER_TOL * pw and abs(h - ph) <= _PAPER_TOL * ph
+               for pw, ph in _PAPER)

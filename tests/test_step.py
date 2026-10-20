@@ -87,7 +87,8 @@ def test_an_assembly_becomes_cards_with_its_quantities():
 
     at = AppTest.from_file("step_page.py", default_timeout=60).run()
     assert not at.exception
-    # Pohja has a DXF: no card from the model. Tappi isn't sheet.
+    # Pohja's DXF and its model part are one card, priced from the DXF (it
+    # matches the unfolded blank). Tappi isn't sheet.
     names = [c[0] for c in at.session_state["cards"]]
     assert names == ["Pohja.dxf", "Kulma.step"]
     _, qty, bends, w, h = at.session_state["cards"][1]
@@ -96,31 +97,59 @@ def test_an_assembly_becomes_cards_with_its_quantities():
     assert list(table["Kpl yhteensä"]) == [1, 2, 1, 2, 6]
     assert list(table["Tyyppi"]) == ["kokoonpano", "levyosa", "levyosa", "kokoonpano",
                                      "ei levyosa"]
-    assert table["Kortti"][2].startswith("DXF: ")
+    assert list(table["Kortti"])[1:3] == ["#2 · Kulma.step", "#1 · Pohja.dxf"]
     at.number_input(key="dxf_step_k_input").set_value(0.5).run()
     assert sorted(at.session_state["cards"][1][3:]) == [40.0, 76.7]
 
 
-def test_a_part_file_named_like_the_dxf_adds_no_card(monkeypatch):
-    # ITM-072558_A.stp whose body is named "Part1", next to ITM-072558_A.dxf.
-    import streamlit as st
+def test_a_parts_flat_drawing_model_and_pdf_make_one_card():
+    # Kate's ITM-072558 folder: the flat DXF, the drawing as DXF (A4 frame and
+    # title block naming ITM-072558.A), the model (body "Part1") and the PDF.
+    from streamlit.testing.v1 import AppTest
 
-    from view import bom
+    def page():
+        import io
+        from types import SimpleNamespace
 
-    monkeypatch.setattr(st, "session_state", {})
-    bom.add_model("s1", "ITM-072558_A.stp", part_step(plate(), "Part1"))
-    store = {"d1": read_dxf(flat_dxf(unfold(plate()), "x"), "ITM-072558_A.dxf")}
-    assert bom.sync_cards(store, {}) == []
-    del store["d1"]
-    assert len(bom.sync_cards(store, {})) == 1   # no DXF: the model makes the card
+        import ezdxf
+        import streamlit as st
+        from reportlab.pdfgen import canvas
 
+        from core.step import flat_dxf, unfold
+        from tests.conftest import dxf_bytes
+        from tests.step_models import l_bracket, part_step
+        from view.dxf_tab import _ingest, _render_part_cards, _sync
 
-def test_numbered_dxf_pieces_keep_the_step_from_adding_a_card(monkeypatch):
-    import streamlit as st
+        flat = flat_dxf(unfold(l_bracket()), "ITM-072558")
+        drawing = ezdxf.new()
+        drawing.header["$INSUNITS"] = 4
+        msp = drawing.modelspace()
+        msp.add_lwpolyline([(0, 0), (297, 0), (297, 210), (0, 210)], close=True)
+        msp.add_lwpolyline([(20, 20), (70, 20), (70, 60), (20, 60)], close=True)
+        msp.add_text("ITM-072558.A", dxfattribs={"insert": (200, 10)})
+        msp.add_text("DRW-023179.A", dxfattribs={"insert": (200, 5)})
+        buf = io.BytesIO()
+        pdf = canvas.Canvas(buf)
+        pdf.drawString(72, 720, "ITM-072558.A   DRW-023179.A")
+        pdf.save()
+        files = [("a", "DRW-023179_A.dxf", dxf_bytes(drawing)),
+                 ("b", "DRW-023179_A.pdf", buf.getvalue()),
+                 ("c", "ITM-072558_A.dxf", flat),
+                 ("d", "ITM-072558_A.stp", part_step(l_bracket(), "Part1"))]
+        if "done" not in st.session_state:
+            st.session_state["done"] = True
+            _ingest([SimpleNamespace(file_id=i, name=n, getvalue=lambda d=d: d)
+                     for i, n, d in files])
+        parts = _sync()
+        _render_part_cards(parts, ["S235"], {("2", "S235 | 1000x2000"): 900.0}, False)
+        st.session_state["cards"] = [(cid, d.name) for cid, d in parts]
 
-    from view import bom
-
-    monkeypatch.setattr(st, "session_state", {})
-    bom.add_model("s1", "3AUA0000098622.stp", part_step(plate(), "3AUA0000098622"))
-    store = {"d1": read_dxf(flat_dxf(unfold(plate()), "x"), "3aua0000098622_1.dxf")}
-    assert bom.sync_cards(store, {}) == []
+    at = AppTest.from_function(page, default_timeout=60).run()
+    assert not at.exception
+    assert at.session_state["cards"] == [("a", "ITM-072558_A.dxf")]
+    files = next(c.value for c in at.caption if c.value.startswith("Tiedostot:"))
+    assert "✓ ITM-072558_A.dxf (vastaa STEP-mallin aihiota)" in files
+    assert "DRW-023179_A.dxf (piirustuksen kehys" in files
+    assert any("DRW-023179_A.pdf" in e.label for e in at.expander)
+    at.selectbox(key="dxf_src_a").set_value("d|0:1:1:1/0").run()
+    assert at.session_state["cards"] == [("a", "ITM-072558_A.stp")]

@@ -21,13 +21,12 @@ buf = io.BytesIO()
 pdf = canvas.Canvas(buf)
 pdf.drawString(72, 720, "Material: S355MC  t = 3 mm")
 pdf.save()
-store = st.session_state.setdefault(_STORE, {})
-if not store:
+if not st.session_state.get(_STORE):
     _ingest([SimpleNamespace(file_id="f0", name="100325.dxf", getvalue=lambda: data),
              SimpleNamespace(file_id="f1", name="200400.dxf", getvalue=lambda: data),
              SimpleNamespace(file_id="d0", name="100325-revA.pdf",
                              getvalue=lambda: buf.getvalue())])
-parts = list(store.items())
+parts = list(st.session_state[_STORE].items())
 materials = ["S235", "S355MC"]
 lookup = {("2", "S235 | 1000x2000"): 900.0, ("3", "S355MC | 1000x2000"): 950.0}
 thick = {"S235": ["2"], "S355MC": ["3"]}

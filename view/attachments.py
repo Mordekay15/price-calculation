@@ -42,23 +42,30 @@ def docs() -> dict[str, dict]:
 
 
 def _linkable() -> dict[str, dict]:
-    """The files that link to one card: not STEP assemblies (they are in
-    the BOM, see ``view.bom``)."""
+    """The files that link to cards: PDFs, and STEP files that couldn't be
+    read as models (a model's parts are on the cards themselves, see
+    ``view.bom``)."""
     from view import bom
 
-    return {d: doc for d, doc in docs().items() if not bom.is_assembly(d)}
+    return {d: doc for d, doc in docs().items() if d not in bom.models()}
 
 
-def links(parts: dict[str, str]) -> dict[str, list[str]]:
+def links(parts: dict[str, str | list[str]]) -> dict[str, list[str]]:
     """``{part id: [doc id, …]}``: the automatic links by part number, with
-    the links set by hand on top. ``parts`` maps a card's id to its file name."""
+    the links set by hand on top. ``parts`` maps a card's id to its file name,
+    or to the names of all its files."""
     all_docs = _linkable()
-    auto = link_files(parts, {d: doc["name"] for d, doc in all_docs.items()})
-    named = {d for ids in auto.values() for d in ids}
+    names = {f"{pid}\0{i}": n for pid, ns in parts.items()
+             for i, n in enumerate([ns] if isinstance(ns, str) else ns)}
+    by_name = link_files(names, {d: doc["name"] for d, doc in all_docs.items()})
+    named = {d for ids in by_name.values() for d in ids}
     unnamed = {d: _text(d, doc) for d, doc in all_docs.items()
                if d not in named and doc["kind"] == "pdf"}
-    for pid, ids in link_by_text(parts, unnamed).items():
-        auto.setdefault(pid, []).extend(ids)
+    auto: dict[str, list[str]] = {}
+    for found in (by_name, link_by_text(names, unnamed, lambda k: k.split("\0", 1)[0])):
+        for key, ids in found.items():
+            pid = key.split("\0", 1)[0]
+            auto.setdefault(pid, []).extend(d for d in ids if d not in auto.get(pid, []))
     manual = st.session_state.get(_MANUAL, {})
     out: dict[str, list[str]] = {}
     for pid, ids in auto.items():

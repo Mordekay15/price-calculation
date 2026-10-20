@@ -99,27 +99,29 @@ removes. Each calculator has:
 Picking a chain on a card's Työvaiheet sets its calculators. The card shows
 the minutes and € per piece at every batch size.
 
-## Drawings, models and checking (DXF tab)
+## One card per part (DXF tab)
 
-PDF and STEP files can be dropped together with the DXFs. They are linked to
-cards by part number: `100325-revA.pdf` and `100325_B.pdf` both go to
-`100325.dxf`, and an exact file name wins. Numbered pieces share their
-drawing: `3AUA0000098622.pdf` links to `3aua0000098622_1.dxf` and `_2.dxf`. A PDF whose name is something
-else, such as the drawing number `DRW-023179.A.pdf`, is linked by the part
-number in its text (the title block's `ITM-072558.A` goes to
-`ITM-072558_A.dxf`), but only when the text names exactly one card's part
-number. A single-part STEP file links by its file name too, so
-`ITM-072558_A.stp` adds no card next to `ITM-072558_A.dxf`. A DXF or DWG
-card whose texts name another card's part number (the drawing
-`DRW-023179_A.dwg` of `ITM-072558_A.dxf`) gets a warning that it is probably
-that part's drawing, not a part of its own. **Liitetiedostot** lists them and
-lets you change or remove a link. A card shows its PDFs' first page under
-**Piirustukset**, and its **Tarkastettu** tick is counted above the cards.
-In laser mode a card also prices punching (Levari) for comparison, and says
-which method would be cheaper.
+Drop every file you have for a part at once: the flat DXF, the drawing as DWG
+or DXF, the STEP model and the PDF. They become **one card** (`core/items.py`):
 
-STEP files are also read as 3D models (see
-[STEP models](#step-models-bom-and-unfolding)).
+- **Grouping.** Files of one part number go together, ignoring revisions
+  (`-revA`, `_A`) and numbered pieces (`_1`, `_2`): `3aua0000098622_1.dxf`,
+  `_2.dxf`, `3AUA0000098622.stp` and `.pdf` are one part. A drawing saved
+  under its drawing number (`DRW-023179_A.dwg`) joins the part its title block
+  names (`ITM-072558.A`), when it looks like a drawing (a paper-size frame, or
+  other views around the part) and names exactly one card's part number.
+- **Choosing the shape.** Each DXF/DWG is scored: a clean flat pattern beats
+  a drawing sheet (frame, views and title block, many texts, no unit). With a
+  STEP model, a DXF the size of the unfolded blank is confirmed by it; when no
+  DXF agrees, the blank unfolded from the model is used. The card lists its
+  files, marks the one priced (✓) with the reason, and **Muoto tiedostosta**
+  picks another.
+- **The rest of the card.** PDFs show their first page under
+  **Piirustukset**; a PDF named otherwise links by the part number in its
+  text. The material search reads the texts of all the card's files.
+  **Poista** removes the card and its files. The **Tarkastettu** tick is
+  counted above the cards. In laser mode a card also prices punching (Levari)
+  for comparison, and says which method would be cheaper.
 
 ## STEP models: BOM and unfolding
 
@@ -135,7 +137,9 @@ and in the whole model. Each body is checked for sheet metal:
   lines (layers `BEND_UP` / `BEND_DOWN`), so the work cost and the
   calculators' `bends` input use them. The thickness note (`t = 2 mm`) is read
   by the material proposals.
-- If a DXF card with the same part number exists, the DXF is used instead.
+- The unfolded part is on the card of its part number with the part's DXF,
+  if there is one; the card's shape is chosen as described in
+  [One card per part](#one-card-per-part-dxf-tab).
 - Other bodies (bought or machined parts, or anything too thick for its size)
   are listed as *ei levyosa* with the reason, and are not priced.
 - **Näytä 3D** shows a body you can turn (plotly), in the BOM and on a card
@@ -261,7 +265,8 @@ core/                   pure logic, no Streamlit
   batches.py            prices per batch size from one nesting
   calculators.py        YAML calculators: inputs, step tables, safe formulas, chains
   quote.py              quote PDF, Excel export, clean DXFs and their ZIP
-  linking.py            PDF/STEP files → parts by part number
+  linking.py            part numbers from file names; files → parts by name or text
+  items.py              one card per part: grouping its files, choosing the shape
   materials.py          material/thickness hints, proposals, alias table, optional Claude
   step.py               STEP: BOM with quantities, sheet unfolding, flat DXF, 3D mesh
   programs.py           repeatable programs: the kit search both packers share

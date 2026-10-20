@@ -58,14 +58,16 @@ def base_key(file_name: str) -> str:
     return re.sub(r"[\s_\-.]+\d{1,2}$", "", key) or key
 
 
-def link_by_text(part_names: dict[str, str], texts: dict[str, str]) -> dict[str, list[str]]:
+def link_by_text(part_names: dict[str, str], texts: dict[str, str],
+                 group=None) -> dict[str, list[str]]:
     """Files whose name says nothing, linked by the part number written in
     them: a drawing ``DRW-023179.pdf`` whose title block reads
     ``ITM-072558.A`` goes to ``ITM-072558_A.dxf``. ``texts`` maps a file id
     to its text. A file goes to a part only when its text names exactly one
     part number on the cards (numbered pieces of one, ``_1`` and ``_2``, count
     as one) (an assembly drawing listing several is left for
-    linking by hand); part numbers shorter than 4 characters or without a
+    linking by hand) or, with ``group`` (part id -> card), the part numbers of
+    exactly one card; part numbers shorter than 4 characters or without a
     digit are never searched for."""
     patterns: dict[str, re.Pattern] = {}
     for name in part_names.values():
@@ -73,14 +75,15 @@ def link_by_text(part_names: dict[str, str], texts: dict[str, str]) -> dict[str,
         if len(key) >= 4 and any(c.isdigit() for c in key) and key not in patterns:
             body = r"[\s_\-.]?".join(re.escape(p) for p in re.split(r"[\s_\-.]+", key) if p)
             patterns[key] = re.compile(rf"(?<![a-z0-9]){body}(?![0-9])", re.IGNORECASE)
+    group = group or (lambda pid: pid)
     out: dict[str, list[str]] = {}
     for fid, text in texts.items():
-        found = [k for k, pat in patterns.items() if pat.search(text or "")]
-        if len(found) != 1:
+        found = {k for k, pat in patterns.items() if pat.search(text or "")}
+        pids = [pid for pid, name in part_names.items() if base_key(name) in found]
+        if len({group(pid) for pid in pids}) != 1 and len(found) != 1:
             continue
-        for pid, name in part_names.items():
-            if base_key(name) == found[0]:
-                out.setdefault(pid, []).append(fid)
+        for pid in pids:
+            out.setdefault(pid, []).append(fid)
     return out
 
 

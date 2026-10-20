@@ -1,11 +1,13 @@
 """STEP models on the DXF tab: a dropped STEP file is read into its BOM
-(``core.step``), every sheet-metal part is unfolded into a part card (unless
-a DXF of the same part number is already on one), and a 3D preview shows the
-model. The cards made from a model carry its quantities.
+(``core.step``) and every sheet-metal part is unfolded. Each unfolded part
+is a candidate shape for the card of its part number (``core.items``): the
+card of its DXF, or a card of its own. A 3D preview shows the model, and the
+cards carry the model's quantities.
 
-Session keys: ``MODELS`` holds ``{file id: {"name", "model", "flats"}}``,
-where ``flats`` maps a part key to its ``FlatPart``. A card made from a
-model has the id ``"{file id}|{part key}"``."""
+Session keys: ``MODELS`` holds ``{file id: {"name", "model", "flats",
+"cards"}}``, where ``flats`` maps a part key to its ``FlatPart`` and
+``cards`` to its flat ``DxfFile``. A model's part has the source id
+``"{file id}|{part key}"``."""
 
 from __future__ import annotations
 
@@ -13,6 +15,7 @@ import streamlit as st
 
 from core import step
 from core.dxf import read_dxf
+from core.items import Source
 from core.linking import base_key
 
 MODELS = "dxf_step_models"
@@ -46,14 +49,19 @@ def is_assembly(file_id: str) -> bool:
 
 
 def card_id(file_id: str, key: str) -> str:
+    """The source id of a model's part (see ``core.items``)."""
     return f"{file_id}{_SEP}{key}"
 
 
-def card_source(fid: str) -> tuple[dict, step.StepPart, step.FlatPart] | None:
-    """The model, part and flat a card was made from; None for a DXF card."""
-    if _SEP not in fid:
+def is_source(source_id: str) -> bool:
+    return _SEP in source_id
+
+
+def source(source_id: str) -> tuple[dict, step.StepPart, step.FlatPart] | None:
+    """The model, part and flat of a model's part; None for a DXF."""
+    if _SEP not in source_id:
         return None
-    file_id, key = fid.split(_SEP, 1)
+    file_id, key = source_id.split(_SEP, 1)
     m = models().get(file_id)
     if m is None:
         return None
@@ -61,35 +69,35 @@ def card_source(fid: str) -> tuple[dict, step.StepPart, step.FlatPart] | None:
     return (m, part, m["flats"].get(key)) if part else None
 
 
-def sync_cards(store: dict, config: dict) -> list[str]:
-    """Add a card for every unfolded sheet part that has none yet and no DXF
-    card of its part number; returns the new card ids. Its quantity is the
-    model's total (seeded once: the card's input changes it after)."""
-    dxf_keys = {base_key(d.name) for fid, d in store.items() if _SEP not in fid}
-    new = []
+def sources(hidden: set[str]) -> list[Source]:
+    """Every sheet part of every model, as a candidate for the cards (the
+    parts removed from the cards left out)."""
+    out = []
     for file_id, m in models().items():
         for p in m["model"].parts:
+            sid = card_id(file_id, p.key)
             flat = m["flats"].get(p.key)
-            cid = card_id(file_id, p.key)
-            if (flat is None or not flat.is_sheet or cid in store
-                    or _keys(m, p) & dxf_keys):
+            if sid in hidden or flat is None or not flat.is_sheet:
                 continue
-            store[cid] = _card_file(p, flat)
-            config.setdefault(cid, {"material": None, "thickness": None})["qty"] = p.qty
-            new.append(cid)
-    return new
-
-
-def replaced_by_dxf(store: dict) -> list[str]:
-    """Cards made from a model whose part number now has a DXF card: the DXF
-    is used instead."""
-    dxf_keys = {base_key(d.name) for fid, d in store.items() if _SEP not in fid}
-    out = []
-    for fid in store:
-        src = card_source(fid)
-        if src is not None and _keys(src[0], src[1]) & dxf_keys:
-            out.append(fid)
+            out.append(Source(sid, _file_name(m, p), "step", [], _keys(m, p)))
     return out
+
+
+def flat_file(source_id: str):
+    """A model part's flat pattern as a ``DxfFile`` (made once per K factor)."""
+    m, part, flat = source(source_id)
+    cache = m.setdefault("cards", {})
+    if part.key not in cache:
+        cache[part.key] = read_dxf(step.flat_dxf(flat, part.name), _file_name(m, part))
+    return cache[part.key]
+
+
+def _file_name(m: dict, part: step.StepPart) -> str:
+    """How a model's part is named on its card: the file's own name for a
+    file of one part, else the part's name in the assembly."""
+    if len(m["model"].parts) == 1:
+        return m["name"]
+    return f"{step.safe_name(part.name)}.step"
 
 
 def _keys(m: dict, part: step.StepPart) -> set[str]:
@@ -102,43 +110,35 @@ def _keys(m: dict, part: step.StepPart) -> set[str]:
     return keys
 
 
-def _card_file(part: step.StepPart, flat: step.FlatPart):
-    return read_dxf(step.flat_dxf(flat, part.name), f"{step.safe_name(part.name)}.step")
-
-
-def refold(store: dict, reports: dict, k: float) -> None:
-    """Unfold every model again with a new K factor and redraw its cards."""
-    for file_id, m in models().items():
+def refold(k: float) -> None:
+    """Unfold every model again with a new K factor."""
+    for m in models().values():
         m["flats"] = {p.key: step.unfold(p.shape, k) for p in m["model"].parts}
-        for p in m["model"].parts:
-            cid = card_id(file_id, p.key)
-            if cid in store and m["flats"][p.key].is_sheet:
-                store[cid] = _card_file(p, m["flats"][p.key])
-                reports.pop(cid, None)
+        m.pop("cards", None)
 
 
-def remove_model(file_id: str, evict) -> None:
-    """Drop a model and the cards made from it (``evict(card id)``)."""
-    m = models().pop(file_id, None)
-    if m is None:
-        return
-    for p in m["model"].parts:
-        evict(card_id(file_id, p.key))
+def remove_model(file_id: str) -> None:
+    from view import attachments
+
+    models().pop(file_id, None)
+    attachments.remove_doc(file_id)
 
 
 # ── BOM ───────────────────────────────────────────────────────────────────────
 
-def render_bom(store: dict, reports: dict, labels: dict[str, str], evict) -> None:
+def render_bom(card_of: dict[str, str], on_change) -> None:
     """The models' BOMs, folded under the drop area: every part's quantity,
-    what it is (sheet: thickness, bends, flat size; or why not) and its card."""
+    what it is (sheet: thickness, bends, flat size; or why not) and the card
+    it is on (``card_of``: source id -> card label). ``on_change()`` runs
+    after the K factor or the models change."""
     all_models = models()
     if not all_models:
         return
     n_parts = sum(len(m["model"].parts) for m in all_models.values())
-    with st.expander(f"STEP-mallit ({len(all_models)}) · {n_parts} osaa", expanded=True):
-        st.caption("Levyosat avataan tasoaihioiksi ja lisätään osakorteiksi mallin "
-                   "määrillä. Jos osalle on jo DXF-kortti samalla osanumerolla, käytetään "
-                   "DXF:ää. Muut kappaleet (esim. ostettavat tai koneistetut) näkyvät "
+    with st.expander(f"STEP-mallit ({len(all_models)}) · {n_parts} osaa"):
+        st.caption("Levyosat avataan tasoaihioiksi. Jokainen osa on yksi kortti yhdessä "
+                   "saman osanumeron DXF-, DWG- ja PDF-tiedostojen kanssa, ja määrä tulee "
+                   "mallista. Muut kappaleet (esim. ostettavat tai koneistetut) näkyvät "
                    "listassa, mutta niitä ei hinnoitella.")
         k = st.number_input(
             "K-kerroin", min_value=0.0, max_value=1.0, step=0.01, format="%.2f",
@@ -148,22 +148,24 @@ def render_bom(store: dict, reports: dict, labels: dict[str, str], evict) -> Non
                  "kulma × (sisäsäde + K × paksuus). Tyypillisesti 0,33–0,5.")
         if abs(k - st.session_state.get(K_FACTOR, step.DEFAULT_K_FACTOR)) > 1e-9:
             st.session_state[K_FACTOR] = k
-            refold(store, reports, k)
+            refold(k)
+            on_change()
             st.rerun()
-        dxf_cards = {base_key(d.name): fid for fid, d in store.items() if _SEP not in fid}
         for file_id, m in list(all_models.items()):
             model = m["model"]
             c1, c2 = st.columns([6, 1], vertical_alignment="center")
             c1.markdown(f"🧊 **{m['name']}**")
-            c2.button("Poista", key=f"dxf_step_del_{file_id}", on_click=remove_model,
-                      args=(file_id, evict))
+            if c2.button("Poista", key=f"dxf_step_del_{file_id}"):
+                remove_model(file_id)
+                on_change()
+                st.rerun()
             for problem in model.problems:
                 st.warning(problem)
             rows = []
             for row in model.bom:
-                rows.append({"Nimike": " " * row.level + row.name,
+                rows.append({"Nimike": "\u2003" * row.level + row.name,
                              "Kpl / ylempi": row.qty, "Kpl yhteensä": row.total,
-                             **_part_columns(file_id, m, row, store, dxf_cards, labels)})
+                             **_part_columns(file_id, m, row, card_of)})
             if rows:
                 st.dataframe(rows, hide_index=True, width="stretch")
             sheets = [p for p in model.parts if m["flats"][p.key].is_sheet]
@@ -171,24 +173,18 @@ def render_bom(store: dict, reports: dict, labels: dict[str, str], evict) -> Non
                 _render_preview_picker(file_id, m, sheets or model.parts)
 
 
-def _part_columns(file_id, m, row, store, dxf_cards, labels) -> dict:
+def _part_columns(file_id, m, row, card_of) -> dict:
     if row.part_key is None:
         return {"Tyyppi": "kokoonpano", "Levy": "", "Kortti": ""}
     flat = m["flats"].get(row.part_key)
-    part = next(p for p in m["model"].parts if p.key == row.part_key)
     if flat is None or not flat.is_sheet:
         return {"Tyyppi": "ei levyosa", "Levy": flat.reason if flat else "", "Kortti": "—"}
     xs = [p[0] for p in flat.outline]
     ys = [p[1] for p in flat.outline]
     sheet = (f"t {flat.thickness_mm:g} mm · {len(flat.bends)} taiv. · "
              f"aihio {max(xs) - min(xs):.0f} × {max(ys) - min(ys):.0f} mm")
-    cid = card_id(file_id, row.part_key)
-    dxf_fid = next((dxf_cards[k] for k in _keys(m, part) if k in dxf_cards), None)
-    if dxf_fid:
-        card = "DXF: " + labels.get(dxf_fid, store[dxf_fid].name)
-    else:
-        card = labels.get(cid, "poistettu") if cid in store else "poistettu"
-    return {"Tyyppi": "levyosa", "Levy": sheet, "Kortti": card}
+    return {"Tyyppi": "levyosa", "Levy": sheet,
+            "Kortti": card_of.get(card_id(file_id, row.part_key), "poistettu")}
 
 
 def _render_preview_picker(file_id: str, m: dict, parts: list[step.StepPart]) -> None:
@@ -226,21 +222,22 @@ def render_3d(shape, cache_key: str) -> None:
     st.plotly_chart(fig, key=f"dxf_step_fig_{cache_key}")
 
 
-def render_card_model(fid: str) -> None:
-    """On a card made from a model: where it came from, the unfolding's facts
-    and the 3D view."""
-    src = card_source(fid)
-    if src is None:
-        return
-    m, part, flat = src
-    bends = ", ".join(f"{b.angle_deg:.0f}° r{b.inner_radius_mm:g}" for b in flat.bends)
-    with st.expander(f"STEP: {m['name']} · {part.qty} kpl mallissa"):
-        k = st.session_state.get(K_FACTOR, step.DEFAULT_K_FACTOR)
-        st.caption(f"Avattu tasoaihioksi: paksuus {flat.thickness_mm:g} mm, "
-                   f"{len(flat.bends)} taivutusta{': ' + bends if bends else ''} "
-                   f"(K = {k:.2f}). Taivutusviivat näkyvät esikatselussa ohuina viivoina.")
-        if st.toggle("Näytä 3D", key=f"dxf_step_card_3d_{fid}"):
-            render_3d(part.shape, fid)
+def render_card_model(card: str, source_ids: list[str]) -> None:
+    """On a card with a model's part: where it came from, the unfolding's
+    facts and the 3D view."""
+    for sid in source_ids:
+        src = source(sid)
+        if src is None:
+            continue
+        m, part, flat = src
+        bends = ", ".join(f"{b.angle_deg:.0f}° r{b.inner_radius_mm:g}" for b in flat.bends)
+        with st.expander(f"STEP: {m['name']} · {part.qty} kpl mallissa"):
+            k = st.session_state.get(K_FACTOR, step.DEFAULT_K_FACTOR)
+            st.caption(f"Avattu tasoaihioksi: paksuus {flat.thickness_mm:g} mm, "
+                       f"{len(flat.bends)} taivutusta{': ' + bends if bends else ''} "
+                       f"(K = {k:.2f}).")
+            if st.toggle("Näytä 3D", key=f"dxf_step_card_3d_{card}_{sid}"):
+                render_3d(part.shape, sid)
 
 
 def single_part(file_id: str) -> step.StepPart | None:

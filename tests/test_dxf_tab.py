@@ -419,27 +419,7 @@ def test_a_chain_picks_its_calculators_on_the_card():
     assert not at.exception
 
 
-def test_a_drawing_of_another_card_is_flagged():
-    import ezdxf
-
-    from core.dxf import read_dxf
-    from tests.conftest import dxf_bytes
-    from view.dxf_tab import _drawing_of
-
-    def dxf(text=None):
-        doc = ezdxf.new()
-        doc.header["$INSUNITS"] = 4
-        doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 50), (0, 50)], close=True)
-        if text:
-            doc.modelspace().add_text(text, dxfattribs={"layer": "TITLE"})
-        return dxf_bytes(doc)
-
-    parts = [("f1", read_dxf(dxf("ITM-072558.A"), "ITM-072558_A.dxf")),
-             ("f2", read_dxf(dxf("Item ID: ITM-072558.A  DRW-023179.A"), "DRW-023179_A.dxf"))]
-    assert _drawing_of(parts) == {"f2": "#1 · ITM-072558_A.dxf"}
-
-
-def test_one_drawing_on_two_numbered_pieces_draws_both_cards():
+def test_a_parts_numbered_files_and_drawing_make_one_card():
     from streamlit.testing.v1 import AppTest
 
     def page():
@@ -471,4 +451,7 @@ def test_one_drawing_on_two_numbered_pieces_draws_both_cards():
 
     at = AppTest.from_function(page, default_timeout=30).run()
     assert not at.exception
-    assert sum("3AUA0000098622.pdf" in e.label for e in at.expander) == 2
+    assert list(at.session_state["dxf_store"]) == ["f1"]
+    assert sum("3AUA0000098622.pdf" in e.label for e in at.expander) == 1
+    files = next(c.value for c in at.caption if c.value.startswith("Tiedostot:"))
+    assert "✓ 3aua0000098622_1.dxf" in files and "3aua0000098622_2.dxf" in files
