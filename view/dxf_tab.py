@@ -14,7 +14,7 @@ import streamlit as st
 from core.archive import ArchiveError, is_zip, unpack
 from core.pricing import build_lookup, get_sizes_for_material, parse_thickness_mm
 from core.dwg import read_drawing
-from core.dxf import DxfFile, DxfReport, fasteners_from_texts
+from core.dxf import DxfFile, DxfReport, fasteners_from_texts, is_slit
 from core.geometry import net_area
 from core.items import (Choice, Source, choose, confirm_unit, group_sources,
                         looks_like_drawing, score_dxf, score_step)
@@ -966,6 +966,10 @@ def _render_preview(report: DxfReport, bends: list | None = None) -> None:
         st.markdown(preview, unsafe_allow_html=True)
     if bends:
         st.caption("Taivutuslinjat STEP-mallista: :green[ylös] · :orange[alas]")
+    slits = sum(map(is_slit, report.open_lines))
+    if slits:
+        st.caption(f"{slits} rakoa (suoria leikkauksia osan sisällä) on mukana "
+                   "leikkuupituudessa.")
     if report.dropped:
         st.caption(
             f"Osan ulkopuolelta ohitettiin {len(report.dropped)} kuviota "

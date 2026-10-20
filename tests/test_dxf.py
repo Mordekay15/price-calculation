@@ -284,6 +284,18 @@ def test_gap_in_a_hole(drawing):
     assert "ei sulkeudu" in refused(doc)
 
 
+def test_straight_slits_inside_the_part_are_cut_not_refused(drawing):
+    # A louvred flat pattern (3axd50000036018_3.dxf): rows of single lines.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    for y in (50, 70, 90):
+        msp.add_line((100, y), (200, y))
+    report = part_of(doc)
+    assert report.problems == []
+    assert len(report.open_lines) == 3
+    assert round(report.cut_length_mm) == 1000 + 300
+
+
 def test_self_crossing_outline(drawing):
     doc, msp = drawing()
     msp.add_lwpolyline([(0, 0), (300, 200), (300, 0), (0, 200)], close=True)

@@ -337,12 +337,29 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
     return f
 
 
+_SLIT_TOL_MM = 0.01      # a slit's points are this close to the line between its ends
+_SLIT_MIN_MM = 1.0
+
+
+def is_slit(points: list[Point]) -> bool:
+    """A single straight line inside the part, such as a louvre or a lanced
+    slit in a flat pattern: cut as a line, not a broken hole outline (a gap
+    in a hole leaves a bent chain: an arc or the rest of a rectangle)."""
+    (x0, y0), (x1, y1) = points[0], points[-1]
+    span = math.hypot(x1 - x0, y1 - y0)
+    if span < _SLIT_MIN_MM:
+        return False
+    return all(abs((x - x0) * (y1 - y0) - (y - y0) * (x1 - x0)) / span <= _SLIT_TOL_MM
+               for x, y in points)
+
+
 def _part_problems(report: DxfReport) -> list[str]:
     """Why a built part cannot be priced — each reason in plain Finnish."""
     out = []
     rings = [report.outline, *report.holes]
-    if report.open_lines:
-        n = len(report.open_lines)
+    gaps = [line for line in report.open_lines if not is_slit(line)]
+    if gaps:
+        n = len(gaps)
         lines = "1 viiva osan sisällä ei" if n == 1 else f"{n} viivaa osan sisällä ei"
         out.append(f"{lines} sulkeudu ääriviivaksi — reiän ääriviivassa on aukko?")
     if any(len(c.points) <= _SELF_INTERSECT_EDGE_CAP and _self_intersects(c.points)

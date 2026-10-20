@@ -3,7 +3,7 @@ shapes), the edge-gap diagram and the DXF part preview on a card."""
 
 import streamlit as st
 
-from core.dxf import DxfReport
+from core.dxf import DxfReport, is_slit
 from core.sheet_cost import SheetOption, fmt_m, product_label, utilization
 
 
@@ -275,8 +275,9 @@ BEND_UP_COLOR, BEND_DOWN_COLOR = "#16a34a", "#ea580c"
 def preview_svg(report: DxfReport, px: int = 260, bends: list | None = None) -> str:
     """Small preview of the part (drawing Y flipped).
 
-    The part is filled (holes cut out), reference lines are dashed, open lines
-    inside the part are red, and geometry dropped outside the part is grey.
+    The part is filled (holes cut out), reference lines are dashed, slits
+    (straight cuts inside the part) are drawn like the outline, other open
+    lines inside the part are red, and geometry dropped outside it is grey.
     ``bends`` are bend lines from elsewhere (the STEP model), ``[(line, up)]``:
     dashed, green up and orange down.
     """
@@ -318,8 +319,13 @@ def preview_svg(report: DxfReport, px: int = 260, bends: list | None = None) -> 
         out.append(f'<path d="{d(report.reference_lines, False)}" fill="none" '
                    f'stroke="#475569" stroke-width="{stroke * 0.7:.2f}" '
                    f'stroke-dasharray="{stroke * 4:.1f} {stroke * 3:.1f}"/>')
-    if report.open_lines:
-        out.append(f'<path d="{d(report.open_lines, False)}" fill="none" stroke="#dc2626" '
+    slits = [line for line in report.open_lines if is_slit(line)]
+    gaps = [line for line in report.open_lines if not is_slit(line)]
+    if slits:
+        out.append(f'<path d="{d(slits, False)}" fill="none" stroke="#2563eb" '
+                   f'stroke-width="{stroke:.2f}"/>')
+    if gaps:
+        out.append(f'<path d="{d(gaps, False)}" fill="none" stroke="#dc2626" '
                    f'stroke-width="{stroke * 1.5:.2f}"/>')
     for up in (True, False):
         lines = [line for line, u in bends or [] if u == up]

@@ -484,9 +484,11 @@ the price all use the same result.
 - **Drawn but not cut**: bend and centre lines, dashed lines, countersinks and
   threads drawn as circles inside a hole, and the ISO thread symbol (a thin
   ¾-circle around a hole).
+- **Slits**: a single straight line inside the part (louvres, lanced slits)
+  is cut as a line and counted in the cut length.
 - **Not priced**, with the reason shown on the card: the file can't be read,
-  there is no closed outline, an open line sits
-  inside the part, or an outline crosses itself.
+  there is no closed outline, an open line that isn't straight sits inside
+  the part (a gap in a hole's outline), or an outline crosses itself.
 
 **Nesting angle and rolling direction.** *Sallittu nestauskulma* (0/180 and
 90/270, both ticked by default) has its own row above the search time and the
