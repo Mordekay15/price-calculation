@@ -10,11 +10,12 @@ import io
 
 import streamlit as st
 
-from core.linking import link_files
+from core.linking import link_by_text, link_files
 
 DOCS = "dxf_docs"            # {doc id: {"name", "data", "kind"}}
 _MANUAL = "dxf_doc_links"    # {doc id: part id or "" (= no part)}, set by hand
 _PREVIEWS = "dxf_doc_previews"  # {doc id: PNG bytes of page 1}
+TEXTS = "dxf_doc_texts"      # {doc id: [(page, text)]}, see core.materials.pdf_text
 CHECKED = "dxf_checked_{}"   # widget key of a card's "Tarkastettu" tick
 
 DOC_TYPES = {"pdf": "pdf", "step": "step", "stp": "step"}
@@ -33,6 +34,7 @@ def remove_doc(doc_id: str) -> None:
     st.session_state.get(DOCS, {}).pop(doc_id, None)
     st.session_state.get(_MANUAL, {}).pop(doc_id, None)
     st.session_state.get(_PREVIEWS, {}).pop(doc_id, None)
+    st.session_state.get(TEXTS, {}).pop(doc_id, None)
 
 
 def docs() -> dict[str, dict]:
@@ -52,6 +54,11 @@ def links(parts: dict[str, str]) -> dict[str, list[str]]:
     the links set by hand on top. ``parts`` maps a card's id to its file name."""
     all_docs = _linkable()
     auto = link_files(parts, {d: doc["name"] for d, doc in all_docs.items()})
+    named = {d for ids in auto.values() for d in ids}
+    unnamed = {d: _text(d, doc) for d, doc in all_docs.items()
+               if d not in named and doc["kind"] == "pdf"}
+    for pid, ids in link_by_text(parts, unnamed).items():
+        auto.setdefault(pid, []).extend(ids)
     manual = st.session_state.get(_MANUAL, {})
     out: dict[str, list[str]] = {}
     for pid, ids in auto.items():
@@ -62,6 +69,17 @@ def links(parts: dict[str, str]) -> dict[str, list[str]]:
         if pid and pid in parts and d in all_docs:
             out.setdefault(pid, []).append(d)
     return out
+
+
+def _text(doc_id: str, doc: dict) -> str:
+    """A PDF's text (first pages), read once and shared with the material
+    proposals."""
+    from core.materials import pdf_text
+
+    cache = st.session_state.setdefault(TEXTS, {})
+    if doc_id not in cache:
+        cache[doc_id] = pdf_text(doc["data"])
+    return "\n".join(text for _, text in cache[doc_id])
 
 
 def render_doc_list(parts: dict[str, str], labels: dict[str, str]) -> None:
@@ -77,7 +95,9 @@ def render_doc_list(parts: dict[str, str], labels: dict[str, str]) -> None:
         title += f" · {n_unlinked} ilman osaa"
     with st.expander(title, expanded=bool(n_unlinked)):
         st.caption("PDF- ja STEP-tiedostot linkitetään osiin tiedostonimen osanumeron "
-                   "mukaan (revisiotunnus, esim. -revA, ohitetaan). Vaihda osa tarvittaessa.")
+                   "mukaan (revisiotunnus, esim. -revA, ohitetaan). Jos PDF:n nimi on eri "
+                   "(esim. piirustusnumero), osanumero etsitään PDF:n tekstistä. Vaihda "
+                   "osa tarvittaessa.")
         options = ["", *parts]
         manual = st.session_state.setdefault(_MANUAL, {})
         for d, doc in list(all_docs.items()):

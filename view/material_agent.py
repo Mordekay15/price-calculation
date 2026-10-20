@@ -22,7 +22,7 @@ from core.materials import (
 )
 
 _RESULT = "dxf_material_proposals"   # list[Proposal] from the last search
-_PDF_TEXT = "dxf_doc_texts"          # {doc id: [(page, text)]}
+_PDF_TEXT = "dxf_doc_texts"          # {doc id: [(page, text)]}, as view.attachments.TEXTS
 _NOTE = "dxf_rfq_note"
 
 _CONFIDENCE = {HIGH: "🟢 korkea", MEDIUM: "🟡 keskitaso", LOW: "🔴 matala"}

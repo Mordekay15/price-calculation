@@ -103,7 +103,11 @@ the minutes and € per piece at every batch size.
 
 PDF and STEP files can be dropped together with the DXFs. They are linked to
 cards by part number: `100325-revA.pdf` and `100325_B.pdf` both go to
-`100325.dxf`, and an exact file name wins. **Liitetiedostot** lists them and
+`100325.dxf`, and an exact file name wins. A PDF whose name is something
+else, such as the drawing number `DRW-023179.A.pdf`, is linked by the part
+number in its text (the title block's `ITM-072558.A` goes to
+`ITM-072558_A.dxf`), but only when the text names exactly one card's part
+number. **Liitetiedostot** lists them and
 lets you change or remove a link. A card shows its PDFs' first page under
 **Piirustukset**, and its **Tarkastettu** tick is counted above the cards.
 In laser mode a card also prices punching (Levari) for comparison, and says
