@@ -172,6 +172,11 @@ the computer out of memory): open **Lue ZIP tai kansio koneelta**, paste the
 ZIP's or the folder's path (Explorer: Shift + right click → *Copy as path*)
 and press **Lue**. The app reads it straight from the disk it runs on.
 
+In a drop of more than 5 files, a STEP model over 5 MB (often a punched panel
+with thousands of faces, up to a minute to read) is not read on load. Its card
+has a **Lue 3D-malli** button, and the drop area one for all of them; once
+read, the model brings its bends, thickness and size check to the card.
+
 ## Assemblies (Kokoonpanot)
 
 Parts sold together are one **assembly** (`core/assemblies.py`,

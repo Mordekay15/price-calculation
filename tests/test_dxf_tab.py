@@ -644,3 +644,48 @@ def test_a_zip_on_this_computer_is_read_by_its_path(tmp_path):
     assert not at.exception
     assert at.session_state["cards"] == ["100325.dxf", "200400.dxf"]
     assert any("100325.prt.1" in c.value for c in at.caption)
+
+
+def test_a_big_step_model_of_a_large_drop_is_read_when_asked(tmp_path):
+    import io
+    import zipfile
+
+    import ezdxf
+    import pytest
+    from streamlit.testing.v1 import AppTest
+
+    pytest.importorskip("OCP")
+    from tests.conftest import dxf_bytes
+    from tests.step_models import l_bracket, part_step
+
+    doc = ezdxf.new()
+    doc.header["$INSUNITS"] = 4
+    doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 40), (0, 40)], close=True)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for n in ("100325", "200400", "300500"):
+            zf.writestr(f"RFQ/{n}/{n}.dxf", dxf_bytes(doc))
+            zf.writestr(f"RFQ/{n}/{n}_2.dxf", dxf_bytes(doc))
+        zf.writestr("RFQ/100325/100325.stp", part_step(l_bracket(), "100325"))
+    path = tmp_path / "RFQ.zip"
+    path.write_bytes(buf.getvalue())
+
+    def page():
+        import streamlit as st
+
+        import view.dxf_tab as tab
+        from view import bom
+
+        tab._BIG_STEP_BYTES = 1000       # the test model counts as big
+        tab._render_drop_area()
+        st.session_state["models"] = sorted(bom.models())
+
+    at = AppTest.from_function(page, default_timeout=60).run()
+    at.text_input(key="dxf_path").set_value(str(path)).run()
+    at.button(key="dxf_path_read").click().run()
+    assert not at.exception
+    assert at.session_state["models"] == []                 # waits
+    at.button(key="dxf_read_waiting").click().run()
+    assert not at.exception
+    assert len(at.session_state["models"]) == 1
+    assert not [b for b in at.button if b.key == "dxf_read_waiting"]

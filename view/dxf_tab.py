@@ -203,6 +203,7 @@ def _render_drop_area() -> list[tuple[str, DxfFile]]:
         st.caption(f"Ohitettiin {len(skipped)} tiedostoa, joita ei tarvita "
                    f"hinnoitteluun: {', '.join(skipped[:_SKIPPED_SHOWN])}"
                    + (f" ja {more} muuta" if more > 0 else ""))
+    _render_waiting(None)
     _warn_duplicates(parts)
     labels = {fid: f"#{i + 1} · {dxf.name}" for i, (fid, dxf) in enumerate(parts)}
     attachments.render_doc_list(_card_names(), labels)
@@ -210,6 +211,46 @@ def _render_drop_area() -> list[tuple[str, DxfFile]]:
     bom.render_bom({sid: labels[cid] for cid, item in items.items() for sid in item.members
                     if cid in labels}, _resync)
     return parts
+
+
+def _waiting(doc_ids=None) -> list[str]:
+    """The big STEP files not read yet (of ``doc_ids``, or all)."""
+    docs = attachments.docs()
+    waiting = st.session_state.get(_WAITING, set())
+    return [d for d in (docs if doc_ids is None else doc_ids) if d in waiting and d in docs]
+
+
+def _read_waiting(doc_ids: list[str]) -> None:
+    """Read the waiting STEP models: their parts, bends and thickness join
+    the cards."""
+    docs, waiting = attachments.docs(), st.session_state.get(_WAITING, set())
+    for d in doc_ids:
+        bom.add_model(d, docs[d]["name"], docs[d]["data"])
+        waiting.discard(d)
+    _sync()
+
+
+def _render_waiting(doc_ids: list[str] | None) -> None:
+    """A large drop's big STEP models are read only when asked, here for all
+    of them (``doc_ids`` None) or on the card they belong to."""
+    waiting = _waiting(doc_ids)
+    if not waiting:
+        return
+    docs = attachments.docs()
+    mb = sum(len(docs[d]["data"]) for d in waiting) / (1 << 20)
+    if doc_ids is None:
+        label = f"Lue isot STEP-mallit ({len(waiting)} kpl, {mb:.0f} Mt)"
+        text = (f"{len(waiting)} isoa STEP-mallia odottaa, jotta lataus olisi nopeampi. "
+                "Ne voi lukea kortilla yksi kerrallaan tai kaikki kerralla.")
+        key = "dxf_read_waiting"
+    else:
+        label = "Lue 3D-malli: " + ", ".join(docs[d]["name"] for d in waiting) + f" ({mb:.0f} Mt)"
+        text = ("Iso STEP-malli luetaan vasta pyydettäessä (kestää hetken). Siitä tulevat "
+                "taivutukset, paksuus ja mitan tarkistus.")
+        key = f"dxf_read_waiting_{'_'.join(waiting)}"
+    c1, c2 = st.columns([3, 2], vertical_alignment="center")
+    c1.caption(text)
+    c2.button(label, key=key, on_click=_read_waiting, args=(waiting,))
 
 
 def _warn_duplicates(parts: list[tuple[str, DxfFile]]) -> None:
@@ -591,6 +632,8 @@ _SKIPPED = "dxf_skipped"       # names of the last drop's files that aren't used
 _FOLDERS = "dxf_folders"       # {file id: folder in the dropped ZIP}
 _PATH_READS = "dxf_path_reads"  # ZIPs / folders read from disk so far (for file ids)
 _PATH_SKIPPED = "dxf_path_skipped"  # what the last disk read skipped
+_WAITING = "dxf_waiting_models"  # big STEP files of a large drop, read when asked
+_BIG_STEP_BYTES = 5 << 20        # a STEP file this big waits, in a drop of many files
 _USED = ("dxf", "dwg", "pdf", "step", "stp")
 _SKIPPED_SHOWN = 12            # names listed in the skipped line
 
@@ -627,7 +670,10 @@ def _ingest(uploaded) -> bool:
         if attachments.is_doc(up.name):
             attachments.add_doc(up.file_id, up.name, data)
             if bom.is_step(up.name) and step_available():
-                bom.add_model(up.file_id, up.name, data)
+                if len(todo) > 5 and len(data) > _BIG_STEP_BYTES:
+                    st.session_state.setdefault(_WAITING, set()).add(up.file_id)
+                else:
+                    bom.add_model(up.file_id, up.name, data)
         else:
             files[up.file_id] = read_drawing(data, up.name)
         names.add((folder, up.name))
@@ -916,7 +962,7 @@ def _evict_all() -> None:
         attachments.remove_doc(doc_id)
     for key in (bom.MODELS, _FILES, _ITEMS, _HIDDEN, _SRC_REPORTS, _FILL_ASKED,
                 _DUPES, _SKIPPED,   # these warnings name files that are gone
-                _FOLDERS,
+                _FOLDERS, _WAITING,
                 _BEND_LINES,
                 *material_agent.AUTO_KEYS, *assemblies.KEYS):
         st.session_state.pop(key, None)
@@ -956,6 +1002,7 @@ def _render_part_config(
         if dxf.texts:
             st.caption("Piirustuksen tekstit: " + " · ".join(dxf.texts))
         attachments.render_card_docs(fid, list(doc_ids))
+        _render_waiting(list(doc_ids))
         if item is not None:
             bom.render_card_model(fid, [s for s in item.members if bom.is_source(s)])
 
