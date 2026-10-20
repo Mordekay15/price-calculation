@@ -41,7 +41,9 @@ the quantity). Work has no margin; its rates are selling prices.
 - **Bends** and **threads**: count × € each (0.20 by default). The DXF gives
   both: bend lines on a bend layer (e.g. `IV_BEND_DOWN`) and threads drawn with
   the ISO ¾-circle mark. When the card has a STEP model, the bends are the
-  model's (a flat DXF often has no bend lines).
+  model's (a flat DXF often has no bend lines), and the card's preview draws
+  the model's bend lines on the DXF (green up, orange down), lined up with it
+  even when the DXF is turned or mirrored.
 - **Fasteners** (kiinnikkeet: press nuts, screws, bolts, rivets…): count ×
   (one fastener's price + putting one in). By default 0.80 + 0.20 € in RST/HST
   and 0.05 + 0.20 € otherwise. The DXF gives the count from notes like

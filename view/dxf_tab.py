@@ -19,6 +19,7 @@ from core.items import (Choice, Source, choose, confirm_unit, group_sources,
                         looks_like_drawing, score_dxf, score_step)
 from core.quote import CleanPart
 from core.step import available as step_available
+from core.step import bends_on
 from core.sheet_cost import (
     group_products,
     is_ready,
@@ -567,6 +568,7 @@ _FILES   = "dxf_files"         # {file id: DxfFile}: every dropped DXF/DWG, in d
 _ITEMS   = "dxf_items"         # {card id: _Item}: the files on each card
 _HIDDEN  = "dxf_hidden"        # model parts removed from the cards
 _SRC_REPORTS = "dxf_source_reports"  # {source id: DxfReport}, for choosing
+_BEND_LINES = "dxf_bend_lines"  # {(card, shape, flat): STEP bend lines on the DXF}
 _INBOX   = "dxf_inbox"         # bumped to give the uploader a fresh, empty key
 _FILL_ASKED = "dxf_fill_asked" # the "same material for the others?" question is answered
 _DUPES   = "dxf_dupes"         # (names of dropped files already on a card, warn until)
@@ -666,6 +668,7 @@ def _sync() -> list[tuple[str, DxfFile]]:
 def _resync() -> None:
     """After the models changed (K factor, a model removed): unfold and
     choose again."""
+    st.session_state.pop(_BEND_LINES, None)
     st.session_state.get(_SRC_REPORTS, {}).clear()
     st.session_state.get(_REPORTS, {}).clear()
     _sync()
@@ -805,6 +808,7 @@ def _evict_all() -> None:
         attachments.remove_doc(doc_id)
     for key in (bom.MODELS, _FILES, _ITEMS, _HIDDEN, _SRC_REPORTS, _FILL_ASKED,
                 _DUPES,    # the dupes warning names cards that are gone
+                _BEND_LINES,
                 *material_agent.AUTO_KEYS):
         st.session_state.pop(key, None)
 
@@ -846,7 +850,7 @@ def _render_part_config(
         with input_col:
             size = _checked_size(fid, dxf, report, hdr[1], _unit_reason(dxf, report, item, doc_ids))
         with preview_col:
-            _render_preview(report)
+            _render_preview(report, _model_bends(fid, report, item))
         if size is None:
             return None
         with input_col:
@@ -879,16 +883,33 @@ def _render_part_config(
     }
 
 
-def _render_preview(report: DxfReport) -> None:
-    """The part as it will be cut; shapes left outside it are greyed out."""
-    preview = preview_svg(report)
+def _render_preview(report: DxfReport, bends: list | None = None) -> None:
+    """The part as it will be cut; shapes left outside it are greyed out.
+    ``bends`` are the STEP model's bend lines placed on it."""
+    preview = preview_svg(report, bends=bends)
     if preview:
         st.markdown(preview, unsafe_allow_html=True)
+    if bends:
+        st.caption("Taivutuslinjat STEP-mallista: :green[ylös] · :orange[alas]")
     if report.dropped:
         st.caption(
             f"Osan ulkopuolelta ohitettiin {len(report.dropped)} kuviota "
             "(esim. lisäkuvat tai irralliset viivat) — harmaalla esikatselussa."
         )
+
+
+def _model_bends(fid: str, report: DxfReport, item: _Item | None) -> list | None:
+    """The card's STEP bend lines on its DXF (a flat DXF often has no bend
+    lines of its own), worked out once per shape."""
+    flats = _step_flats(item)
+    if not flats or report.bends or report.outline is None:
+        return None
+    cache = st.session_state.setdefault(_BEND_LINES, {})
+    key = (fid, item.chosen, id(flats[0]))
+    if key not in cache:
+        cache[key] = bends_on(flats[0], [report.outline.points]
+                              + [h.points for h in report.holes])
+    return cache[key]
 
 
 def _unit_reason(dxf: DxfFile, report: DxfReport, item: _Item | None, doc_ids) -> str | None:

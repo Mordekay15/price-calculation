@@ -7,7 +7,7 @@ import pytest
 pytest.importorskip("OCP")
 
 from core.dxf import read_dxf                         # noqa: E402
-from core.step import flat_dxf, read_step, unfold     # noqa: E402
+from core.step import bends_on, flat_dxf, read_step, unfold  # noqa: E402
 from tests.step_models import (                       # noqa: E402
     assembly_step, bent_part, l_bracket, part_step, pin, plate)
 
@@ -200,5 +200,34 @@ def test_a_card_takes_its_bends_from_the_model_and_its_material_from_the_pdf():
     at = AppTest.from_function(page, default_timeout=60).run()
     assert not at.exception
     assert at.session_state["cards"] == [("ITM-072558_A.dxf", "S235", "2", 0, 1)]
+    svg = next(m.value for m in at.markdown if m.value.startswith("<svg"))
+    assert "#16a34a" in svg or "#ea580c" in svg          # the model's bend line
+    assert any(c.value.startswith("Taivutuslinjat STEP-mallista") for c in at.caption)
     assert any(c.value.startswith("Materiaali täytetty automaattisesti:") and "STEP" in c.value
                for c in at.caption)
+
+
+def test_the_models_bend_lines_are_placed_on_a_turned_mirrored_dxf():
+    from core.step import Bend, FlatPart
+
+    # An L-shaped blank with one bend across its long arm (no symmetry).
+    outline = [(0, 0), (100, 0), (100, 30), (40, 30), (40, 60), (0, 60)]
+    bend = Bend(90.0, 1.0, True, ((70.0, 0.0), (70.0, 30.0)))
+    flat = FlatPart(True, 0.0, (100, 60, 2), 2.0, outline, [], [bend])
+
+    def dxf(p):                      # the DXF: mirrored, turned 90° and moved
+        x, y = -p[0], p[1]
+        return -y + 500.0, x + 200.0
+
+    placed = bends_on(flat, [[dxf(p) for p in outline]])
+    assert placed is not None and len(placed) == 1
+    (a, b), up = placed[0]
+    assert {tuple(round(c, 3) for c in a), tuple(round(c, 3) for c in b)} == {
+        tuple(round(c, 3) for c in dxf(p)) for p in bend.line}
+    assert up is False               # seen from the other side
+    assert bends_on(flat, [[(0, 0), (300, 0), (300, 10), (0, 10)]]) is None
+    # The real unfolding on its own flat DXF: the line lands where it was.
+    real = unfold(l_bracket())
+    (line, _), = bends_on(real, [real.outline, *real.holes])
+    assert {tuple(round(c, 3) for c in p) for p in line} == {
+        tuple(round(c, 3) for c in p) for p in real.bends[0].line}

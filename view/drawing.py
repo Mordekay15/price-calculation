@@ -269,11 +269,16 @@ def _ring_path(points, sh: float) -> str:
     return ("M " + " L ".join(f"{x:.1f} {sh - y:.1f}" for x, y in points) + " Z")
 
 
-def preview_svg(report: DxfReport, px: int = 260) -> str:
+BEND_UP_COLOR, BEND_DOWN_COLOR = "#16a34a", "#ea580c"
+
+
+def preview_svg(report: DxfReport, px: int = 260, bends: list | None = None) -> str:
     """Small preview of the part (drawing Y flipped).
 
     The part is filled (holes cut out), reference lines are dashed, open lines
     inside the part are red, and geometry dropped outside the part is grey.
+    ``bends`` are bend lines from elsewhere (the STEP model), ``[(line, up)]``:
+    dashed, green up and orange down.
     """
     rings = ([report.outline.points] if report.outline else []) + [h.points for h in report.holes]
     groups = (rings, report.reference_lines, report.open_lines, report.dropped)
@@ -316,5 +321,12 @@ def preview_svg(report: DxfReport, px: int = 260) -> str:
     if report.open_lines:
         out.append(f'<path d="{d(report.open_lines, False)}" fill="none" stroke="#dc2626" '
                    f'stroke-width="{stroke * 1.5:.2f}"/>')
+    for up in (True, False):
+        lines = [line for line, u in bends or [] if u == up]
+        if lines:
+            out.append(f'<path d="{d(lines, False)}" fill="none" '
+                       f'stroke="{BEND_UP_COLOR if up else BEND_DOWN_COLOR}" '
+                       f'stroke-width="{stroke * 2.2:.2f}" '
+                       f'stroke-dasharray="{stroke * 6:.1f} {stroke * 3:.1f}"/>')
     out.append("</svg>")
     return "".join(out)

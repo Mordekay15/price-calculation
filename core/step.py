@@ -613,6 +613,69 @@ def _dedupe(points):
     return out
 
 
+# ── Bends on another drawing of the flat ──────────────────────────────────────
+
+_FIT_TOL = 0.02          # mean miss allowed, as a share of the part's size
+
+
+def bends_on(flat: FlatPart, rings: list[list[tuple[float, float]]]
+             ) -> list[tuple[tuple, bool]] | None:
+    """The flat's bend lines placed on a DXF of the same part (``rings``: its
+    outline and holes, in mm), as ``[(line, up)]``, or None when the shapes
+    don't match. The DXF may be the flat turned in steps of 90°, mirrored (seen
+    from the other side: up and down swap) and moved."""
+    if not flat.bends or not flat.outline or not rings:
+        return None
+    tx = [p[0] for ring in rings for p in ring]
+    ty = [p[1] for ring in rings for p in ring]
+    t_min, t_size = (min(tx), min(ty)), (max(tx) - min(tx), max(ty) - min(ty))
+    size = max(t_size)
+    # Points along the DXF's edges, so a miss measures the distance to them.
+    target = _thin([p for ring in rings for p in _along(ring, size / 100)], 800)
+    source = _thin([p for ring in (flat.outline, *flat.holes) for p in ring])
+    best = None
+    for turn in range(4):
+        for mirror in (False, True):
+            def move(p, turn=turn, mirror=mirror):
+                x, y = (-p[0], p[1]) if mirror else p
+                for _ in range(turn):
+                    x, y = -y, x
+                return x, y
+            moved = [move(p) for p in source]
+            mx, my = min(x for x, _ in moved), min(y for _, y in moved)
+            w = max(x for x, _ in moved) - mx
+            h = max(y for _, y in moved) - my
+            if abs(w - t_size[0]) > _FIT_TOL * size or abs(h - t_size[1]) > _FIT_TOL * size:
+                continue
+            dx, dy = t_min[0] - mx, t_min[1] - my
+            miss = sum(min(math.hypot(x + dx - u, y + dy - v) for u, v in target)
+                       for x, y in moved) / len(moved)
+            if best is None or miss < best[0]:
+                best = (miss, move, mirror, dx, dy)
+    if best is None or best[0] > _FIT_TOL * size:
+        return None
+    _, move, mirror, dx, dy = best
+
+    def place(p):
+        x, y = move(p)
+        return x + dx, y + dy
+
+    return [((place(b.line[0]), place(b.line[1])), b.up != mirror) for b in flat.bends]
+
+
+def _along(ring: list, spacing: float) -> list:
+    out = []
+    for (x0, y0), (x1, y1) in zip(ring, ring[1:] + ring[:1]):
+        n = max(1, int(math.hypot(x1 - x0, y1 - y0) / spacing))
+        out += [(x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n) for i in range(n)]
+    return out
+
+
+def _thin(points: list, n: int = 240) -> list:
+    step = max(1, len(points) // n)
+    return points[::step]
+
+
 # ── Output ────────────────────────────────────────────────────────────────────
 
 BEND_UP, BEND_DOWN = "BEND_UP", "BEND_DOWN"
