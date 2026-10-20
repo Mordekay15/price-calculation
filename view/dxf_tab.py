@@ -15,8 +15,8 @@ from core.pricing import build_lookup, get_sizes_for_material, parse_thickness_m
 from core.dwg import read_drawing
 from core.dxf import DxfFile, DxfReport, fasteners_from_texts
 from core.geometry import net_area
-from core.items import (Choice, Source, choose, group_sources, looks_like_drawing,
-                        score_dxf, score_step)
+from core.items import (Choice, Source, choose, confirm_unit, group_sources,
+                        looks_like_drawing, score_dxf, score_step)
 from core.quote import CleanPart
 from core.step import available as step_available
 from core.sheet_cost import (
@@ -615,6 +615,7 @@ class _Item:
     chosen: str
     scores: dict[str, Choice]
     names: dict[str, str]
+    blank: tuple[float, float] | None = None   # the STEP blank's size, mm
 
 
 def _sync() -> list[tuple[str, DxfFile]]:
@@ -654,7 +655,7 @@ def _sync() -> list[tuple[str, DxfFile]]:
         if cid in old and old[cid].chosen != chosen:
             ss.get(_REPORTS, {}).pop(cid, None)
         store[cid] = shape(chosen)
-        items[cid] = _Item(members, chosen, scores, {m: shape(m).name for m in members})
+        items[cid] = _Item(members, chosen, scores, {m: shape(m).name for m in members}, blank)
         if models and "qty" not in config.get(cid, {}):
             config.setdefault(cid, {"material": None, "thickness": None})["qty"] = max(
                 part.qty for _, part, _ in models)
@@ -803,7 +804,7 @@ def _render_part_config(
         preview_col, input_col = st.columns([1, 3])
         report = _part(fid, dxf)
         with input_col:
-            size = _checked_size(fid, dxf, report, hdr[1])
+            size = _checked_size(fid, dxf, report, hdr[1], _unit_reason(dxf, report, item, doc_ids))
         with preview_col:
             _render_preview(report)
         if size is None:
@@ -850,9 +851,21 @@ def _render_preview(report: DxfReport) -> None:
         )
 
 
-def _checked_size(fid: str, dxf: DxfFile, report: DxfReport, badge) -> tuple | None:
+def _unit_reason(dxf: DxfFile, report: DxfReport, item: _Item | None, doc_ids) -> str | None:
+    """Why the guessed unit of a card's DXF is right: its STEP model or PDF
+    drawing agrees with the size (see ``core.items.confirm_unit``)."""
+    if not dxf.unit_guessed or report.outline is None:
+        return None
+    return confirm_unit((report.outline.width_mm, report.outline.height_mm),
+                        item.blank if item is not None else None,
+                        [attachments.text(d) for d in doc_ids])
+
+
+def _checked_size(fid: str, dxf: DxfFile, report: DxfReport, badge,
+                  confirmed: str | None = None) -> tuple | None:
     """The part's ``(width, height)`` in mm, or None (with the reason shown)
-    while it can't be priced. ``badge`` is the card header's status slot."""
+    while it can't be priced. ``badge`` is the card header's status slot;
+    ``confirmed`` why a guessed unit is right (see ``core.items.confirm_unit``)."""
     if report.problems:
         badge.markdown(":red[ei hinnoiteltavissa]")
         st.error(
@@ -864,10 +877,14 @@ def _checked_size(fid: str, dxf: DxfFile, report: DxfReport, badge) -> tuple | N
     width = round(report.outline.width_mm, 1)
     height = round(report.outline.height_mm, 1)
 
-    # No unit in the file: show the size the guess gives and price only once
-    # the user confirms it. The warning goes above the checkbox and only
-    # while it is unticked.
-    if dxf.unit_guessed:
+    # No unit in the file: the part's other files (the STEP model, the PDF
+    # drawing's dimensions) confirm the guess; else show the size the guess
+    # gives and price only once the user confirms it. The warning goes above
+    # the checkbox and only while it is unticked.
+    if dxf.unit_guessed and confirmed:
+        st.caption(f"Mittayksikkö puuttuu tiedostosta; {report.unit_label} vahvistettu: "
+                   f"{confirmed}.")
+    elif dxf.unit_guessed:
         note = st.empty()
         if not st.checkbox(f"Koko {width:g} × {height:g} mm on oikein",
                            key=f"dxf_unit_ok_{fid}"):

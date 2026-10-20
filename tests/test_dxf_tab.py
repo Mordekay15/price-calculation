@@ -455,3 +455,40 @@ def test_a_parts_numbered_files_and_drawing_make_one_card():
     assert sum("3AUA0000098622.pdf" in e.label for e in at.expander) == 1
     files = next(c.value for c in at.caption if c.value.startswith("Tiedostot:"))
     assert "✓ 3aua0000098622_1.dxf" in files and "3aua0000098622_2.dxf" in files
+
+
+def test_a_unitless_dxf_is_confirmed_by_its_pdf_drawing():
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        import io
+        from types import SimpleNamespace
+
+        import ezdxf
+        import streamlit as st
+        from reportlab.pdfgen import canvas
+
+        from tests.conftest import dxf_bytes
+        from view.dxf_tab import _STORE, _ingest, _render_part_cards
+
+        doc = ezdxf.new()
+        doc.header["$INSUNITS"] = 0
+        doc.modelspace().add_lwpolyline([(0, 0), (516.4, 0), (516.4, 393.3), (0, 393.3)],
+                                        close=True)
+        data = dxf_bytes(doc)
+        buf = io.BytesIO()
+        pdf = canvas.Canvas(buf)
+        pdf.drawString(72, 720, "3AUA0000098622 (516.4)")
+        pdf.save()
+        if not st.session_state.get(_STORE):
+            _ingest([SimpleNamespace(file_id="f", name="3aua0000098622_2.dxf",
+                                     getvalue=lambda: data),
+                     SimpleNamespace(file_id="d", name="3AUA0000098622.pdf",
+                                     getvalue=lambda: buf.getvalue())])
+        _render_part_cards(list(st.session_state[_STORE].items()), ["S235"],
+                           {("2", "S235 | 1000x2000"): 900.0}, False)
+
+    at = AppTest.from_function(page, default_timeout=30).run()
+    assert not at.exception
+    assert "dxf_unit_ok_f" not in [c.key for c in at.checkbox]
+    assert any("vahvistettu: PDF-piirustuksen mitta 516.4 mm" in c.value for c in at.caption)

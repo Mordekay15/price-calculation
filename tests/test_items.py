@@ -2,7 +2,8 @@
 
 from types import SimpleNamespace
 
-from core.items import Choice, Source, choose, group_sources, score_dxf, score_step
+from core.items import (Choice, Source, choose, confirm_unit, group_sources, score_dxf,
+                        score_step)
 
 
 def _report(w, h, dropped=0, problems=()):
@@ -58,3 +59,15 @@ def test_the_users_choice_wins_while_valid():
     assert choose(scores, "bad") == "a"
     assert choose({"bad": scores["bad"]}) is None
     assert not score_dxf(_report(10, 10, problems=["x"]), False, [], None).valid
+
+
+def test_a_guessed_unit_is_confirmed_by_the_step_blank_or_the_pdf_dimensions():
+    assert confirm_unit((516.4, 393.3), (393.5, 516.0)) == "vastaa STEP-mallin aihiota"
+    # Kate's 3AUA drawing: "(516.4)" and, rotated, ")3.393(" on the flat view.
+    texts = ["Weight kg 2.37\n(516.4)\n)3.393(\nSHEET 1,5MM"]
+    assert confirm_unit((516.43, 393.28), None, texts) == "PDF-piirustuksen mitta 516.43 × 393.28 mm"
+    assert confirm_unit((516.4, 200.0), None, ["516,4"]) == "PDF-piirustuksen mitta 516.4 mm"
+    # Inches read as mm (51.64 × 39.33), a mismatching blank, no files: not confirmed.
+    assert confirm_unit((51.64, 39.33), (393.3, 516.4), texts) is None
+    assert confirm_unit((5.0, 1.5), None, ["5 1,5"]) is None        # too small to tell
+    assert confirm_unit((516.4, 393.3)) is None

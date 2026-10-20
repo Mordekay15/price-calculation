@@ -17,6 +17,7 @@ one item, and the best of them is chosen as the shape to price.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from core.linking import base_key, link_by_text
@@ -136,6 +137,33 @@ def looks_like_drawing(report) -> bool:
         return True
     w, h = sorted((report.outline.width_mm, report.outline.height_mm))
     return _is_paper(w, h) or len(report.dropped) >= 3
+
+
+_NUMBER = re.compile(r"(?<![\d.,])\d{2,5}(?:[.,]\d{1,2})?(?![\d])")
+_MIN_DIM = 10.0           # smaller sizes match stray numbers too easily
+
+
+def confirm_unit(size_mm: tuple[float, float], blank_mm: tuple[float, float] | None = None,
+                 pdf_texts: list[str] = ()) -> str | None:
+    """Why a DXF's guessed unit is right, or None: its size (in mm, by the
+    guess) is the STEP model's unfolded blank, or a dimension written on the
+    part's PDF drawing. Returns the reason, in Finnish, for the card."""
+    w, h = size_mm
+    if blank_mm is not None:
+        bw, bh = sorted(blank_mm)
+        sw, sh = sorted(size_mm)
+        if abs(sw - bw) <= _SIZE_TOL * bw and abs(sh - bh) <= _SIZE_TOL * bh:
+            return "vastaa STEP-mallin aihiota"
+    numbers = set()
+    for text in pdf_texts:
+        # Rotated text can come out reversed ("(393.3)" as ")3.393(").
+        for t in (text, text[::-1]):
+            numbers.update(float(n.replace(",", ".")) for n in _NUMBER.findall(t))
+    found = [d for d in (w, h) if d >= _MIN_DIM
+             and any(abs(d - n) <= max(0.15, 0.001 * d) for n in numbers)]
+    if found:
+        return "PDF-piirustuksen mitta " + " × ".join(f"{d:g}" for d in found) + " mm"
+    return None
 
 
 def _is_paper(w: float, h: float) -> bool:

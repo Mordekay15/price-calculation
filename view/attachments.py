@@ -78,6 +78,12 @@ def links(parts: dict[str, str | list[str]]) -> dict[str, list[str]]:
     return out
 
 
+def text(doc_id: str) -> str:
+    """A linked PDF's text ("" for other files)."""
+    doc = docs().get(doc_id)
+    return _text(doc_id, doc) if doc is not None and doc["kind"] == "pdf" else ""
+
+
 def _text(doc_id: str, doc: dict) -> str:
     """A PDF's text (first pages), read once and shared with the material
     proposals."""

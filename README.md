@@ -419,9 +419,11 @@ the price all use the same result.
 - **Units** come from the `$INSUNITS` header. If that is missing, a
   `Un="mm"` text label is used. If that is missing too, a drawing that is
   exactly an ISO A0–A4 sheet is taken to be in mm. Otherwise the unit is
-  guessed (mm, or inch if `$MEASUREMENT` says imperial): the card shows the
-  size this gives, and the part is priced only after the user ticks that the
-  size is right.
+  guessed (mm, or inch if `$MEASUREMENT` says imperial). The guess is
+  confirmed by the part's other files: the STEP model's unfolded blank is the
+  same size (within 3 %), or its PDF drawing writes the width or height as a
+  dimension (e.g. `(516.4)`). Otherwise the card shows the size the guess
+  gives, and the part is priced only after the user ticks that it is right.
 - **Layers**: layers named like drawing furniture or reference geometry (frame,
   border, title, info, text, dim, bend, centre, …) are left out.
 - **The part** is the largest closed outline. Outlines directly inside it are
