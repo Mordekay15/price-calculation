@@ -13,7 +13,7 @@ import streamlit as st
 
 from core import step
 from core.dxf import read_dxf
-from core.linking import base_key, part_key
+from core.linking import base_key
 
 MODELS = "dxf_step_models"
 K_FACTOR = "dxf_step_k"
