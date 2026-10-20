@@ -184,3 +184,33 @@ def test_fasteners_are_counted_and_priced_as_count_times_part_plus_insert():
     inp = WorkInputs(fasteners=9, eur_per_fastener=0.3, eur_per_insert=0.2)
     cost = work_cost(inp, 1, RATES)
     assert cost.fasteners == pytest.approx(4.5) and phases(inp) == 2
+
+
+def test_a_missing_pdf_package_hides_its_download_not_the_page(tmp_path, monkeypatch):
+    # Updated code run before `pip install -r requirements.txt`: no reportlab.
+    import builtins
+    import json
+    from streamlit.testing.v1 import AppTest
+    from core import suppliers
+
+    real_import = builtins.__import__
+
+    def no_reportlab(name, *args, **kwargs):
+        if name.split(".")[0] == "reportlab":
+            raise ModuleNotFoundError(f"No module named '{name}'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    rows = [{"Paksuus (mm)": "2", "S235 | 1000x2000": 900.0}]
+    json.dump({"data": {"levyt": rows}, "source_file": "t.pdf", "updated_at": "x"},
+              open(tmp_path / suppliers.SUPPLIERS[0].path, "w"))
+    monkeypatch.setattr(builtins, "__import__", no_reportlab)
+    at = AppTest.from_file("../app.py", default_timeout=60).run()
+    pid = at.session_state["calc_products"][0]["id"]
+    at.selectbox(key=f"mat_{pid}").select("S235").run()
+    at.selectbox(key=f"th_{pid}").select("2").run()
+    for key, value in (("w", 300.0), ("h", 200.0), ("q", 10)):
+        at.number_input(key=f"{key}_{pid}").set_value(value).run()
+    assert not at.exception
+    assert any("10 kpl, €/kpl" in d.value.columns for d in at.dataframe)
+    assert any("Asenna reportlab" in c.value for c in at.caption)

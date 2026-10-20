@@ -152,16 +152,29 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
     c1, c2, c3 = st.columns([2, 2, 3])
     show_material = c3.checkbox("Näytä materiaali PDF:ssä", value=True,
                                 key=f"quote_pdf_mat_{key}")
-    c1.download_button("Lataa tarjous-PDF", type="primary", key=f"quote_pdf_{key}",
-                       data=quote_pdf(info, lines, sizes, quote_totals,
-                                      show_material=show_material),
-                       file_name=f"{stem}.pdf", mime="application/pdf")
-    c2.download_button("Excel-vienti", key=f"quote_xlsx_{key}",
-                       data=quote_xlsx(info, lines, sizes), file_name=f"{stem}.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument."
-                            "spreadsheetml.sheet")
+    pdf = _file(lambda: quote_pdf(info, lines, sizes, quote_totals,
+                                  show_material=show_material), "reportlab", c1)
+    if pdf is not None:
+        c1.download_button("Lataa tarjous-PDF", type="primary", key=f"quote_pdf_{key}",
+                           data=pdf, file_name=f"{stem}.pdf", mime="application/pdf")
+    xlsx = _file(lambda: quote_xlsx(info, lines, sizes), "openpyxl", c2)
+    if xlsx is not None:
+        c2.download_button("Excel-vienti", key=f"quote_xlsx_{key}",
+                           data=xlsx, file_name=f"{stem}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument."
+                                "spreadsheetml.sheet")
     if clean_parts:
         _render_clean_dxfs(clean_parts, key)
+
+
+def _file(make, package: str, slot) -> bytes | None:
+    """A download's bytes; None, with a note in ``slot``, when the package
+    that makes it isn't installed (the prices still show)."""
+    try:
+        return make()
+    except ModuleNotFoundError:
+        slot.caption(f":orange[Asenna {package}: `pip install -r requirements.txt`]")
+        return None
 
 
 def _render_clean_dxfs(parts: list[CleanPart], key: str) -> None:
