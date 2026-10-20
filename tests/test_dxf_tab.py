@@ -522,3 +522,32 @@ def test_empty_cards_get_their_drawings_material_once_and_conflicts_wait():
     at.session_state["filled"] = ()       # the user cleared card a: it stays clear
     at.run()
     assert at.session_state["applied"] == [("a", "S355MC", "3")]
+
+
+def test_files_the_app_cant_use_are_skipped_and_named():
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        from types import SimpleNamespace
+
+        import ezdxf
+        import streamlit as st
+
+        from tests.conftest import dxf_bytes
+        from view.dxf_tab import _STORE, _ingest
+
+        doc = ezdxf.new()
+        doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 50), (0, 50)], close=True)
+        data = dxf_bytes(doc)
+        if "done" not in st.session_state:
+            st.session_state["done"] = True
+            _ingest([SimpleNamespace(file_id=i, name=n, getvalue=lambda: data) for i, n in
+                     [("a", "3aua0000098622.prt.1"), ("b", "a4_v_abb_form.frm.1"),
+                      ("c", "3aua0000098622_2.dxf")]])
+        st.session_state["shown"] = list(st.session_state.get(_STORE, {}))
+        st.session_state["skipped"] = st.session_state.get("dxf_skipped")
+
+    at = AppTest.from_function(page).run()
+    assert not at.exception
+    assert at.session_state["shown"] == ["c"]
+    assert at.session_state["skipped"] == ["3aua0000098622.prt.1", "a4_v_abb_form.frm.1"]

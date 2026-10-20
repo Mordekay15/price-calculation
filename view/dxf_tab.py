@@ -178,18 +178,22 @@ def _render_drop_area() -> list[tuple[str, DxfFile]]:
     st.html(_DROPZONE_CSS)
     uploaded = st.file_uploader(
         "Lataa DXF-, DWG-, PDF- tai STEP-tiedostot",
-        type=["dxf", "dwg", "pdf", "step", "stp"],
         accept_multiple_files=True,
         key=f"dxf_uploader_{st.session_state.get(_INBOX, 0)}",
         help="Vedä tiedostot alueelle tai valitse ne koneelta. Voit ladata useita "
              "tiedostoja kerralla. Saman osanumeron tiedostot (DXF, DWG, STEP, PDF) "
              "kootaan yhdelle osakortille, ja paras muoto valitaan niistä "
              "automaattisesti; kortin Poista-painike poistaa osan. DWG-tiedosto "
-             "muunnetaan ensin DXF:ksi (ODA File Converter tai LibreDWG).",
+             "muunnetaan ensin DXF:ksi (ODA File Converter tai LibreDWG). Muut "
+             "tiedostot (esim. Creon .prt- ja .drw-tiedostot) ohitetaan.",
     )
     if _ingest(uploaded):
         st.rerun()  # redraw with the drop area empty
     parts = _sync()
+    skipped = st.session_state.get(_SKIPPED)
+    if skipped:
+        st.caption(f"Ohitettiin {len(skipped)} tiedostoa, joita ei tarvita "
+                   f"hinnoitteluun: {', '.join(skipped)}")
     _warn_duplicates(parts)
     labels = {fid: f"#{i + 1} · {dxf.name}" for i, (fid, dxf) in enumerate(parts)}
     attachments.render_doc_list(_card_names(), labels)
@@ -573,6 +577,8 @@ _INBOX   = "dxf_inbox"         # bumped to give the uploader a fresh, empty key
 _FILL_ASKED = "dxf_fill_asked" # the "same material for the others?" question is answered
 _DUPES   = "dxf_dupes"         # (names of dropped files already on a card, warn until)
 _DUPE_WARNING_S = 15           # how long that warning stays
+_SKIPPED = "dxf_skipped"       # names of the last drop's files that aren't used
+_USED = ("dxf", "dwg", "pdf", "step", "stp")
 
 
 def _ingest(uploaded) -> bool:
@@ -585,8 +591,11 @@ def _ingest(uploaded) -> bool:
     docs = attachments.docs()
     dropped = [up for up in uploaded or [] if up.file_id not in files and up.file_id not in docs]
     names = {dxf.name for dxf in files.values()} | {d["name"] for d in docs.values()}
-    dupes = []
+    dupes, skipped = [], []
     for up in dropped:
+        if up.name.rsplit(".", 1)[-1].lower() not in _USED:
+            skipped.append(up.name)     # e.g. Creo's part.prt.1, part.drw.1
+            continue
         if up.name in names:
             dupes.append(up.name)
             continue
@@ -601,7 +610,8 @@ def _ingest(uploaded) -> bool:
         _sync()
         st.session_state[_INBOX] = st.session_state.get(_INBOX, 0) + 1
         st.session_state[_DUPES] = (dupes, time.time() + _DUPE_WARNING_S)
-    if len(dropped) > len(dupes):
+        st.session_state[_SKIPPED] = skipped
+    if len(dropped) > len(dupes) + len(skipped):
         st.session_state.pop(_FILL_ASKED, None)  # new empty parts: ask again
     return bool(dropped)
 
@@ -807,7 +817,7 @@ def _evict_all() -> None:
     for doc_id in list(attachments.docs()):
         attachments.remove_doc(doc_id)
     for key in (bom.MODELS, _FILES, _ITEMS, _HIDDEN, _SRC_REPORTS, _FILL_ASKED,
-                _DUPES,    # the dupes warning names cards that are gone
+                _DUPES, _SKIPPED,   # these warnings name files that are gone
                 _BEND_LINES,
                 *material_agent.AUTO_KEYS):
         st.session_state.pop(key, None)
