@@ -64,6 +64,10 @@ delivery and notes. It also holds the **Eräkoot** (batch sizes, default
 part at every batch size and shows the quote's total at each one. It also
 shows **Laskenta-aika**, the time since the first part could be priced.
 
+- The table's **Määrä** shows the pieces at each batch size (`1 · 5 · 10`).
+  An assembly's `└` rows are what each part, bought part and the assembly
+  work adds to one assembly (kpl / kokoonpano × €/kpl), so they add up to the
+  assembly's €/kpl; their Määrä is kpl / kokoonpano × the batch size.
 - Parts are nested once, at the quantities on their cards. For another batch
   size `q`, a group needs `ceil(sheets × kg(q) / kg)` whole sheets (at least
   one), each costing as much as in the nesting. The material is shared by piece
@@ -204,6 +208,8 @@ parts, work and contents.
   the STEP file removes its assembly.
 - **Apart from the loose parts.** **Osat** lists only the parts in no
   assembly. Each assembly below it shows its own cards, paged the same way.
+  Their **Määrä** is not typed: it is kpl / kokoonpano × the largest batch
+  size, the quantity they are nested at.
 - **No cost twice.** A card in an assembly has no fasteners or welding: the
   assembly's bought parts (PEM nuts and studs too, with their pressing as
   Asennus) and its welding price them. The card keeps the part's own work

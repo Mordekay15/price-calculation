@@ -141,11 +141,18 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
                          + [f"{b.name} × {b.qty}" for b in a.bought])
         lines.append(QuoteLine(a.name, prices=tuple(assembly_prices(a, units, sizes, rates)),
                                parts=contents or ("—",)))
+        prices = lines[-1].prices
+        # Each row is what it adds to one assembly (kpl/kok. × €/kpl), so the
+        # rows add up to the assembly's €/kpl; its quantity is per batch.
         members.append(
-            [{"name": f"\u2003└ {names.get(pid, '?')} × {n}",
-              "units": units.get(pid, [None] * len(sizes))} for pid, n in a.members]
-            + [{"name": f"\u2003└ {b.name} × {b.qty} (ostettu)",
-                "units": [b.unit] * len(sizes)} for b in a.bought])
+            [{"name": f"\u2003└ {names.get(pid, '?')} × {n}", "per": n,
+              "units": [None if u is None else u * n
+                        for u in units.get(pid, [None] * len(sizes))]}
+             for pid, n in a.members]
+            + [{"name": f"\u2003└ {b.name} × {b.qty} (ostettu)", "per": b.qty,
+                "units": [b.unit * b.qty] * len(sizes)} for b in a.bought]
+            + ([{"name": "\u2003└ Kokoonpanotyö", "per": None,
+                 "units": [p.work for p in prices]}] if any(p.work for p in prices) else []))
     quote_totals = [None if any(line.prices[i].total is None for line in lines)
                     else sum(line.prices[i].total for line in lines)
                     for i in range(len(sizes))]
@@ -164,19 +171,27 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
     if started:
         cols[-1].metric("Laskenta-aika", f"{(time.time() - started) / 60:.0f} min",
                         help="Aika siitä, kun ensimmäinen osa oli hinnoiteltavissa.")
+    def qty(per: int | None) -> str:
+        return "" if per is None else " · ".join(str(q * per) for q in sizes)
+
     rows = []
     sub = iter(members)
     for line in lines:
-        row = {lead: ("🧩 " if line.is_assembly else "") + line.name,
+        row = {lead: ("🧩 " if line.is_assembly else "") + line.name, "Määrä": qty(1),
                "Materiaali": line.material, "Paksuus": line.thickness}
         for q, p in zip(sizes, line.prices):
             row[f"{q} kpl, €/kpl"] = None if p.unit is None else round(p.unit, 2)
         rows.append(row)
         for m in (next(sub) if line.is_assembly else []):
-            rows.append({lead: m["name"], "Materiaali": "", "Paksuus": "",
+            rows.append({lead: m["name"], "Määrä": qty(m["per"]), "Materiaali": "",
+                         "Paksuus": "",
                          **{f"{q} kpl, €/kpl": None if u is None else round(u, 2)
                             for q, u in zip(sizes, m["units"])}})
     st.dataframe(rows, width="stretch", hide_index=True)
+    if assemblies:
+        st.caption("🧩 Kokoonpanon └-rivit ovat sen osuuksia yhdestä kokoonpanosta "
+                   "(kpl / kokoonpano × €/kpl), ja niiden summa on kokoonpanon kpl-hinta. "
+                   "Määrä on kappaleet kullakin eräkoolla.")
 
     info = current_info()
     stem = f"tarjous_{info.number or 'uusi'}".replace(" ", "_")

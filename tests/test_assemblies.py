@@ -90,4 +90,10 @@ def test_the_quote_table_shows_an_assembly_line_with_its_parts():
     rows = at.dataframe[0].value
     assert list(rows["Osa"]) == ["c.dxf", "🧩 Runko", " └ a.dxf × 1",
                                  " └ b.dxf × 2", " └ Tappi × 6 (ostettu)"]
-    assert all(v != "" for v in rows.iloc[1, 3:])                   # the assembly is priced
+    assert all(v != "" for v in rows.iloc[1, 4:])                   # the assembly is priced
+    # Quantities per batch, and the rows add up to the assembly's €/kpl.
+    assert list(rows["Määrä"])[1:] == ["1 · 5 · 10", "1 · 5 · 10", "2 · 10 · 20",
+                                       "6 · 30 · 60"]
+    for col in [c for c in rows.columns if c.endswith("€/kpl")]:
+        assert rows[col][1] == pytest.approx(sum(rows[col][2:]), abs=0.02)
+    assert rows[rows.columns[-1]][4] == pytest.approx(3.0)            # 6 × 0.5 €

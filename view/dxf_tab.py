@@ -50,7 +50,7 @@ from view.common import (
 )
 from view.drawing import draw_sparrow_layout, preview_svg
 from view import assemblies, attachments, bom, material_agent
-from view.quote import render_batch_prices
+from view.quote import current_sizes, render_batch_prices
 from view.sheet_usage import render_group
 from view.work import piece_size, render_work_inputs, work_costs
 from view.sparrow_progress import SparrowProgress, run_with_progress
@@ -348,7 +348,10 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
     attachments.render_checked_count([fid for fid, _ in parts])
     card_of = _card_of()
     index = {fid: idx for idx, (fid, _) in enumerate(parts)}
-    in_assembly = {cid for cids in assemblies.cards(card_of).values() for cid in cids}
+    per_assembly: dict[str, int] = {}     # card id: kpl in one of each of its assemblies
+    for cids in assemblies.cards(card_of).values():
+        for cid, n in cids.items():
+            per_assembly[cid] = per_assembly.get(cid, 0) + n
     doc_links = _doc_links()
     products: dict[int, dict | None] = {}
     fill = _FillOffer()
@@ -363,15 +366,15 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
                 products[idx] = _render_part_config(fid, part, idx, materials, lookup,
                                                     per_part_angles, fill,
                                                     doc_links.get(fid, []),
-                                                    fid in in_assembly)
+                                                    per_assembly.get(fid, 0))
             else:
                 with headless():    # priced as drawn, not drawn
                     products[idx] = _render_part_config(fid, part, idx, materials, lookup,
                                                         per_part_angles, None,
                                                         doc_links.get(fid, []),
-                                                        fid in in_assembly)
+                                                        per_assembly.get(fid, 0))
 
-    loose = [idx for idx, (fid, _) in enumerate(parts) if fid not in in_assembly]
+    loose = [idx for idx, (fid, _) in enumerate(parts) if fid not in per_assembly]
     if not loose:
         st.caption("Kaikki osat ovat kokoonpanoissa.")
     draw(loose, _PAGE)
@@ -1065,14 +1068,16 @@ def _render_part_config(
     per_part_angles: bool = False,
     fill: "_FillOffer | None" = None,
     doc_ids: list[str] = (),
-    in_assembly: bool = False,
+    per_assembly: int = 0,
 ) -> dict | None:
     """Draw one part's card, preview left and inputs right; return its product
     dict, or None if not priceable. Its ``angles`` are None (set later from the
     run row) unless ``per_part_angles``. ``fill`` carries the "same material?"
     question from card to card (see ``_offer_same_material``). ``doc_ids``
-    are the supporting files linked to it (see ``view.attachments``). A card
-    ``in_assembly`` leaves its fasteners and welding to the assembly."""
+    are the supporting files linked to it (see ``view.attachments``). A card in
+    an assembly (``per_assembly`` kpl in one) takes its quantity from the batch
+    sizes and leaves its fasteners and welding to the assembly."""
+    in_assembly = per_assembly > 0
     with st.container(border=True):
         hdr = st.columns([5, 2, 2, 1], vertical_alignment="center")
         hdr[0].markdown(f"**#{idx + 1}** · {dxf.name}")
@@ -1105,7 +1110,7 @@ def _render_part_config(
         if size is None:
             return None
         with input_col:
-            material, thickness, qty = _render_part_inputs(fid, materials, lookup)
+            material, thickness, qty = _render_part_inputs(fid, materials, lookup, per_assembly)
             if fill is not None:
                 _offer_same_material(fid, idx, material, thickness, fill)
             angles = _render_nesting_angles(fid) if per_part_angles else None
@@ -1230,8 +1235,11 @@ def _material_keys(fid: str, cfg: dict) -> tuple[str, str, str]:
             f"dxf_th_{fid}{suffix}_disabled")
 
 
-def _render_part_inputs(fid: str, materials: list[str], lookup: dict) -> tuple:
+def _render_part_inputs(fid: str, materials: list[str], lookup: dict,
+                        per_assembly: int = 0) -> tuple:
     """Material, thickness and quantity; returns ``(material, thickness, qty)``.
+    A part in an assembly (``per_assembly`` kpl in one) is nested for the
+    largest batch of assemblies, so its quantity is not typed.
 
     Material + thickness are persisted per file: the selectboxes are seeded
     from the stored choice, then the current choice is written back.
@@ -1249,6 +1257,13 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict) -> tuple:
     note = material_agent.auto_note(fid, material, thickness)
     if note:
         st.caption(note)
+    if per_assembly:
+        batch = max(current_sizes())
+        qty = per_assembly * batch
+        st.number_input("Määrä (kpl)", value=qty, disabled=True,
+                        help=f"{per_assembly} kpl / kokoonpano × suurin eräkoko {batch}. "
+                             "Eräkoot muutetaan sivun yläosan Tarjous-kohdasta.")
+        return material, thickness, qty
     qty = int(st.number_input("Määrä (kpl)", min_value=1, value=int(cfg.get("qty", 1)),
                               step=1,
                               key=f"dxf_q_{fid}"))
