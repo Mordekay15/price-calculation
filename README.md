@@ -68,6 +68,10 @@ shows **Laskenta-aika**, the time since the first part could be priced.
   An assembly's `└` rows are what each part, bought part and the assembly
   work adds to one assembly (kpl / kokoonpano × €/kpl), so they add up to the
   assembly's €/kpl; their Määrä is kpl / kokoonpano × the batch size.
+- **Näytä laskennan erittely** under the table picks one batch size and
+  shows each part's pieces in the batch, sheets, material and every work cost
+  €/kpl (the batch costs € and shared per piece), and each assembly's steps:
+  its parts, bought parts, assembly work, welding, other, €/kpl and total.
 - Parts are nested once, at the quantities on their cards. For another batch
   size `q`, a group needs `ceil(sheets × kg(q) / kg)` whole sheets (at least
   one), each costing as much as in the nesting. The material is shared by piece

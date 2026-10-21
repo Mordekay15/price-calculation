@@ -97,3 +97,9 @@ def test_the_quote_table_shows_an_assembly_line_with_its_parts():
     for col in [c for c in rows.columns if c.endswith("€/kpl")]:
         assert rows[col][1] == pytest.approx(sum(rows[col][2:]), abs=0.02)
     assert rows[rows.columns[-1]][4] == pytest.approx(3.0)            # 6 × 0.5 €
+    # The breakdown (batch 1): each part's pieces, and the assembly's steps.
+    parts = at.dataframe[1].value
+    assert list(parts["Kpl erässä"]) == [1, 2, 1]                  # a, b × 2, c
+    steps = at.dataframe[2].value
+    assert steps["Vaihe"].iloc[-2] == "6. Kokoonpanon kpl-hinta"
+    assert float(steps["Arvo €"].iloc[-2]) == pytest.approx(rows["1 kpl, €/kpl"][1], abs=0.01)

@@ -135,6 +135,7 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
              for pc in costs if pc.product["id"] not in in_assembly]
     names = {pc.product["id"]: name(pc) for pc in costs}
     members: list[list[dict]] = []      # each assembly's rows in the table
+    priced: list[tuple[Assembly, dict, tuple]] = []     # for the breakdown
     for a in assemblies:
         units = {pid: [p.unit for p in by_part[pid]] for pid, _ in a.members if pid in by_part}
         contents = tuple([f"{names.get(pid, '?')} × {n}" for pid, n in a.members]
@@ -142,6 +143,7 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
         lines.append(QuoteLine(a.name, prices=tuple(assembly_prices(a, units, sizes, rates)),
                                parts=contents or ("—",)))
         prices = lines[-1].prices
+        priced.append((a, units, prices))
         # Each row is what it adds to one assembly (kpl/kok. × €/kpl), so the
         # rows add up to the assembly's €/kpl; its quantity is per batch.
         members.append(
@@ -192,6 +194,7 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
         st.caption("🧩 Kokoonpanon └-rivit ovat sen osuuksia yhdestä kokoonpanosta "
                    "(kpl / kokoonpano × €/kpl), ja niiden summa on kokoonpanon kpl-hinta. "
                    "Määrä on kappaleet kullakin eräkoolla.")
+    _render_breakdown(costs, names, by_part, priced, sizes, rates, key)
 
     info = current_info()
     stem = f"tarjous_{info.number or 'uusi'}".replace(" ", "_")
@@ -238,3 +241,70 @@ def _render_clean_dxfs(parts: list[CleanPart], key: str) -> None:
         st.download_button("Lataa ZIP", key=f"quote_dxf_zip_{key}",
                            data=clean_dxf_zip(parts, template, markings=markings),
                            file_name="puhtaat_dxf.zip", mime="application/zip")
+
+
+def _eur(v: float | None) -> str:
+    return "–" if v is None else f"{v:,.2f}"
+
+
+def _render_breakdown(costs, names: dict[str, str], by_part: dict[str, list],
+                      priced: list[tuple[Assembly, dict, tuple]], sizes: list[int],
+                      rates, key: str) -> None:
+    """At one batch size: each part's material and work per piece, and how
+    each assembly's price adds up."""
+    with st.expander("Näytä laskennan erittely"):
+        q = st.segmented_control("Eräkoko", sizes, default=sizes[0],
+                                 format_func=lambda n: f"{n} kpl",
+                                 key=f"quote_breakdown_q_{key}") or sizes[0]
+        i = sizes.index(q)
+        st.markdown(f"**Työt ja materiaali, eräkoko {q}**", help=(
+            "€/kpl kullekin osalle. Kappaleet erässä = eräkoko × kpl / kokoonpano. "
+            "Leikkaus sisältää levyn minimiveloituksen. Asetus, ohjelmointi ja "
+            "laskurien asetus ovat €/erä, ja ne jaetaan erän kappaleille."))
+        rows = []
+        for pc in costs:
+            pid = pc.product["id"]
+            bp = by_part[pid][i]
+            w = bp.work
+            row = {"Osa": names[pid], "Kpl erässä": bp.qty, "Levyjä": bp.sheets,
+                   "Materiaali": None if bp.material is None else round(bp.material, 2)}
+            if w is not None:
+                row.update({
+                    "Leikkaus": round(w.cutting + w.cut_minimum, 2),
+                    "Taivutus": round(w.bending, 2), "Kierteet": round(w.threads, 2),
+                    "Kiinnikkeet": round(w.fasteners, 2), "Hitsaus": round(w.welding, 2),
+                    "Alihankinta": round(w.subcontract, 2),
+                    "Laskurit": round(w.operations, 2),
+                    "Erän kulut €": round(w.batch_fixed, 2),
+                    "Erän kulut / kpl": round(w.batch_fixed / w.qty, 2)})
+            row["Kpl-hinta €"] = None if bp.unit is None else round(bp.unit, 2)
+            rows.append(row)
+        st.dataframe(rows, width="stretch", hide_index=True)
+
+        for a, units, prices in priced:
+            p = prices[i]
+            w = a.work
+            parts = " + ".join(
+                f"{names.get(pid, '?')} {n} × {_eur(units[pid][i] if pid in units else None)}"
+                for pid, n in a.members) or "—"
+            bought = " + ".join(f"{b.name} {b.qty} × ({b.eur:,.2f} + {b.fit_eur:,.2f})"
+                                for b in a.bought) or "—"
+            weld = (w.weld_m / rates.weld_m_per_h * rates.weld_eur_per_h
+                    if rates.weld_m_per_h else 0.0)
+            fit = (w.setup_min / q + w.fit_min) / 60 * w.eur_per_h
+            steps = [
+                ("1. Osat (kpl / kok. × €/kpl)", parts, _eur(p.parts)),
+                ("2. Ostetut osat (kpl × (€/kpl + asennus))", bought, _eur(p.bought)),
+                ("3. Kokoonpanotyö",
+                 f"({w.setup_min:g} min / {q} + {w.fit_min:g} min) / 60 × {w.eur_per_h:g} €/h",
+                 _eur(fit)),
+                ("4. Hitsaus",
+                 f"{w.weld_m:g} m / {rates.weld_m_per_h:g} m/h × {rates.weld_eur_per_h:g} €/h",
+                 _eur(weld)),
+                ("5. Muut", "per kokoonpano", _eur(w.other_eur)),
+                ("6. Kokoonpanon kpl-hinta", "1 + 2 + 3 + 4 + 5", _eur(p.unit)),
+                ("7. Yhteensä", f"{_eur(p.unit)} × {q} kok.", _eur(p.total)),
+            ]
+            st.markdown(f"**🧩 {a.name}, eräkoko {q}**")
+            st.dataframe([{"Vaihe": v, "Laskenta": c, "Arvo €": val} for v, c, val in steps],
+                         width="stretch", hide_index=True)
