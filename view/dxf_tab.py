@@ -143,8 +143,10 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
         with clear.popover("Poista kaikki", width="stretch"):
             st.button(f"Kyllä, poista kaikki {len(parts)} osaa", key="dxf_del_all",
                       type="primary", on_click=evict_all)
+    drawing_of = assemblies.drawings()          # assembly id: its drawing's card
     if not is_headless():
-        attachments.render_checked_count([fid for fid, _ in parts])
+        attachments.render_checked_count([fid for fid, _ in parts
+                                          if fid not in drawing_of.values()])
     card_of = source_cards()
     index = {fid: idx for idx, (fid, _) in enumerate(parts)}
     per_assembly = per_unit(assemblies.current(card_of))  # card id: kpl in its assemblies
@@ -167,16 +169,20 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
                                                     doc_links.get(fid, []),
                                                     per_assembly.get(fid, 0))
 
-    loose = [idx for idx, (fid, _) in enumerate(parts) if fid not in per_assembly]
+    loose = [idx for idx, (fid, _) in enumerate(parts)
+             if fid not in per_assembly and fid not in drawing_of.values()]
     if not loose:
         st.caption("Kaikki osat ovat kokoonpanoissa.")
     draw(loose, _PAGE)
 
     def draw_assembly(aid: str, cids: dict[str, int]) -> None:
+        if aid in drawing_of and not is_headless():   # its drawing, not a card
+            attachments.render_card_docs(drawing_of[aid], doc_links.get(drawing_of[aid], []))
         # A card in two assemblies is drawn in the first one only.
         mine = sorted(index[c] for c in cids if c in index)
-        st.caption("Osat: " + " · ".join(f"#{i + 1} {parts[i][1].name} × {cids[parts[i][0]]}"
-                                         for i in mine))
+        if mine:
+            st.caption("Osat: " + " · ".join(
+                f"#{i + 1} {parts[i][1].name} × {cids[parts[i][0]]}" for i in mine))
         elsewhere = [i for i in mine if i in products]
         for i in elsewhere:
             st.caption(f"#{i + 1} · {parts[i][1].name}: kortti on toisessa kokoonpanossa.")

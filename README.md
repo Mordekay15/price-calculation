@@ -195,8 +195,9 @@ parts, work and contents.
   views), gets a note on its card and is not priced. When its drawings call
   out part numbers (a number alone on its line, as an item's leader label;
   numbers among words such as `ASSEMBLY KIT: …` are the title block's), it
-  becomes an assembly of the cards with those numbers, 1 kpl each. The ones
-  neither dropped yet nor added as bought parts are listed as awaited.
+  becomes an assembly of the cards with those numbers, 1 kpl each, with the
+  drawing shown in it instead of as a card in Osat. The ones neither dropped
+  yet nor added as bought parts are listed as awaited.
 - **Apart from the loose parts.** **Osat** lists only the parts in no
   assembly. Each assembly below it shows its own cards, paged the same way.
   Their **Määrä** is not typed: it is kpl / kokoonpano × the largest batch

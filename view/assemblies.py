@@ -7,7 +7,8 @@ one quote line.
   parts to give a price.
 - **From an assembly drawing.** A card that is only a drawing (no blank to
   cut, see ``core.items``) whose drawing calls out other part numbers
-  becomes an assembly of the cards with those numbers, 1 kpl each; the ones
+  becomes an assembly of the cards with those numbers, 1 kpl each (the
+  drawing is shown in it, not among the cards); the ones
   neither dropped yet nor added as bought parts are listed as awaited.
 
 Its cards are drawn inside it, apart from the loose parts.
@@ -99,6 +100,12 @@ def sync_from_drawings(items: dict, texts: Callable[[str], str]) -> None:
         a["awaited"] = [k.upper() for k in expects if k not in found and k not in bought]
     for aid in [aid for aid, a in store.items() if a.get("drawing") and aid not in live]:
         store.pop(aid)
+
+
+def drawings() -> dict[str, str]:
+    """``{assembly id: card id}`` of the assemblies made from a drawing: that
+    card is the assembly's drawing, not one of its parts."""
+    return {aid: a["drawing"] for aid, a in _store().items() if a.get("drawing")}
 
 
 def _cards_of(a: dict, card_of: dict[str, str]) -> dict[str, int]:
