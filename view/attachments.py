@@ -155,9 +155,11 @@ def render_doc_list(parts: dict[str, str], labels: dict[str, str]) -> None:
         c1, c2, c3 = st.columns([3, 4, 1], vertical_alignment="center")
         c1.markdown(f"{'📄' if doc['kind'] == 'pdf' else '🧊'} {doc['name']}")
         current = linked.get(d, "")
+        key = f"dxf_doc_link_{d}_{current}"
+        if st.session_state.get(key) not in options:   # seeded, not a default: kept keys
+            st.session_state[key] = current if current in options else ""
         choice = c2.selectbox(
-            "Osa", options, index=options.index(current) if current in options else 0,
-            key=f"dxf_doc_link_{d}_{current}", label_visibility="collapsed",
+            "Osa", options, key=key, label_visibility="collapsed",
             format_func=lambda pid: "— ei osaa —" if not pid else labels.get(pid, pid))
         if choice != current:
             manual[d] = choice

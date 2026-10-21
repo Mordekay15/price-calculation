@@ -1,7 +1,7 @@
 """The DXF tab's three screens, Offeri's: BOM & Tiedostot (the drop area
-and the part cards, ``view.dxf_files``), Nestaus (the settings, the nesting
-and every group's sheets, ``view.dxf_nesting``) and Hinnoittelu (each card's
-work and the prices). A card shows a part's preview, measured size,
+and the part cards with their work, ``view.dxf_files``), Nestaus (the
+settings, the nesting and every group's sheets, ``view.dxf_nesting``) and
+Hinnoittelu (the totals, the breakdown by batch size and the downloads). A card shows a part's preview, measured size,
 material, thickness, quantity and work, and returns the product dict the
 pricing uses, or None (with the reasons shown) when the part cannot be
 priced. The card and the pricing share the same DxfReport, so what the card
@@ -54,22 +54,20 @@ from view.dxf_files import (
 from view.dxf_nesting import ANGLE_MODE, PER_PART, render_nesting, render_nesting_angles
 from view.quote import current_sizes
 from view.ui import headless, ids_in, is_headless, keep, st
-from view.work import piece_size, render_work_inputs
+from view.work import render_work_inputs
 
 BOM, NESTING, PRICING = "BOM & Tiedostot", "Nestaus", "Hinnoittelu"
 SCREENS = (BOM, NESTING, PRICING)
 MENU = "dxf_menu"   # the screens' menu, under "Edistynyt"
 
-# The keys of the widgets each screen draws, besides the cards', which draw
-# their material on BOM and their work on PRICING.
+# The keys of the widgets each screen draws, besides the cards' (all on BOM).
 _DRAWN_ON = [(re.compile(p), on) for p, on in (
     (r"dxf_(doc_show_linked|doc_page|doc_link_.*|step_k_input|step_3d_.*|step_pick_.*"
      r"|rfq_note|material_remember)", {BOM}),
-    (r"dxf_card_page.*|asm_name_.*", {BOM, PRICING}),
+    (r"dxf_card_page.*|asm_(name|fit_min|weld_m|setup_min|eur_per_h|other_eur)_.*", {BOM}),
     (r"dxf_(margin_pct|nest_mode|rankavali_mm|edge_.*|sparrow_t|angle_(0|90)|angle_mode"
      r"|su_select::.*)", {NESTING}),
-    (r"asm_(fit_min|weld_m|setup_min|eur_per_h|other_eur)_.*"
-     r"|quote_(breakdown_q|pdf_mat|dxf_name|dxf_marks)_dxf", {PRICING}),
+    (r"quote_(breakdown_q|pdf_mat|dxf_name|dxf_marks)_dxf", {PRICING}),
 )]
 
 
@@ -82,7 +80,7 @@ def _keep_closed(screen: str | None, fids: list[str]) -> None:
             if pattern.fullmatch(key):
                 return screen not in on
         if cards.search(key):
-            return screen != (PRICING if key.startswith("work_") else BOM)
+            return screen != BOM
         return False
 
     keep(closed)
@@ -116,8 +114,8 @@ def render(data: dict, screen: str | None) -> None:
                               lambda m: thicknesses_for(lookup, m), apply_material)
     # Per-part angles are chosen on the cards, by the Nestaus switch.
     per_part = len(parts) > 1 and st.session_state.get(ANGLE_MODE) == PER_PART
-    with headless(screen == NESTING):
-        products = _render_part_cards(parts, materials, lookup, per_part, screen)
+    with headless(screen != BOM):
+        products = _render_part_cards(parts, materials, lookup, per_part)
     if screen == BOM:
         return
     with headless(screen != NESTING):
@@ -132,19 +130,19 @@ def render(data: dict, screen: str | None) -> None:
 
 
 def _render_part_cards(parts, materials: list[str], lookup: dict,
-                       per_part_angles: bool = False, screen: str = BOM) -> list[dict]:
+                       per_part_angles: bool = False) -> list[dict]:
     """One card per uploaded part; returns the configured product dicts. The
     loose parts come first, then each assembly with its cards in it. The
     nesting angle is on the cards only when it is chosen per part. A card
     draws its material on BOM, its work on PRICING."""
     title, clear = st.columns([6, 2], vertical_alignment="center")
-    title.markdown("**Osat**" if screen == BOM else "**Osien työvaiheet**")
-    if screen == BOM and len(parts) > 1:
+    title.markdown("**Osat**")
+    if len(parts) > 1:
         # Behind a popover: one stray click shouldn't drop every card's setup.
         with clear.popover("Poista kaikki", width="stretch"):
             st.button(f"Kyllä, poista kaikki {len(parts)} osaa", key="dxf_del_all",
                       type="primary", on_click=evict_all)
-    if screen == BOM and not is_headless():
+    if not is_headless():
         attachments.render_checked_count([fid for fid, _ in parts])
     card_of = source_cards()
     index = {fid: idx for idx, (fid, _) in enumerate(parts)}
@@ -159,14 +157,14 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
         keep(ids_in(hidden).search)
         for idx in idxs:
             fid, part = parts[idx]
-            offer = idx in shown and screen == BOM
+            offer = idx in shown
             if offer:
                 fill.slot = st.empty()  # above the card: where the question goes if it asks
             with headless(idx not in shown):  # hidden: priced, not drawn
                 products[idx] = _render_part_config(fid, part, idx, materials, lookup,
                                                     per_part_angles, fill if offer else None,
                                                     doc_links.get(fid, []),
-                                                    per_assembly.get(fid, 0), screen)
+                                                    per_assembly.get(fid, 0))
 
     loose = [idx for idx, (fid, _) in enumerate(parts) if fid not in per_assembly]
     if not loose:
@@ -183,7 +181,7 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
             st.caption(f"#{i + 1} · {parts[i][1].name}: kortti on toisessa kokoonpanossa.")
         draw([i for i in mine if i not in products], f"{_PAGE}_{aid}")
 
-    assemblies.render(card_of, draw_assembly, work=screen == PRICING)
+    assemblies.render(card_of, draw_assembly)
     return [products[i] for i in sorted(products) if products[i] is not None]
 
 
@@ -236,7 +234,6 @@ def _render_part_config(
     fill: "_FillOffer | None" = None,
     doc_ids: list[str] = (),
     per_assembly: int = 0,
-    screen: str = BOM,
 ) -> dict | None:
     """Draw one part's card, preview left and inputs right; return its product
     dict, or None if not priceable. Its ``angles`` are None (set later from the
@@ -244,10 +241,9 @@ def _render_part_config(
     question from card to card (see ``_offer_same_material``). ``doc_ids``
     are the supporting files linked to it (see ``view.attachments``). A card in
     an assembly (``per_assembly`` kpl in one) takes its quantity from the batch
-    sizes and leaves its fasteners and welding to the assembly. ``screen``
-    is the screen drawing it: BOM draws the part, PRICING its work."""
+    sizes and leaves its fasteners and welding to the assembly."""
     in_assembly = per_assembly > 0
-    with headless(screen != BOM), st.container(border=True):
+    with st.container(border=True):
         hdr = st.columns([5, 2, 2, 1], vertical_alignment="center")
         item = st.session_state.get(ITEMS, {}).get(fid)
         folders = sorted({f for f in map(folder_of, item.members if item else [fid]) if f})
@@ -287,17 +283,13 @@ def _render_part_config(
             if fill is not None:
                 _offer_same_material(fid, idx, material, thickness, fill)
             angles = render_nesting_angles(fid) if per_part_angles else None
-    with headless(screen != PRICING), st.container(border=True):
-        st.markdown(f"**#{idx + 1}** · {dxf.name} · {material or '–'} · "
-                    f"{thickness or '–'} mm · {qty} kpl")
-        work = render_work_inputs(fid, material=material, thickness=thickness, qty=qty,
-                                  cut_length_m=report.cut_length_mm / 1000,
-                                  bends=card_bends(report, item), threads=report.threads,
-                                  fasteners=0 if in_assembly else card_fasteners(dxf, item),
-                                  in_assembly=in_assembly,
-                                  **piece_size(report.net_area_mm2, material, thickness))
-    if angles == ():
-        return None
+            work = render_work_inputs(fid, material=material, thickness=thickness, qty=qty,
+                                      cut_length_m=report.cut_length_mm / 1000,
+                                      bends=card_bends(report, item), threads=report.threads,
+                                      fasteners=0 if in_assembly else card_fasteners(dxf, item),
+                                      in_assembly=in_assembly)
+        if angles == ():
+            return None
 
     return {
         "id":        fid,

@@ -65,9 +65,9 @@ def test_each_screen_keeps_the_others_inputs_and_prices_on_hinnoittelu(tmp_path,
     at.run()
     at.selectbox(key="dxf_mat_f0").select("S235").run()
     at.selectbox(key="dxf_th_f0").select("2").run()
+    at.number_input(key="work_bends_f0").set_value(3.0).run()     # work is on the card
     at.session_state["dxf_menu"] = "Hinnoittelu"
     at.run()
-    at.number_input(key="work_bends_f0").set_value(3.0).run()
     assert any("Laske levykäyttö ensin" in i.value for i in at.info)
     at.session_state["dxf_menu"] = "Nestaus"
     at.run()
@@ -79,11 +79,12 @@ def test_each_screen_keeps_the_others_inputs_and_prices_on_hinnoittelu(tmp_path,
     at.session_state["dxf_menu"] = "Hinnoittelu"
     at.run()
     assert not at.exception
-    assert at.number_input(key="work_bends_f0").value == 3.0
-    batches = next(d.value for d in at.dataframe if "10 kpl, €/kpl" in d.value.columns)
-    assert len(batches) == 1
+    # Only the batch-size switchable breakdown is left here.
+    [table] = [d.value for d in at.dataframe]
+    assert len(table) == 1 and table["Taivutus"].iloc[0] > 0     # the card's 3 bends
     at.session_state["dxf_menu"] = "BOM & Tiedostot"
     at.run()
+    assert at.number_input(key="work_bends_f0").value == 3.0
     assert at.selectbox(key="dxf_mat_f0").value == "S235"
     assert "Määrä: **10 kpl**" in [m.value for m in at.markdown]   # the largest batch
     at.session_state["dxf_menu"] = "Nestaus"

@@ -27,14 +27,13 @@ from core.sparrow import (
     sparrow_options,
 )
 from view import assemblies
-from view.common import NESTING_LABELS, SheetSettings, render_groups, render_pieces_summary
+from view.common import NESTING_LABELS, SheetSettings, render_groups
 from view.drawing import draw_sparrow_layout
 from view.dxf_files import source_cards
 from view.quote import render_batch_prices
 from view.sheet_usage import render_group
 from view.sparrow_progress import SparrowProgress, run_with_progress
 from view.ui import headless, st
-from view.work import work_costs
 
 _CACHE = "dxf_sparrow_cache"    # {signature: computed group}
 _RUNS = "dxf_sparrow_runs"      # {instance key: SparrowResult}, every Sparrow run so far
@@ -373,7 +372,7 @@ def _show(groups, settings: _Settings, cache: dict, nest, replan,
 
 
 def _render_prices(products: list[dict], priced: tuple | None) -> None:
-    """The parts summary and the batch prices, from what ``_show`` priced."""
+    """The batch prices, from what ``_show`` priced."""
     if priced is None:
         st.info("Levylaskenta ei ole valmis: katso Nestaus-välilehti.")
         return
@@ -385,12 +384,9 @@ def _render_prices(products: list[dict], priced: tuple | None) -> None:
         st.warning("Hinnoissa ovat vain lasketut ryhmät: laske loput "
                    "Nestaus-välilehdellä.")
     ready = [p for p in products if is_ready(p)]
-    render_pieces_summary(ready, prices,
-                          weight_label="Osien yhteispaino (kg)", lead="Osa",
-                          areas_mm2=areas, work=work_costs(ready, groups, sheets))
     render_batch_prices(ready, prices, groups, sheets, totals, lead="Osa", key="dxf",
                         areas_mm2=areas, clean_parts=[_clean_part(p) for p in ready],
-                        assemblies=assemblies.current(source_cards()))
+                        assemblies=assemblies.current(source_cards()), table=False)
 
 
 def _clean_part(product: dict) -> CleanPart:

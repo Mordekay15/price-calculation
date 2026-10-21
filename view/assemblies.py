@@ -22,7 +22,7 @@ from collections.abc import Callable
 from core.assemblies import Assembly, AssemblyWork, BoughtPart
 from core.work import FASTENER_INSERT_EUR
 from view import bom
-from view.ui import headless, is_headless, st
+from view.ui import is_headless, st
 
 ASSEMBLIES = "dxf_assemblies"
 _SEEN = "dxf_assemblies_seen"      # STEP file ids already made into assemblies
@@ -106,11 +106,10 @@ _WORK_LABELS = {
 }
 
 
-def render(card_of: dict[str, str], draw_cards: Callable[[str, dict[str, int]], None],
-           *, work: bool = True) -> None:
+def render(card_of: dict[str, str], draw_cards: Callable[[str, dict[str, int]], None]) -> None:
     """The assemblies, apart from the loose parts: each one's cards (drawn by
     ``draw_cards(assembly id, {card id: kpl / kokoonpano})``), bought parts and
-    assembly work (drawn only with ``work``)."""
+    assembly work."""
     store = _store()
     if not store:
         return
@@ -121,11 +120,11 @@ def render(card_of: dict[str, str], draw_cards: Callable[[str, dict[str, int]], 
                      "hinnoitellaan määrällä eräkoko × kpl / kokoonpano. STEP-kokoonpano "
                      "tehdään tänne automaattisesti.")
     for aid in list(store):
-        _render_one(aid, store[aid], card_of, draw_cards, work)
+        _render_one(aid, store[aid], card_of, draw_cards)
 
 
 def _render_one(aid: str, a: dict, card_of: dict[str, str],
-                draw_cards: Callable[[str, dict[str, int]], None], work: bool) -> None:
+                draw_cards: Callable[[str, dict[str, int]], None]) -> None:
     with st.container(border=True):
         c1, c2 = st.columns([6, 1], vertical_alignment="bottom")
         a["name"] = c1.text_input("Kokoonpano", value=a["name"], key=f"asm_name_{aid}",
@@ -135,8 +134,7 @@ def _render_one(aid: str, a: dict, card_of: dict[str, str],
             _store().pop(aid, None)
             st.rerun()
         draw_cards(aid, _cards_of(a, card_of))
-        with headless(not work):
-            _render_work(aid, a)
+        _render_work(aid, a)
 
 
 def _render_work(aid: str, a: dict) -> None:

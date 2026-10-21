@@ -6,6 +6,7 @@ DXF tab, the clean DXFs for production (see ``core.batches``, ``core.quote``).""
 from __future__ import annotations
 
 import time
+from contextlib import nullcontext
 from datetime import date
 
 import streamlit as st
@@ -101,9 +102,12 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
                         totals: dict[tuple, float], *, lead: str, key: str,
                         areas_mm2: dict[str, float] | None = None,
                         clean_parts: list[CleanPart] | None = None,
-                        assemblies: list[Assembly] | None = None) -> None:
+                        assemblies: list[Assembly] | None = None,
+                        table: bool = True) -> None:
     """The price of every part at every batch size, the quote's total at each,
     and the downloads. ``clean_parts`` (DXF tab) adds the clean-DXF ZIP.
+    Without ``table``, the breakdown at one batch size replaces the table of
+    every size, open.
     A part in one of the ``assemblies`` is priced inside it: the assembly is
     the quote line, and a batch size counts assemblies."""
     costs = piece_costs(products, prices, areas_mm2)
@@ -158,7 +162,8 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
                  "units": [p.work for p in prices]}] if any(p.work for p in prices) else []))
     line_totals = quote_totals(lines, len(sizes))
 
-    st.divider()
+    if table:
+        st.divider()
     st.markdown("**Eräkohtaiset hinnat**", help=(
         "Kpl-hinta jokaisella eräkoolla: materiaali + työ + erän kiinteät kulut "
         "jaettuna eräkoolla. Materiaali: ryhmän levyt nestattuna osakorttien "
@@ -166,7 +171,7 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
         "hukalla. Eräkoot muutetaan sivun yläosan Tarjous-kohdasta."
         + (" 🧩 Kokoonpanon └-rivit ovat sen osuuksia yhdestä kokoonpanosta "
            "(kpl / kokoonpano × €/kpl), ja niiden summa on kokoonpanon kpl-hinta."
-           if assemblies else "")))
+           if assemblies and table else "")))
     cols = st.columns(len(sizes) + 1)
     for col, q, t in zip(cols, sizes, line_totals):
         col.metric(f"Yhteensä, {q} kpl/nimike", fmt_eur(t) or "–",
@@ -175,24 +180,9 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
     if started:
         cols[-1].metric("Laskenta-aika", f"{(time.time() - started) / 60:.0f} min",
                         help="Aika siitä, kun ensimmäinen osa oli hinnoiteltavissa.")
-    def qty(per: int | None) -> str:
-        return "" if per is None else " · ".join(str(q * per) for q in sizes)
-
-    rows = []
-    sub = iter(members)
-    for line in lines:
-        row = {lead: ("🧩 " if line.is_assembly else "") + line.name, "Määrä": qty(1),
-               "Materiaali": line.material, "Paksuus": line.thickness}
-        for q, p in zip(sizes, line.prices):
-            row[f"{q} kpl, €/kpl"] = None if p.unit is None else round(p.unit, 2)
-        rows.append(row)
-        for m in (next(sub) if line.is_assembly else []):
-            rows.append({lead: m["name"], "Määrä": qty(m["per"]), "Materiaali": "",
-                         "Paksuus": "",
-                         **{f"{q} kpl, €/kpl": None if u is None else round(u, 2)
-                            for q, u in zip(sizes, m["units"])}})
-    st.dataframe(rows, width="stretch", hide_index=True)
-    _render_breakdown(costs, names, by_part, priced, sizes, rates, key)
+    if table:
+        _render_table(lines, members, sizes, lead)
+    _render_breakdown(costs, names, by_part, priced, sizes, rates, key, folded=table)
 
     info = current_info()
     stem = f"tarjous_{info.number or 'uusi'}".replace(" ", "_")
@@ -246,12 +236,35 @@ def _eur(v: float | None) -> str:
     return "–" if v is None else f"{v:,.2f}"
 
 
+def _render_table(lines: list[QuoteLine], members: list[list[dict]], sizes: list[int],
+                  lead: str) -> None:
+    """Every quote line's €/kpl at every batch size, each assembly's rows
+    under it."""
+    def qty(per: int | None) -> str:
+        return "" if per is None else " · ".join(str(q * per) for q in sizes)
+
+    rows = []
+    sub = iter(members)
+    for line in lines:
+        row = {lead: ("🧩 " if line.is_assembly else "") + line.name, "Määrä": qty(1),
+               "Materiaali": line.material, "Paksuus": line.thickness}
+        for q, p in zip(sizes, line.prices):
+            row[f"{q} kpl, €/kpl"] = None if p.unit is None else round(p.unit, 2)
+        rows.append(row)
+        for m in (next(sub) if line.is_assembly else []):
+            rows.append({lead: m["name"], "Määrä": qty(m["per"]), "Materiaali": "",
+                         "Paksuus": "",
+                         **{f"{q} kpl, €/kpl": None if u is None else round(u, 2)
+                            for q, u in zip(sizes, m["units"])}})
+    st.dataframe(rows, width="stretch", hide_index=True)
+
+
 def _render_breakdown(costs, names: dict[str, str], by_part: dict[str, list],
                       priced: list[tuple[Assembly, dict, tuple]], sizes: list[int],
-                      rates, key: str) -> None:
+                      rates, key: str, *, folded: bool = True) -> None:
     """At one batch size: each part's material and work per piece, and how
-    each assembly's price adds up."""
-    with st.expander("Näytä laskennan erittely"):
+    each assembly's price adds up (``folded``: behind an expander)."""
+    with st.expander("Näytä laskennan erittely") if folded else nullcontext():
         q = st.segmented_control("Eräkoko", sizes, default=sizes[0],
                                  format_func=lambda n: f"{n} kpl",
                                  key=f"quote_breakdown_q_{key}") or sizes[0]

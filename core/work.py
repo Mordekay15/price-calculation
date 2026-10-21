@@ -107,19 +107,6 @@ class WorkRates:
 
 
 @dataclass(frozen=True)
-class Operation:
-    """A work phase priced by one of the shop's calculators (``core.calculators``):
-    ``per_piece_eur`` is its run time's price, ``batch_eur`` its setup's. When
-    ``replaces`` names a built-in phase (``"bending"``), that phase's own € is
-    dropped so it isn't paid twice."""
-
-    name: str
-    per_piece_eur: float = 0.0
-    batch_eur: float = 0.0
-    replaces: str | None = None
-
-
-@dataclass(frozen=True)
 class WorkInputs:
     """One part's work, as set on its card. Lengths are per piece;
     ``programming_eur`` and ``setup_eur`` are per batch. ``setup_eur`` None
@@ -140,16 +127,13 @@ class WorkInputs:
     subcontract_eur: float = 0.0          # per piece
     programming_eur: float = 0.0
     setup_eur: float | None = None
-    operations: tuple[Operation, ...] = ()   # from the shop's calculators
 
 
 def phases(inp: WorkInputs) -> int:
     """Work phases the part goes through: cutting, plus each of bending,
-    threading, fastening, welding and subcontracting that it has, plus each
-    calculator operation that is not one of those."""
+    threading, fastening, welding and subcontracting that it has."""
     return 1 + sum(bool(x) for x in (inp.bends, inp.threads, inp.fasteners, inp.weld_m,
-                                      inp.subcontract_eur)) + sum(
-        1 for op in inp.operations if op.replaces is None)
+                                      inp.subcontract_eur))
 
 
 def default_setup(inp: WorkInputs, rates: WorkRates) -> float:
@@ -176,19 +160,17 @@ class WorkCost:
     cut_minimum: float = 0.0
     cut_seconds: float = 0.0              # laser, one piece
     priced: bool = True                   # False: laser speed unknown
-    operations: float = 0.0               # calculator operations, run (€/kpl)
-    operations_setup: float = 0.0         # calculator operations, setup (€/erä)
 
     @property
     def batch_fixed(self) -> float:
         """F: what the batch costs once."""
-        return self.setup + self.programming + self.operations_setup
+        return self.setup + self.programming
 
     @property
     def per_piece(self) -> float:
         """Work per piece, the batch costs shared over the quantity."""
         return (self.cutting + self.cut_minimum + self.bending + self.threads + self.fasteners
-                + self.welding + self.subcontract + self.operations
+                + self.welding + self.subcontract
                 + self.batch_fixed / self.qty)
 
     @property
@@ -200,12 +182,11 @@ class WorkCost:
         costs left out; the cutting includes the per-sheet minimum."""
         return dict(zip(BREAKDOWN, (
             self.cutting + self.cut_minimum, self.bending, self.threads, self.fasteners,
-            self.welding, self.subcontract, self.operations)))
+            self.welding, self.subcontract)))
 
 
 # The phases of ``WorkCost.breakdown``, as the tables and exports name them.
-BREAKDOWN = ("Leikkaus", "Taivutus", "Kierteet", "Kiinnikkeet", "Hitsaus", "Alihankinta",
-             "Laskurit")
+BREAKDOWN = ("Leikkaus", "Taivutus", "Kierteet", "Kiinnikkeet", "Hitsaus", "Alihankinta")
 
 
 def work_cost(inp: WorkInputs, qty: int, rates: WorkRates) -> WorkCost:
@@ -213,11 +194,10 @@ def work_cost(inp: WorkInputs, qty: int, rates: WorkRates) -> WorkCost:
     qty = max(int(qty), 1)
     laser = inp.laser if inp.method == LASER else None
     setup = default_setup(inp, rates) if inp.setup_eur is None else inp.setup_eur
-    replaced = {op.replaces for op in inp.operations}
     return WorkCost(
         qty=qty,
         cutting=cutting_eur(inp, inp.method, rates) or 0.0,
-        bending=0.0 if "bending" in replaced else inp.bends * inp.eur_per_bend,
+        bending=inp.bends * inp.eur_per_bend,
         threads=inp.threads * inp.eur_per_thread,
         fasteners=inp.fasteners * (inp.eur_per_fastener + inp.eur_per_insert),
         welding=rates.weld_eur(inp.weld_m),
@@ -226,8 +206,6 @@ def work_cost(inp: WorkInputs, qty: int, rates: WorkRates) -> WorkCost:
         programming=inp.programming_eur,
         cut_seconds=inp.cut_length_m * laser.s_per_m if laser else 0.0,
         priced=not (inp.method == LASER and inp.laser is None and inp.cut_length_m),
-        operations=sum(op.per_piece_eur for op in inp.operations),
-        operations_setup=sum(op.batch_eur for op in inp.operations),
     )
 
 

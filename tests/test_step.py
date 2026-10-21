@@ -283,8 +283,7 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
             st.session_state["dropped"] = True
         parts = sync()
         assemblies.sync_from_models()
-        _render_part_cards(parts, ["S235"], {("2", "S235 | 1000x2000"): 900.0}, False,
-                           st.session_state.get("screen", "BOM & Tiedostot"))
+        _render_part_cards(parts, ["S235"], {("2", "S235 | 1000x2000"): 900.0}, False)
         st.session_state["asm"] = [(a.name, dict(a.members),
                                     [(b.name, b.qty, b.fit_eur) for b in a.bought])
                                    for a in assemblies.current(source_cards())]
@@ -306,8 +305,6 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
     assert [m.value for m in at.markdown if m.value.startswith("Määrä")] == [
         "Määrä: **10 kpl**", "Määrä: **20 kpl**"]
     # The assembly prices fasteners and welding, so its cards don't.
-    at.session_state["screen"] = "Hinnoittelu"     # the work is drawn there
-    at.run()
     keys = {n.key for n in at.number_input}
     assert f"work_bends_{cards['Kulma.step']}" in keys
     assert not {f"work_{k}_{cards['Kulma.step']}"

@@ -284,14 +284,13 @@ def render_pieces_summary(
     *,
     weight_label: str,
     lead: str,
-    areas_mm2: dict[str, float] | None = None,
     work: dict[str, WorkCost] | None = None,
 ) -> None:
     """The per-piece weight / cost table (see ``core.sheet_cost.piece_costs``),
     the piece prices with the work (``work`` by product id), and the totals.
     ``lead`` heads the first column: the product's name, or its running number
     when it has none."""
-    costs = piece_costs(products, prices, areas_mm2)
+    costs = piece_costs(products, prices)
     if not costs:
         return
     work = work or {}

@@ -11,7 +11,7 @@ from reportlab.pdfgen import canvas
 from tests.conftest import dxf_bytes
 from view import attachments, material_agent
 from view.dxf_files import STORE, apply_material, ingest
-from view.dxf_tab import BOM, _render_part_cards
+from view.dxf_tab import _render_part_cards
 
 doc = ezdxf.new()
 doc.header["$INSUNITS"] = 4
@@ -33,6 +33,5 @@ thick = {"S235": ["2"], "S355MC": ["3"]}
 material_agent.render(parts, attachments.links({f: d.name for f, d in parts}),
                       attachments.docs(), materials, lambda m: thick.get(m, []),
                       apply_material)
-products = _render_part_cards(parts, materials, lookup, False,
-                              st.session_state.get("screen", BOM))
+products = _render_part_cards(parts, materials, lookup, False)
 st.session_state["materials"] = [(p["material"], p["thickness"]) for p in products]
