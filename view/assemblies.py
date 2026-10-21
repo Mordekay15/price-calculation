@@ -99,7 +99,7 @@ def clear() -> None:
 
 # ── The panel ─────────────────────────────────────────────────────────────────
 
-_WORK_DEFAULTS = {"fit_min": 0.0, "weld_m": 0.0, "setup_min": 0.0, "eur_per_h": 60.0,
+_WORK_DEFAULTS = {"fit_min": 0.0, "weld_m": 0.0, "setup_min": 0.0, "eur_per_h": 0.0,
                   "other_eur": 0.0}
 _WORK_LABELS = {
     "fit_min": ("Kokoonpanotyö (min/kok.)", 1.0, "Osien kokoaminen yhdeksi kokoonpanoksi."),

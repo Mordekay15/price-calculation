@@ -27,7 +27,7 @@ class AssemblyWork:
     fit_min: float = 0.0          # fitting, minutes per assembly
     weld_m: float = 0.0           # welding, metres per assembly
     setup_min: float = 0.0        # minutes per batch
-    eur_per_h: float = 60.0       # fitting and setup
+    eur_per_h: float = 0.0        # fitting and setup
     other_eur: float = 0.0        # per assembly (packing, painting the whole…)
 
 
