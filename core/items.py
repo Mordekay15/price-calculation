@@ -60,10 +60,7 @@ def group_sources(sources: list[Source], is_drawing=lambda source_id: True
     # A group named otherwise whose texts name exactly one other group's part
     # number is that part's drawing: it joins it.
     names = {key: key for key in groups}
-    for key in list(groups):
-        members = groups.get(key)
-        if not members or any(s.kind == "step" or not is_drawing(s.id) for s in members):
-            continue
+    for key, members in _drawings(groups, is_drawing):
         texts = "\n".join(t for s in members for t in s.texts)
         others = {k: n for k, n in names.items() if k != key and k in groups}
         found = link_by_text(others, {"x": texts})
@@ -73,10 +70,7 @@ def group_sources(sources: list[Source], is_drawing=lambda source_id: True
 
     # A drawing still on its own joins the one other item in its folder (a
     # ZIP of item folders: DRW-023179_A.dwg in the folder of ITM-072558).
-    for key in list(groups):
-        members = groups.get(key)
-        if not members or any(s.kind == "step" or not is_drawing(s.id) for s in members):
-            continue
+    for key, members in _drawings(groups, is_drawing):
         folders = {s.folder for s in members}
         folder = folders.pop() if len(folders) == 1 else ""
         others = [k for k, ms in groups.items()
@@ -87,6 +81,15 @@ def group_sources(sources: list[Source], is_drawing=lambda source_id: True
     order = {s.id: i for i, s in enumerate(sources)}
     items = [sorted((s.id for s in members), key=order.get) for members in groups.values()]
     return sorted(items, key=lambda ids: order[ids[0]])
+
+
+def _drawings(groups: dict[str, list[Source]], is_drawing):
+    """The groups still there whose every file is a drawing, ``(key,
+    members)``, looked up one by one: a group may join another meanwhile."""
+    for key in list(groups):
+        members = groups.get(key)
+        if members and all(s.kind != "step" and is_drawing(s.id) for s in members):
+            yield key, members
 
 
 @dataclass

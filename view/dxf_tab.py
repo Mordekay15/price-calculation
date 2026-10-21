@@ -19,6 +19,7 @@ from view import assemblies, attachments, bom, material_agent
 from view.common import (
     materials_with_copper,
     render_material_thickness,
+    render_page_picker,
     render_settings,
     thicknesses_for,
 )
@@ -137,17 +138,10 @@ _PAGE_SIZE = 20     # cards drawn at once: hundreds would take minutes and the m
 def _render_page_picker(n: int, key: str = _PAGE) -> range:
     """Which cards are drawn: all of a few, else one page of ``_PAGE_SIZE``.
     Every card is priced either way (see ``view.ui``)."""
-    pages = -(-n // _PAGE_SIZE)
-    if pages <= 1:
-        return range(n)
-    if st.session_state.get(key, 0) >= pages:
-        st.session_state[key] = 0
-    page = st.selectbox(
-        "Näytettävät osat", range(pages), key=key,
-        format_func=lambda i: f"#{i * _PAGE_SIZE + 1}–{min(n, (i + 1) * _PAGE_SIZE)}",
+    return render_page_picker(
+        n, _PAGE_SIZE, key=key, label="Näytettävät osat", prefix="#",
         help=f"Osia näytetään {_PAGE_SIZE} kerrallaan, jotta sivu pysyy nopeana. Kaikki "
              f"{n} osaa hinnoitellaan silti, myös piilossa olevat.")
-    return range(page * _PAGE_SIZE, min(n, (page + 1) * _PAGE_SIZE))
 
 
 # Keys of a card's buttons: a button's value can't be set (see _keep_widget_state).

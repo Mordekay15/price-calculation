@@ -105,7 +105,7 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
     from the table. ``key`` makes the widget keys unique per card. A card
     ``in_assembly`` has no fasteners or welding: the assembly prices them (its
     bought parts and welding), so they can't be counted twice."""
-    thickness_mm = parse_thickness_mm(thickness) if thickness else None
+    thickness_mm = parse_thickness_mm(thickness)
     table = laser_speed(material, thickness_mm) if material else None
     rates = current_rates()
 
@@ -211,7 +211,7 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
 def piece_size(area_mm2: float, material: str | None, thickness: str | None) -> dict:
     """``weight_kg`` and ``area_m2`` of one piece for ``render_work_inputs``
     (no weight before the thickness is known)."""
-    thickness_mm = parse_thickness_mm(thickness) if thickness else None
+    thickness_mm = parse_thickness_mm(thickness)
     return {"area_m2": area_mm2 / 1e6,
             "weight_kg": None if thickness_mm is None else weight_kg(area_mm2, thickness_mm,
                                                                     material)}

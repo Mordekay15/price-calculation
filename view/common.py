@@ -26,6 +26,21 @@ def materials_with_copper(lookup: dict) -> list[str]:
     return materials
 
 
+def render_page_picker(n: int, per_page: int, *, key: str, label: str, prefix: str = "",
+                       suffix: str = "", help: str | None = None) -> range:
+    """The rows of a long list drawn now: all of ``n`` when they fit one page
+    of ``per_page``, else the page picked, labelled ``{prefix}1–20{suffix}``."""
+    pages = -(-n // per_page)
+    if pages <= 1:
+        return range(n)
+    if st.session_state.get(key, 0) >= pages:
+        st.session_state[key] = 0
+    page = st.selectbox(
+        label, range(pages), key=key, help=help,
+        format_func=lambda i: f"{prefix}{i * per_page + 1}–{min(n, (i + 1) * per_page)}{suffix}")
+    return range(page * per_page, min(n, (page + 1) * per_page))
+
+
 # ── Shared inputs ─────────────────────────────────────────────────────────────
 
 _PLACEHOLDER_MAT   = "— Valitse materiaali —"

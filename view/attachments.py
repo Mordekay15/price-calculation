@@ -11,6 +11,7 @@ import io
 import streamlit as st
 
 from core.linking import link_by_text, link_files
+from view.common import render_page_picker
 
 DOCS = "dxf_docs"            # {doc id: {"name", "size", "kind", "load"}}
 _MANUAL = "dxf_doc_links"    # {doc id: part id or "" (= no part)}, set by hand
@@ -144,15 +145,9 @@ def render_doc_list(parts: dict[str, str], labels: dict[str, str]) -> None:
         if n_linked and st.toggle(f"Näytä myös osiin linkitetyt ({n_linked})",
                                   value=len(all_docs) <= _ROWS, key="dxf_doc_show_linked"):
             shown = list(all_docs)
-        if len(shown) > _ROWS:
-            pages = -(-len(shown) // _ROWS)
-            if st.session_state.get("dxf_doc_page", 0) >= pages:
-                st.session_state["dxf_doc_page"] = 0
-            page = st.selectbox(
-                "Näytettävät tiedostot", range(pages), key="dxf_doc_page",
-                format_func=lambda i: f"{i * _ROWS + 1}–{min(len(shown), (i + 1) * _ROWS)} "
-                                      f"/ {len(shown)}")
-            shown = shown[page * _ROWS:(page + 1) * _ROWS]
+        rows = render_page_picker(len(shown), _ROWS, key="dxf_doc_page",
+                                  label="Näytettävät tiedostot", suffix=f" / {len(shown)}")
+        shown = shown[rows.start:rows.stop]
         for d in shown:
             doc = all_docs[d]
             c1, c2, c3 = st.columns([3, 4, 1], vertical_alignment="center")

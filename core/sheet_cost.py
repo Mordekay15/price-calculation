@@ -389,7 +389,7 @@ def piece_costs(
     for i, prod in enumerate(products):
         if prod["width"] <= 0 or prod["height"] <= 0:
             continue
-        thickness_mm = parse_thickness_mm(prod["thickness"]) if prod["thickness"] else None
+        thickness_mm = parse_thickness_mm(prod["thickness"])
         if thickness_mm is None:
             continue
         area = areas_mm2.get(prod["id"], prod["width"] * prod["height"])
