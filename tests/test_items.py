@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from core.items import (Choice, Source, choose, confirm_unit, group_sources, score_dxf,
+from core.items import (NO_BLANK, Choice, Source, choose, confirm_unit, group_sources, score_dxf,
                         STEP_CHOICE)
 
 
@@ -40,6 +40,14 @@ def test_a_clean_flat_beats_a_drawing_sheet():
     assert flat.score > views.score > sheet.score
     assert "kehys" in sheet.note and flat.note == "puhdas aihio"
     assert choose({"sheet": sheet, "flat": flat}) == "flat"
+
+
+def test_a_drawing_with_only_lines_beside_its_views_has_no_blank():
+    # An assembly drawing: the biggest closed "part" is a 112 × 1 mm line.
+    drawing = score_dxf(_report(112.1, 1.0, dropped=232), True, [], None)
+    assert not drawing.valid and drawing.note == NO_BLANK
+    assert score_dxf(_report(112.1, 1.0), False, [], None).valid    # a lone strip is a part
+    assert choose({"d": drawing}) is None
 
 
 def test_the_step_blank_confirms_a_dxf_or_wins_over_a_wrong_one():

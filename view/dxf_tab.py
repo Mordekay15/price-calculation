@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from core.assemblies import per_unit
 from core.dxf import DxfFile, DxfReport, is_slit
-from core.items import confirm_unit
+from core.items import NO_BLANK, confirm_unit
 from core.pricing import build_lookup
 from core.sheet_cost import is_ready
 from view import assemblies, attachments, bom, material_agent
@@ -271,6 +271,15 @@ def _render_part_config(
 
         preview_col, input_col = st.columns([1, 3])
         report = card_report(fid, dxf)
+        if item is not None and not any(c.valid for c in item.scores.values()) and any(
+                c.note == NO_BLANK for c in item.scores.values()):
+            input_col.warning(
+                "Piirustus ilman osan aihiota (esim. kokoonpanopiirustus): ei hinnoitella. "
+                "Lataa sen osien omat DXF- tai STEP-tiedostot, niin niistä tulee kortit.")
+            if not is_headless():
+                with preview_col:
+                    _render_preview(report)
+            return None
         with input_col:
             size = _checked_size(fid, dxf, report, hdr[1], _unit_reason(dxf, report, item, doc_ids))
         if not is_headless():
