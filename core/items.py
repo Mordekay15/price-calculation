@@ -27,6 +27,8 @@ from core.linking import base_key, link_by_text
 _PAPER = [(210, 297), (297, 420), (420, 594), (594, 841), (841, 1189)]
 _PAPER_TOL = 0.03
 _SIZE_TOL = 0.03          # a DXF within 3 % of the STEP blank is the same part
+_MIN_PART_MM = 3.0        # narrower, among other shapes: a line, not a part
+NO_BLANK = "piirustus, ei osan aihiota"
 
 
 @dataclass
@@ -107,6 +109,10 @@ def score_dxf(report, unit_guessed: bool, texts: list[str],
     if report.problems or report.outline is None:
         return Choice(-1e9, "ei luettavaa ääriviivaa", valid=False)
     w, h = sorted((report.outline.width_mm, report.outline.height_mm))
+    if w < _MIN_PART_MM and report.dropped_count:
+        # A drawing sheet with no flat pattern on it (an assembly drawing):
+        # the "part" found is one of its lines.
+        return Choice(-1e9, NO_BLANK, valid=False)
     score, notes = 100.0, []
     if _is_paper(w, h):
         score -= 200

@@ -80,6 +80,15 @@ def test_bent_parts_unfold_to_the_neutral_length(segments):
         assert (flat.bends[0].up == flat.bends[1].up) == (bends[0] * bends[1] > 0)
 
 
+def test_a_joggle_finds_its_thickness_past_the_nearer_flange():
+    """In a small joggle the other flange's face is nearer than the sheet's
+    own other skin: the thickness is the one that unfolds to the volume."""
+    t, r, k = 1.5, 1.0, 0.44
+    flat = unfold(bent_part([(25, 20), (2, -20), (15, 0)], t, r), k)
+    assert flat.is_sheet and flat.thickness_mm == pytest.approx(t)
+    assert [round(b.angle_deg) for b in flat.bends] == [20, 20]
+
+
 def test_the_l_bracket_keeps_its_hole_and_k_changes_the_length():
     half = unfold(l_bracket(), 0.5)
     assert len(half.holes) == 1
@@ -115,7 +124,7 @@ def test_an_assembly_becomes_cards_with_its_quantities():
     names = [c[0] for c in at.session_state["cards"]]
     assert names == ["Pohja.dxf", "Kulma.step"]
     _, qty, bends, w, h = at.session_state["cards"][1]
-    assert qty == 2 and bends == 1 and sorted((w, h)) == [40.0, 76.5]
+    assert qty == 10 and bends == 1     # no assembly here: the largest batch and sorted((w, h)) == [40.0, 76.5]
     table = at.dataframe[0].value
     assert list(table["Kpl yhteensä"]) == [1, 2, 1, 2, 6]
     assert list(table["Tyyppi"]) == ["kokoonpano", "levyosa", "levyosa", "kokoonpano",
@@ -171,7 +180,7 @@ def test_a_parts_flat_drawing_model_and_pdf_make_one_card():
     at = AppTest.from_function(page, default_timeout=60).run()
     assert not at.exception
     assert at.session_state["cards"] == [("a", "ITM-072558_A.dxf")]
-    files = next(c.value for c in at.caption if c.value.startswith("Tiedostot:"))
+    files = " ".join(m.proto.help for m in at.markdown if m.value.startswith("**#1**"))
     assert "✓ ITM-072558_A.dxf (vastaa STEP-mallin aihiota)" in files
     assert "DRW-023179_A.dxf (piirustuksen kehys" in files
     assert any("DRW-023179_A.pdf" in e.label for e in at.expander)
@@ -227,7 +236,7 @@ def test_a_card_takes_its_bends_from_the_model_and_its_material_from_the_pdf():
     svg = next(m.value for m in at.markdown if m.value.startswith("<svg"))
     assert "#16a34a" in svg or "#ea580c" in svg          # the model's bend line
     assert any(c.value.startswith("Taivutuslinjat STEP-mallista") for c in at.caption)
-    assert any(c.value.startswith("Materiaali täytetty automaattisesti:") and "STEP" in c.value
+    assert any(c.value.startswith("Materiaali täytetty automaattisesti") and "STEP" in c.proto.help
                for c in at.caption)
 
 
@@ -302,8 +311,8 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
     assert [m.value.split(" · ")[1] for m in at.markdown if m.value.startswith("**#")] == [
         "Pohja.dxf", "Kulma.step"]
     # Its cards are nested for the largest batch (10) of assemblies.
-    qtys = [n for n in at.number_input if n.label == "Määrä (kpl)"]
-    assert [n.value for n in qtys] == [10, 20] and all(n.disabled for n in qtys)
+    assert [m.value for m in at.markdown if m.value.startswith("Määrä")] == [
+        "Määrä: **10 kpl**", "Määrä: **20 kpl**"]
     # The assembly prices fasteners and welding, so its cards don't.
     keys = {n.key for n in at.number_input}
     assert f"work_bends_{cards['Kulma.step']}" in keys
@@ -335,3 +344,42 @@ def test_a_kept_models_bodies_are_read_again_when_needed():
     assert not at.exception
     assert at.session_state["dropped"] and at.session_state["again"]
     assert at.session_state["flats"] == 3
+
+
+def test_removing_an_assembly_removes_its_parts_and_its_step_file():
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        from types import SimpleNamespace
+
+        import ezdxf
+        import streamlit as st
+
+        from tests.conftest import dxf_bytes
+        from tests.step_models import assembly_step
+        from view import bom
+        from view.dxf_files import ingest, sync, sync_assemblies
+        from view.dxf_tab import _render_part_cards
+
+        if "dropped" not in st.session_state:
+            doc = ezdxf.new()
+            doc.header["$INSUNITS"] = 4
+            doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 60), (0, 60)],
+                                            close=True)
+            data, model = dxf_bytes(doc), assembly_step()
+            ingest([SimpleNamespace(file_id="d1", name="Pohja.dxf", getvalue=lambda: data),
+                    SimpleNamespace(file_id="s1", name="runko.step", getvalue=lambda: model),
+                    SimpleNamespace(file_id="d2", name="Irto.dxf", getvalue=lambda: data)])
+            st.session_state["dropped"] = True
+        parts = sync()
+        sync_assemblies()
+        _render_part_cards(parts, ["S235"], {("2", "S235 | 1000x2000"): 900.0}, False)
+        st.session_state["parts"] = [d.name for _, d in sync()]
+        st.session_state["models"] = list(bom.models())
+
+    at = AppTest.from_function(page, default_timeout=60).run()
+    assert at.session_state["parts"] == ["Pohja.dxf", "Irto.dxf", "Kulma.step"]
+    at.button(key="asm_del_step:s1").click().run()
+    assert not at.exception
+    at.run()
+    assert at.session_state["parts"] == ["Irto.dxf"] and at.session_state["models"] == []

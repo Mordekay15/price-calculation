@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from types import SimpleNamespace
 
-from core.archive import ArchiveError, is_zip, read_path, unpack
+from core.archive import ArchiveError, is_zip, unpack
 from core.dwg import read_drawing
 from core.dxf import DxfFile, DxfReport, fasteners_from_texts
 from core.items import (Choice, Source, choose, group_sources, looks_like_drawing,
@@ -25,7 +25,7 @@ from view.common import thicknesses_for
 from view.ui import st
 STORE   = "dxf_store"         # {card id: DxfFile}: each card's chosen shape
 REPORTS = "dxf_part_reports"  # {card id: DxfReport}
-CONFIG  = "dxf_part_config"   # {card id: {"material", "thickness", "qty", "source"}}
+CONFIG  = "dxf_part_config"   # {card id: {"material", "thickness", "source"}}
 FILES   = "dxf_files"         # {file id: DxfFile}: every dropped DXF/DWG, in drop order
 ITEMS   = "dxf_items"         # {card id: Item}: the files on each card
 _HIDDEN  = "dxf_hidden"        # model parts removed from the cards
@@ -37,8 +37,6 @@ _DUPES   = "dxf_dupes"         # (names of dropped files already on a card, warn
 _DUPE_WARNING_S = 15           # how long that warning stays
 _SKIPPED = "dxf_skipped"       # names of the last drop's files that aren't used
 _FOLDERS = "dxf_folders"       # {file id: folder in the dropped ZIP}
-_PATH_READS = "dxf_path_reads"  # ZIPs / folders read from disk so far (for file ids)
-_PATH_SKIPPED = "dxf_path_skipped"  # what the last disk read skipped
 _WAITING = "dxf_waiting_models"  # big STEP files of a large drop, read when asked
 _BIG_STEP_BYTES = 5 << 20        # a STEP file this big waits, in a drop of many files
 _USED = ("dxf", "dwg", "pdf", "step", "stp")
@@ -82,11 +80,10 @@ def render_drop_area() -> list[tuple[str, DxfFile]]:
              "puretaan: jokainen kansio on yleensä yksi osa, ja kansio auttaa "
              "yhdistämään tiedostot oikeaan osaan.",
     )
-    new = ingest(list(uploaded or []) + _render_path_reader())
-    if new:
+    if ingest(list(uploaded or [])):
         st.rerun()  # redraw with the drop area empty
     parts = sync()
-    assemblies.sync_from_models()
+    sync_assemblies()
     skipped = st.session_state.get(_SKIPPED)
     if skipped:
         more = len(skipped) - _SKIPPED_SHOWN
@@ -96,11 +93,32 @@ def render_drop_area() -> list[tuple[str, DxfFile]]:
     render_waiting(None)
     _warn_duplicates(parts)
     labels = {fid: f"#{i + 1} · {dxf.name}" for i, (fid, dxf) in enumerate(parts)}
-    attachments.render_doc_list(_card_names(), labels)
-    items = st.session_state.get(ITEMS, {})
-    bom.render_bom({sid: labels[cid] for cid, item in items.items() for sid in item.members
-                    if cid in labels}, resync)
+    _render_files(labels)
     return parts
+
+
+def _render_files(labels: dict[str, str]) -> None:
+    """One folded row under the drop area, a tab each: the supporting files
+    and the STEP models. Open by itself when a file is on no part."""
+    names = _card_names()
+    docs, models = attachments.doc_list_title(names), bom.bom_title()
+    tabs = [t for t in (docs and docs[0], models) if t]
+    if not tabs:
+        return
+    n_unlinked = docs[1] if docs else 0
+    title = "Tiedostot · " + " · ".join(tabs) + (
+        f" · :orange[{n_unlinked} ilman osaa]" if n_unlinked else "")
+    with st.expander(title, expanded=bool(n_unlinked)):
+        # Keyed by its tabs: a new tab (files dropped) opens the first one again.
+        boxes = iter(st.tabs(tabs, default=tabs[0], key="dxf_files_tab:" + "|".join(tabs)))
+        if docs:
+            with next(boxes):
+                attachments.render_doc_list(names, labels)
+        if models:
+            items = st.session_state.get(ITEMS, {})
+            with next(boxes):
+                bom.render_bom({sid: labels[cid] for cid, item in items.items()
+                                for sid in item.members if cid in labels}, resync)
 
 
 def _waiting(doc_ids=None) -> list[str]:
@@ -187,7 +205,7 @@ def ingest(uploaded) -> bool:
     dropped = [up for up in uploaded or [] if up.file_id not in files and up.file_id not in docs]
     names = ({(folders.get(f, ""), dxf.name) for f, dxf in files.items()}
              | {(folders.get(d, ""), doc["name"]) for d, doc in docs.items()})
-    dupes, skipped = [], st.session_state.pop(_PATH_SKIPPED, [])
+    dupes, skipped = [], []
     todo = _unzipped(dropped, skipped)
     bar = st.progress(0.0) if len(todo) > 5 else None
     for n, up in enumerate(todo):
@@ -240,32 +258,6 @@ def _release_memory() -> None:
         ctypes.CDLL("libc.so.6").malloc_trim(0)
     except (OSError, AttributeError):
         pass    # not glibc (Windows, macOS)
-
-
-def _render_path_reader() -> list:
-    """"Lue koneelta": a ZIP or a folder read straight from this computer's
-    disk, for an RFQ too big to upload (no upload limit, and it is read one
-    file at a time). Returns its files once the button is pressed."""
-    with st.expander("Lue ZIP tai kansio koneelta (iso tarjouspyyntö)"):
-        st.caption("Liitä ZIP-tiedoston tai kansion polku, esim. "
-                   "`D:\\Tarjoukset\\RFQ 580-07.zip` (Resurssienhallinnassa: Shift + "
-                   "hiiren oikea → Kopioi polkuna). Tiedostoa ei ladata selaimen kautta, "
-                   "joten kokorajaa ei ole.")
-        c1, c2 = st.columns([5, 1], vertical_alignment="bottom")
-        path = c1.text_input("Polku", key="dxf_path", label_visibility="collapsed",
-                             placeholder="D:\\Tarjoukset\\RFQ.zip")
-        if not c2.button("Lue", key="dxf_path_read", disabled=not path.strip()):
-            return []
-    skipped = st.session_state.setdefault(_PATH_SKIPPED, [])
-    skipped.clear()
-    try:
-        entries = read_path(path, _is_used, skipped)
-    except ArchiveError as exc:
-        st.error(str(exc))
-        return []
-    n = st.session_state[_PATH_READS] = st.session_state.get(_PATH_READS, 0) + 1
-    return [SimpleNamespace(file_id=f"disk{n}/{i}", name=e.name, folder=e.folder,
-                            getvalue=e.load) for i, e in enumerate(entries)]
 
 
 def _is_used(name: str) -> bool:
@@ -345,9 +337,6 @@ def sync() -> list[tuple[str, DxfFile]]:
             ss.get(REPORTS, {}).pop(cid, None)
         store[cid] = shape(chosen)
         items[cid] = Item(members, chosen, scores, {m: shape(m).name for m in members}, blank)
-        if models and "qty" not in config.get(cid, {}):
-            config.setdefault(cid, {"material": None, "thickness": None})["qty"] = max(
-                part.qty for _, part, _ in models)
     ss[STORE], ss[ITEMS] = store, items
     return list(store.items())
 
@@ -359,6 +348,17 @@ def resync() -> None:
     st.session_state.get(_SRC_REPORTS, {}).clear()
     st.session_state.get(REPORTS, {}).clear()
     sync()
+
+
+def sync_assemblies() -> None:
+    """The assemblies made from the dropped STEP models and assembly drawings."""
+    assemblies.sync_from_models()
+    links, store = card_docs(), st.session_state.get(STORE, {})
+
+    def texts(cid: str) -> str:
+        return "\n".join([*(attachments.text(d) for d in links.get(cid, [])),
+                          *(store[cid].texts if cid in store else [])])
+    assemblies.sync_from_drawings(st.session_state.get(ITEMS, {}), texts)
 
 
 def source_cards() -> dict[str, str]:
@@ -465,7 +465,7 @@ def evict(fid: str) -> None:
     ss.get(STORE, {}).pop(fid, None)
     cfg = ss.get(CONFIG, {}).pop(fid, {})
     ss.get(REPORTS, {}).pop(fid, None)
-    for key in (*material_keys(fid, cfg), f"dxf_q_{fid}", f"dxf_unit_ok_{fid}",
+    for key in (*material_keys(fid, cfg), f"dxf_unit_ok_{fid}",
                 f"dxf_src_{fid}", attachments.CHECKED.format(fid),
                 *(f"dxf_angle_{a}_{fid}" for a in NESTING_ANGLES)):
         ss.pop(key, None)

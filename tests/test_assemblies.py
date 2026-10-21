@@ -103,3 +103,32 @@ def test_the_quote_table_shows_an_assembly_line_with_its_parts():
     steps = at.dataframe[2].value
     assert steps["Vaihe"].iloc[-2] == "6. Kokoonpanon kpl-hinta"
     assert float(steps["Arvo €"].iloc[-2]) == pytest.approx(rows["1 kpl, €/kpl"][1], abs=0.01)
+
+
+def test_an_assembly_drawing_becomes_an_assembly_awaiting_its_missing_items():
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        from types import SimpleNamespace
+
+        import streamlit as st
+
+        from core.items import NO_BLANK, Choice
+        from view import assemblies
+
+        drawing = SimpleNamespace(names={"d": "3axd50001139896.dxf"},
+                                  scores={"d": Choice(-1e9, NO_BLANK, valid=False)})
+        plate = SimpleNamespace(names={"p": "3AXD50001016005.dxf"},
+                                scores={"p": Choice(100, "puhdas aihio")})
+        text = "3AXD50001016005\n3AXD50000026889\nTitle 3AXD50001139896"
+        assemblies.sync_from_drawings({"d": drawing, "p": plate}, lambda cid: text)
+        a = st.session_state[assemblies.ASSEMBLIES]["drawing:d"]
+        st.session_state["got"] = (a["name"], a["members"], a["awaited"])
+        # A loose plate's own drawing is no assembly.
+        assemblies.sync_from_drawings({"p": plate}, lambda cid: text)
+        st.session_state["left"] = list(st.session_state[assemblies.ASSEMBLIES])
+
+    at = AppTest.from_function(page).run()
+    assert not at.exception
+    assert at.session_state["got"] == ("3AXD50001139896", {"p": 1}, ["3AXD50000026889"])
+    assert at.session_state["left"] == []

@@ -284,20 +284,19 @@ def render_pieces_summary(
     *,
     weight_label: str,
     lead: str,
-    areas_mm2: dict[str, float] | None = None,
     work: dict[str, WorkCost] | None = None,
 ) -> None:
     """The per-piece weight / cost table (see ``core.sheet_cost.piece_costs``),
     the piece prices with the work (``work`` by product id), and the totals.
     ``lead`` heads the first column: the product's name, or its running number
     when it has none."""
-    costs = piece_costs(products, prices, areas_mm2)
+    costs = piece_costs(products, prices)
     if not costs:
         return
     work = work or {}
 
     def money(value, digits):
-        return "" if value is None else round(value, digits)
+        return None if value is None else round(value, digits)
 
     rows = [{
         lead:             pc.product.get("name", pc.index + 1),
@@ -337,12 +336,12 @@ def _render_piece_prices(priced: list, lead: str, material_total: float) -> None
         rows.append({
             lead:                     pc.product.get("name", pc.index + 1),
             "Määrä (kpl)":            pc.product["qty"],
-            "Materiaali €/kpl":       "" if pc.eur is None else r(pc.eur),
-            **{f"{phase} €/kpl": r(eur) if wc.priced or phase != "Leikkaus" else ""
+            "Materiaali €/kpl":       None if pc.eur is None else r(pc.eur),
+            **{f"{phase} €/kpl": r(eur) if wc.priced or phase != "Leikkaus" else None
                for phase, eur in wc.breakdown().items()},
             "Asetus ym. €/kpl":       r(wc.batch_fixed / wc.qty),
-            "Kpl-hinta €":            "" if unit is None else r(unit),
-            "Yhteensä €":             "" if unit is None else r(unit * pc.product["qty"]),
+            "Kpl-hinta €":            None if unit is None else r(unit),
+            "Yhteensä €":             None if unit is None else r(unit * pc.product["qty"]),
         })
     work_total = sum(wc.batch for _, wc in priced if wc.priced)
     complete = all(pc.eur is not None and wc.priced for pc, wc in priced)

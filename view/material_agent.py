@@ -45,13 +45,12 @@ def render(parts: list[tuple[str, object]], doc_links: dict[str, list[str]],
         title += f" · {len(result)} osaa" + (f", {n_conflicts} tarkistettavaa"
                                                if n_conflicts else "")
     with st.expander(title, expanded=bool(n_conflicts)):
-        st.caption("Luetaan materiaali ja paksuus osien piirustuksista (DXF-tekstit ja "
-                   "linkitetyt PDF:t) ja tarjouspyynnöstä. Mitään ei muuteta ennen kuin "
-                   "valitset ehdotukset ja painat Käytä valitut.")
         st.text_area("Tarjouspyynnön teksti", key=_NOTE, height=90,
                      placeholder="Esim. \"DXF:t tulee S355 2 mm\"",
-                     help="Käytetään osille, joiden omista tiedostoista ei löydy materiaalia "
-                          "tai paksuutta.")
+                     help="Materiaali ja paksuus luetaan osien piirustuksista (DXF-tekstit "
+                          "ja linkitetyt PDF:t); tätä tekstiä käytetään osille, joiden omista "
+                          "tiedostoista niitä ei löydy. Mitään ei muuteta ennen kuin valitset "
+                          "ehdotukset ja painat Käytä valitut.")
         c1, c2, _ = st.columns([2, 2, 3])
         if c1.button("Etsi materiaalit", key="dxf_find_materials", type="primary"):
             st.session_state[_RESULT] = _search(parts, doc_links, docs, materials,
@@ -113,7 +112,7 @@ def auto_note(fid: str, material: str | None, thickness: str | None) -> str | No
     note = st.session_state.get(_AUTO_NOTE, {}).get(fid)
     if not note or (note[0], note[1]) != (material, thickness):
         return None
-    return f"Materiaali täytetty automaattisesti: {note[2]}"
+    return note[2]
 
 
 def _search(parts, doc_links, docs, materials, thicknesses_for) -> list[Proposal]:

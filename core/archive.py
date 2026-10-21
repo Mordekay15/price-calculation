@@ -7,18 +7,14 @@ ZIPs inside the ZIP are opened too (their folder is the inner ZIP's own
 path). Folders made by macOS (``__MACOSX``) and hidden files are left out,
 and so is anything past the size and count limits, so a broken or hostile
 archive can't fill the memory. A file that ``keep`` turns down (a Creo
-``.prt.1``, a spreadsheet) is never read, only named in ``skipped``.
-
-``read_path`` does the same for a ZIP or a folder on the disk the app runs
-on: no upload, so no upload limit, and the archive is never in memory whole."""
+``.prt.1``, a spreadsheet) is never read, only named in ``skipped``."""
 
 from __future__ import annotations
 
 import io
-import os
 import zipfile
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from typing import Callable
 
 MAX_TOTAL_BYTES = 1 << 30         # 1 GiB unpacked, all files together
@@ -52,56 +48,17 @@ def is_zip(name: str) -> bool:
     return name.lower().endswith(".zip")
 
 
-def unpack(source: bytes | str | Path, keep=lambda name: True,
+def unpack(data: bytes, keep=lambda name: True,
            skipped: list[str] | None = None) -> list[Entry]:
-    """The files in a ZIP (its bytes, or its path), sorted by path (folder by
-    folder). Raises ``ArchiveError`` when it is not a readable ZIP."""
+    """The files in a ZIP, sorted by path (folder by folder). Raises
+    ``ArchiveError`` when it is not a readable ZIP."""
     out: list[Entry] = []
     budget = [MAX_TOTAL_BYTES]
     skipped = [] if skipped is None else skipped
     try:
-        _unpack(io.BytesIO(source) if isinstance(source, bytes) else source,
-                "", out, budget, 0, keep, skipped)
+        _unpack(io.BytesIO(data), "", out, budget, 0, keep, skipped)
     except (zipfile.BadZipFile, OSError) as exc:
         raise ArchiveError(f"ZIP-tiedostoa ei voitu avata ({exc}).") from exc
-    return _sorted(out)
-
-
-def read_path(path: str, keep=lambda name: True,
-              skipped: list[str] | None = None) -> list[Entry]:
-    """The files of a ZIP or a folder on this computer, as ``unpack`` gives
-    them. A folder's own name is the top folder of its files, as in a ZIP
-    made of it. Quotes around the path (Windows' "Copy as path") are
-    dropped. Raises ``ArchiveError`` when it is neither."""
-    p = Path(path.strip().strip('"').strip("'")).expanduser()
-    if p.is_file() and is_zip(p.name):
-        return unpack(p, keep, skipped)
-    if not p.is_dir():
-        raise ArchiveError(f"Kansiota tai ZIP-tiedostoa ei löytynyt: {p}")
-    skipped = [] if skipped is None else skipped
-    out: list[Entry] = []
-    budget = [MAX_TOTAL_BYTES]
-    for root, dirs, files in os.walk(p):
-        dirs[:] = [d for d in dirs if not d.startswith(".") and d != "__MACOSX"]
-        rel = Path(root).relative_to(p.parent).as_posix()
-        for name in files:
-            if name.startswith(".") or len(out) >= MAX_FILES:
-                continue
-            full = Path(root, name)
-            if is_zip(name):
-                try:
-                    _unpack(full, f"{rel}/{full.stem}", out, budget, 1, keep, skipped)
-                    continue
-                except zipfile.BadZipFile:
-                    pass
-            if not keep(name):
-                skipped.append(name)
-                continue
-            size = full.stat().st_size
-            if size > budget[0]:
-                continue
-            budget[0] -= size
-            out.append(Entry(rel, name, full.read_bytes))
     return _sorted(out)
 
 

@@ -365,10 +365,10 @@ def test_price_only_changes_update_without_the_calculate_button():
         real, tab.run_sparrow = tab.run_sparrow, counting
         try:
             st.session_state["replanned"] = tab._show(
-                prods, group_products(prods, "combined"), settings, cache,
+                group_products(prods, "combined"), settings, cache,
                 tab._nester(lookup, settings, "sparrow"),
                 lambda s: tab._nester(lookup, s, "sparrow", remembered_only=True),
-                run=step.get("run", False))
+                run=step.get("run", False))[0]
         finally:
             tab.run_sparrow = real
 
@@ -410,15 +410,6 @@ def test_a_pdf_links_to_its_part_and_its_material_can_be_applied(tmp_path, monke
     assert aliases.exists()
 
 
-def test_a_chain_picks_its_calculators_on_the_card():
-    from streamlit.testing.v1 import AppTest
-
-    at = AppTest.from_file("dxf_docs_page.py", default_timeout=30).run()
-    at.selectbox(key="work_chain_f0").set_value("Laser-Särmäys-Maalaus").run()
-    assert at.multiselect(key="work_calcs_f0").value == ["sarmays", "maalaus"]
-    assert not at.exception
-
-
 def test_a_parts_numbered_files_and_drawing_make_one_card():
     from streamlit.testing.v1 import AppTest
 
@@ -454,7 +445,7 @@ def test_a_parts_numbered_files_and_drawing_make_one_card():
     assert not at.exception
     assert list(at.session_state["dxf_store"]) == ["f1"]
     assert sum("3AUA0000098622.pdf" in e.label for e in at.expander) == 1
-    files = next(c.value for c in at.caption if c.value.startswith("Tiedostot:"))
+    files = " ".join(m.proto.help for m in at.markdown if m.value.startswith("**#1**"))
     assert "✓ 3aua0000098622_1.dxf" in files and "3aua0000098622_2.dxf" in files
 
 
@@ -613,41 +604,6 @@ def test_a_zip_of_item_folders_becomes_one_card_per_folder():
     assert sorted(at.session_state["skipped"]) == ["100325.dxf.bak", "ITM-072558.prt.1"]
 
 
-def test_a_zip_on_this_computer_is_read_by_its_path(tmp_path):
-    import io
-    import zipfile
-
-    import ezdxf
-    from streamlit.testing.v1 import AppTest
-
-    from tests.conftest import dxf_bytes
-
-    doc = ezdxf.new()
-    doc.header["$INSUNITS"] = 4
-    doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 50), (0, 50)], close=True)
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("RFQ/100325/100325.dxf", dxf_bytes(doc))
-        zf.writestr("RFQ/100325/100325.prt.1", b"creo")
-        zf.writestr("RFQ/200400/200400.dxf", dxf_bytes(doc))
-    path = tmp_path / "RFQ 580.zip"
-    path.write_bytes(buf.getvalue())
-
-    def page():
-        import streamlit as st
-
-        from view.dxf_files import render_drop_area
-
-        st.session_state["cards"] = [d.name for _, d in render_drop_area()]
-
-    at = AppTest.from_function(page, default_timeout=30).run()
-    at.text_input(key="dxf_path").set_value(f'"{path}"').run()
-    at.button(key="dxf_path_read").click().run()
-    assert not at.exception
-    assert at.session_state["cards"] == ["100325.dxf", "200400.dxf"]
-    assert any("100325.prt.1" in c.value for c in at.caption)
-
-
 def test_a_big_step_model_of_a_large_drop_is_read_when_asked(tmp_path):
     import io
     import zipfile
@@ -672,19 +628,24 @@ def test_a_big_step_model_of_a_large_drop_is_read_when_asked(tmp_path):
     path = tmp_path / "RFQ.zip"
     path.write_bytes(buf.getvalue())
 
-    def page():
+    def page(path):
+        from types import SimpleNamespace
+        from unittest import mock
+
         import streamlit as st
 
         import view.dxf_files as files
         from view import bom
 
         files._BIG_STEP_BYTES = 1000     # the test model counts as big
-        files.render_drop_area()
+        drop = [SimpleNamespace(file_id="z", name="RFQ.zip", getvalue=path.read_bytes)]
+        with mock.patch.object(st, "file_uploader",
+                               return_value=drop if "dropped" not in st.session_state else []):
+            st.session_state["dropped"] = True
+            files.render_drop_area()
         st.session_state["models"] = sorted(bom.models())
 
-    at = AppTest.from_function(page, default_timeout=60).run()
-    at.text_input(key="dxf_path").set_value(str(path)).run()
-    at.button(key="dxf_path_read").click().run()
+    at = AppTest.from_function(page, default_timeout=60, args=(path,)).run()
     assert not at.exception
     assert at.session_state["models"] == []                 # waits
     at.button(key="dxf_read_waiting").click().run()
@@ -702,11 +663,10 @@ def test_many_parts_are_drawn_a_page_at_a_time_and_all_priced():
         "**#21**", "**#22**"]
     at.selectbox(key="dxf_mat_f21").set_value("S235").run()
     at.selectbox(key="dxf_th_f21").set_value("2").run()
-    at.number_input(key="dxf_q_f21").set_value(5).run()
     at.selectbox(key="dxf_card_page").set_value(0).run()      # card #22 not drawn…
     at.run()
     assert not at.exception
     assert at.session_state["materials"][21] == ("S235", "2")  # …but priced as set
-    assert at.session_state["qtys"][21] == 5
+    assert at.session_state["qtys"][21] == 10                  # the largest batch
     at.selectbox(key="dxf_card_page").set_value(1).run()      # and shown as set
-    assert at.number_input(key="dxf_q_f21").value == 5
+    assert at.selectbox(key="dxf_mat_f21").value == "S235"

@@ -1,6 +1,6 @@
 """Linking PDFs and STEP files to parts by part number."""
 
-from core.linking import link_files, part_key
+from core.linking import callouts, link_files, part_key
 
 
 def test_revisions_are_ignored():
@@ -67,3 +67,15 @@ def test_a_drawing_names_the_numbered_pieces_in_its_text():
     parts = {"a": "3aua0000098622_1.dxf", "b": "3aua0000098622_2.dxf"}
     texts = {"pdf": "Doc. No. Sheet 1\n3AUA0000098622\nDMS Number 3AXD10000037291"}
     assert link_by_text(parts, texts) == {"a": ["pdf"], "b": ["pdf"]}
+
+
+def test_an_assembly_drawing_calls_out_its_items():
+    # As an ABB assembly drawing's PDF reads: the callouts stand alone (or
+    # after a scale and a dimension); the title block's numbers are among words.
+    text = ("3AXD50001139896 A.2+ We reserve all rights\n"
+            "3AXD50000040570 (ASSEM) E.3+ © ABB Oy.\n"
+            "1:2 12 3AXD50000018805\n5x25 mm\nL=225 mm\n"
+            "3AXD50000026889\n5x12 mm\n3AXD50001016005\n"
+            "ASSEMBLY KIT: 3AXD50001107246\n"
+            "DMS Number 3AXD10002100550 Weight kg Total 1\n328\n26-Feb-24")
+    assert callouts(text) == ["3axd50000018805", "3axd50000026889", "3axd50001016005"]

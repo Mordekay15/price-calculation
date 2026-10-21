@@ -27,14 +27,13 @@ from core.sparrow import (
     sparrow_options,
 )
 from view import assemblies
-from view.common import NESTING_LABELS, SheetSettings, render_groups, render_pieces_summary
+from view.common import NESTING_LABELS, SheetSettings, render_groups
 from view.drawing import draw_sparrow_layout
 from view.dxf_files import source_cards
 from view.quote import render_batch_prices
 from view.sheet_usage import render_group
 from view.sparrow_progress import SparrowProgress, run_with_progress
-from view.ui import st
-from view.work import work_costs
+from view.ui import headless, st
 
 _CACHE = "dxf_sparrow_cache"    # {signature: computed group}
 _RUNS = "dxf_sparrow_runs"      # {instance key: SparrowResult}, every Sparrow run so far
@@ -61,9 +60,18 @@ class _Settings:
 
 
 def render_nesting(products: list[dict], n_parts: int, lookup: dict, nest_mode: str,
-                   sheet: SheetSettings, margin_pct: float) -> None:
-    """The run row, then every group's result and the prices. The part
-    cards are drawn above: ``products`` are what they return."""
+                   sheet: SheetSettings, margin_pct: float, *, prices: bool = False) -> None:
+    """The run row, then every group's result; with ``prices``, only the
+    prices instead (the groups priced headless). ``products`` are what the
+    part cards return."""
+    with headless(prices):
+        priced = _render_nesting(products, n_parts, lookup, nest_mode, sheet, margin_pct)
+    if prices:
+        _render_prices(products, priced)
+
+
+def _render_nesting(products, n_parts, lookup, nest_mode, sheet, margin_pct):
+    """The run row and the groups; returns what ``_show`` priced, or None."""
     exe = find_executable()
     if exe is None:
         st.error(
@@ -71,14 +79,14 @@ def render_nesting(products: list[dict], n_parts: int, lookup: dict, nest_mode: 
             "Aseta polku `SPARROW_BIN`-ympäristömuuttujaan tai lisää binääri "
             "`bin/sparrow`-tiedostoksi."
         )
-        return
+        return None
 
     st.divider()
     # Two rows above the button they apply to: the nesting angle, then the
     # search time with the buttons.
     shared = _render_angle_controls(n_parts)
     if shared == ():
-        return  # no angle ticked: the warning says so
+        return None  # no angle ticked: the warning says so
     c_time, c_run, c_update = st.columns([1, 2, 2], vertical_alignment="bottom")
     time_limit = c_time.number_input(
         "Sijoittelun hakuaika (s)", min_value=1, value=4, step=1, key="dxf_sparrow_t",
@@ -94,13 +102,14 @@ def render_nesting(products: list[dict], n_parts: int, lookup: dict, nest_mode: 
     run, update = _render_run_buttons(c_run, c_update, n_new, n_stale, len(groups))
     st.divider()  # the run buttons above, the results below
     renest = st.session_state.pop(_RENEST, set())
-    replanned = _show(products, groups, settings, cache, _nester(lookup, settings, exe),
-                      lambda s: _nester(lookup, s, exe, remembered_only=True),
-                      run=run, update=update, renest=renest)
+    replanned, priced = _show(groups, settings, cache, _nester(lookup, settings, exe),
+                              lambda s: _nester(lookup, s, exe, remembered_only=True),
+                              run=run, update=update, renest=renest)
     if run or update or renest or replanned:
         # The button's count was drawn before these groups were nested:
         # redraw it with the new count (e.g. "kaikki laskettu").
         st.rerun()
+    return priced
 
 
 _NESTING_LABELS = {
@@ -288,12 +297,12 @@ def _nester(lookup: dict, settings: _Settings, exe, *, remembered_only: bool = F
     return nest
 
 
-def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest, replan,
+def _show(groups, settings: _Settings, cache: dict, nest, replan,
           *, run: bool = False, update: bool = False,
-          renest: set = frozenset()) -> bool:
-    """Render every group's result, then the parts summary. True when a group
-    was planned from remembered Sparrow runs (the run button's count is then
-    out of date).
+          renest: set = frozenset()) -> tuple[bool, tuple]:
+    """Render every group's result. Returns whether a group was planned from
+    remembered Sparrow runs (the run button's count is then out of date), and
+    what the prices take: ``(groups, areas, render_groups' result)``.
 
     A group is nested in its own place first — so each result shows as soon
     as it is ready, not after the whole run — when ``run`` and it has no
@@ -351,23 +360,33 @@ def _show(products: list[dict], groups, settings: _Settings, cache: dict, nest, 
             note=note,
         )
 
-    prices, grand_total, missing, sheets, totals = render_groups(groups, render_one)
+    out = render_groups(groups, render_one)
+    _, grand_total, missing, _, _ = out
     if missing and grand_total is None:
         st.info("Paina **Laske levykäyttö** laskeaksesi levytarpeen ja hinnan.")
-        return bool(replanned)
-    if missing:
+    elif missing:
         st.warning("Yhteissumma sisältää vain lasketut ryhmät — paina **Laske "
                    "levykäyttö** laskeaksesi loput. Jo laskettuja ei "
                    "lasketa uudelleen.")
+    return bool(replanned), (groups, areas, out)
 
+
+def _render_prices(products: list[dict], priced: tuple | None) -> None:
+    """The batch prices, from what ``_show`` priced."""
+    if priced is None:
+        st.info("Levylaskenta ei ole valmis: katso Nestaus-välilehti.")
+        return
+    groups, areas, (prices, grand_total, missing, sheets, totals) = priced
+    if missing and grand_total is None:
+        st.info("Laske levykäyttö ensin Nestaus-välilehdellä.")
+        return
+    if missing:
+        st.warning("Hinnoissa ovat vain lasketut ryhmät: laske loput "
+                   "Nestaus-välilehdellä.")
     ready = [p for p in products if is_ready(p)]
-    render_pieces_summary(ready, prices,
-                          weight_label="Osien yhteispaino (kg)", lead="Osa",
-                          areas_mm2=areas, work=work_costs(ready, groups, sheets))
     render_batch_prices(ready, prices, groups, sheets, totals, lead="Osa", key="dxf",
                         areas_mm2=areas, clean_parts=[_clean_part(p) for p in ready],
-                        assemblies=assemblies.current(source_cards()))
-    return bool(replanned)
+                        assemblies=assemblies.current(source_cards()), table=False)
 
 
 def _clean_part(product: dict) -> CleanPart:

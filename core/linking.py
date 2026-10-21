@@ -83,3 +83,25 @@ def link_by_text(part_names: dict[str, str], texts: dict[str, str],
 def _stem(file_name: str) -> str:
     return PurePath(file_name).stem.strip().lower()
 
+
+
+# A part number in a drawing: six or more letters and digits with at least
+# five digits in a row (3AXD50001016005, ITM-072558, 100325).
+_PART_NUMBER = re.compile(r"(?<![\w.\-])(?=[a-z0-9\-]*\d{5})[a-z0-9]+(?:-[a-z0-9]+)?(?![\w.])",
+                          re.IGNORECASE)
+
+
+def callouts(text: str) -> list[str]:
+    """The part numbers an assembly drawing calls out, as ``base_key``s, in
+    order: a number alone on its line, or after only figures (``1:2 12
+    3AXD50000018805``). A number among words (``ASSEMBLY KIT: …``, ``DMS
+    Number …``, the title block) is the drawing's own data, not an item."""
+    out: list[str] = []
+    for line in (text or "").splitlines():
+        found = _PART_NUMBER.findall(line)
+        if len(found) != 1 or re.search(r"[a-z]", _PART_NUMBER.sub("", line), re.IGNORECASE):
+            continue
+        key = base_key(found[0])
+        if key not in out:
+            out.append(key)
+    return out

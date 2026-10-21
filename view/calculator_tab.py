@@ -1,4 +1,4 @@
-"""The manual calculator tab ("Hintalaskuri"): rectangular product cards, their
+"""The manual calculator tab ("Peruslaskuri"): rectangular product cards, their
 sheet usage per material + thickness group (bounding-box packer) and the
 pieces summary."""
 
@@ -20,7 +20,7 @@ from view.common import (
 from view.drawing import draw_rect_layout
 from view.quote import render_batch_prices
 from view.sheet_usage import render_group
-from view.work import piece_size, render_work_inputs, work_costs
+from view.work import render_work_inputs, work_costs
 
 
 def render(data: dict) -> None:
@@ -132,8 +132,7 @@ def _render_product(prod: dict, index: int, materials: list[str], lookup: dict) 
         )
 
         work = render_work_inputs(pid, material=material, thickness=thickness, qty=q,
-                                  cut_length_m=rect_cut_length_m(w, h),
-                                  **piece_size(w * h, material, thickness))
+                                  cut_length_m=rect_cut_length_m(w, h))
 
     prod["material"]  = material
     prod["thickness"] = thickness
