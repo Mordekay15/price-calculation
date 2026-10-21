@@ -365,10 +365,10 @@ def test_price_only_changes_update_without_the_calculate_button():
         real, tab.run_sparrow = tab.run_sparrow, counting
         try:
             st.session_state["replanned"] = tab._show(
-                prods, group_products(prods, "combined"), settings, cache,
+                group_products(prods, "combined"), settings, cache,
                 tab._nester(lookup, settings, "sparrow"),
                 lambda s: tab._nester(lookup, s, "sparrow", remembered_only=True),
-                run=step.get("run", False))
+                run=step.get("run", False))[0]
         finally:
             tab.run_sparrow = real
 
@@ -413,7 +413,9 @@ def test_a_pdf_links_to_its_part_and_its_material_can_be_applied(tmp_path, monke
 def test_a_chain_picks_its_calculators_on_the_card():
     from streamlit.testing.v1 import AppTest
 
-    at = AppTest.from_file("dxf_docs_page.py", default_timeout=30).run()
+    at = AppTest.from_file("dxf_docs_page.py", default_timeout=30)
+    at.session_state["screen"] = "Hinnoittelu"     # the work is drawn there
+    at.run()
     at.selectbox(key="work_chain_f0").set_value("Laser-Särmäys-Maalaus").run()
     assert at.multiselect(key="work_calcs_f0").value == ["sarmays", "maalaus"]
     assert not at.exception

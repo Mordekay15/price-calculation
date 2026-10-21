@@ -163,7 +163,10 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
         "Kpl-hinta jokaisella eräkoolla: materiaali + työ + erän kiinteät kulut "
         "jaettuna eräkoolla. Materiaali: ryhmän levyt nestattuna osakorttien "
         "määrillä; muilla eräkoilla tarvittavat kokonaiset levyt arvioidaan samalla "
-        "hukalla. Eräkoot muutetaan sivun yläosan Tarjous-kohdasta."))
+        "hukalla. Eräkoot muutetaan sivun yläosan Tarjous-kohdasta."
+        + (" 🧩 Kokoonpanon └-rivit ovat sen osuuksia yhdestä kokoonpanosta "
+           "(kpl / kokoonpano × €/kpl), ja niiden summa on kokoonpanon kpl-hinta."
+           if assemblies else "")))
     cols = st.columns(len(sizes) + 1)
     for col, q, t in zip(cols, sizes, line_totals):
         col.metric(f"Yhteensä, {q} kpl/nimike", fmt_eur(t) or "–",
@@ -189,10 +192,6 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
                          **{f"{q} kpl, €/kpl": None if u is None else round(u, 2)
                             for q, u in zip(sizes, m["units"])}})
     st.dataframe(rows, width="stretch", hide_index=True)
-    if assemblies:
-        st.caption("🧩 Kokoonpanon └-rivit ovat sen osuuksia yhdestä kokoonpanosta "
-                   "(kpl / kokoonpano × €/kpl), ja niiden summa on kokoonpanon kpl-hinta. "
-                   "Määrä on kappaleet kullakin eräkoolla.")
     _render_breakdown(costs, names, by_part, priced, sizes, rates, key)
 
     info = current_info()
@@ -227,9 +226,6 @@ def _file(make, package: str, slot) -> bytes | None:
 
 def _render_clean_dxfs(parts: list[CleanPart], key: str) -> None:
     with st.expander(f"Lataa puhtaat DXF:t tuotantoon ({len(parts)} osaa)"):
-        st.caption("Jokaisesta osasta vain leikattava geometria (ulkoreuna, reiät ja "
-                   "avoimet leikkaukset) tasolla CUT, millimetreinä. Kaaret ovat "
-                   "lyhyinä suorina paloina (enintään 0,2 mm poikkeama).")
         c1, c2 = st.columns([3, 2])
         template = c1.text_input(
             "Tiedostonimi", value=DEFAULT_DXF_NAME, key=f"quote_dxf_name_{key}",
@@ -238,6 +234,10 @@ def _render_clean_dxfs(parts: list[CleanPart], key: str) -> None:
                                key=f"quote_dxf_marks_{key}",
                                help="Merkinnät tasolle MARKING; niitä ei leikata.")
         st.download_button("Lataa ZIP", key=f"quote_dxf_zip_{key}",
+                           help="Jokaisesta osasta vain leikattava geometria (ulkoreuna, "
+                                "reiät ja avoimet leikkaukset) tasolla CUT, millimetreinä. "
+                                "Kaaret ovat lyhyinä suorina paloina (enintään 0,2 mm "
+                                "poikkeama).",
                            data=clean_dxf_zip(parts, template, markings=markings),
                            file_name="puhtaat_dxf.zip", mime="application/zip")
 

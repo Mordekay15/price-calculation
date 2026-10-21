@@ -19,11 +19,10 @@ import re
 from dataclasses import fields
 from collections.abc import Callable
 
-import streamlit as st
-
 from core.assemblies import Assembly, AssemblyWork, BoughtPart
 from core.work import FASTENER_INSERT_EUR
 from view import bom
+from view.ui import headless, is_headless, st
 
 ASSEMBLIES = "dxf_assemblies"
 _SEEN = "dxf_assemblies_seen"      # STEP file ids already made into assemblies
@@ -107,52 +106,63 @@ _WORK_LABELS = {
 }
 
 
-def render(card_of: dict[str, str], draw_cards: Callable[[str, dict[str, int]], None]) -> None:
+def render(card_of: dict[str, str], draw_cards: Callable[[str, dict[str, int]], None],
+           *, work: bool = True) -> None:
     """The assemblies, apart from the loose parts: each one's cards (drawn by
-    ``draw_cards(assembly id, {card id: kpl / kokoonpano})``), bought parts and assembly work."""
+    ``draw_cards(assembly id, {card id: kpl / kokoonpano})``), bought parts and
+    assembly work (drawn only with ``work``)."""
     store = _store()
     if not store:
         return
     st.divider()
-    st.markdown(f"**Kokoonpanot ({len(store)})**")
-    st.caption("Kokoonpano on yksi tarjousrivi: sen osat (kortit), ostetut osat ja "
-               "kokoamistyö. Eräkoko tarkoittaa kokoonpanojen määrää, ja jokainen osa "
-               "hinnoitellaan määrällä eräkoko × kpl / kokoonpano. STEP-kokoonpano "
-               "tehdään tänne automaattisesti.")
+    st.markdown(f"**Kokoonpanot ({len(store)})**",
+                help="Kokoonpano on yksi tarjousrivi: sen osat (kortit), ostetut osat ja "
+                     "kokoamistyö. Eräkoko tarkoittaa kokoonpanojen määrää, ja jokainen osa "
+                     "hinnoitellaan määrällä eräkoko × kpl / kokoonpano. STEP-kokoonpano "
+                     "tehdään tänne automaattisesti.")
     for aid in list(store):
-        _render_one(aid, store[aid], card_of, draw_cards)
+        _render_one(aid, store[aid], card_of, draw_cards, work)
 
 
 def _render_one(aid: str, a: dict, card_of: dict[str, str],
-                draw_cards: Callable[[str, dict[str, int]], None]) -> None:
+                draw_cards: Callable[[str, dict[str, int]], None], work: bool) -> None:
     with st.container(border=True):
         c1, c2 = st.columns([6, 1], vertical_alignment="bottom")
-        a["name"] = c1.text_input("Kokoonpano", value=a["name"], key=f"asm_name_{aid}")
+        a["name"] = c1.text_input("Kokoonpano", value=a["name"], key=f"asm_name_{aid}",
+                                  help="Tehty STEP-mallista: osat ja määrät mallin "
+                                       "rakenteesta." if a.get("auto") else None)
         if c2.button("Poista", key=f"asm_del_{aid}"):
             _store().pop(aid, None)
             st.rerun()
-        if a.get("auto"):
-            st.caption("Tehty STEP-mallista: osat ja määrät mallin rakenteesta.")
         draw_cards(aid, _cards_of(a, card_of))
+        with headless(not work):
+            _render_work(aid, a)
 
-        st.markdown("Ostetut osat", help="Valmiina ostettavat osat (ruuvit, tapit, "
-                    "puristemutterit, koneistetut osat…): (€/kpl + asennus) × kpl / "
-                    "kokoonpano. €/kpl on ostohinta, Asennus (€/kpl) yhden kappaleen "
-                    "kiinnitys osaan, esim. puristemutterin puristus.")
-        bought = st.data_editor(
-            a.get("bought_seed", []), key=f"asm_bought_{aid}", num_rows="dynamic",
-            hide_index=True, width="stretch",
-            column_config={_NAME: st.column_config.TextColumn(_NAME),
-                           _QTY: st.column_config.NumberColumn(_QTY, min_value=0, step=1),
-                           _EUR: st.column_config.NumberColumn(_EUR, min_value=0.0,
-                                                               step=0.05, format="%.2f"),
-                           _FIT: st.column_config.NumberColumn(_FIT, min_value=0.0,
-                                                               step=0.05, format="%.2f")})
-        a["bought"] = [dict(r) for r in bought]
 
-        cols = st.columns(len(_WORK_LABELS))
-        for col, (f, (label, step, help_)) in zip(cols, _WORK_LABELS.items()):
-            col.number_input(label, min_value=0.0, step=step, help=help_,
-                             value=float(st.session_state.get(f"asm_{f}_{aid}",
-                                                              _WORK_DEFAULTS[f])),
-                             key=f"asm_{f}_{aid}")
+def _render_work(aid: str, a: dict) -> None:
+    """The bought parts and the assembly work."""
+    st.markdown("Ostetut osat", help="Valmiina ostettavat osat (ruuvit, tapit, "
+                "puristemutterit, koneistetut osat…): (€/kpl + asennus) × kpl / "
+                "kokoonpano. €/kpl on ostohinta, Asennus (€/kpl) yhden kappaleen "
+                "kiinnitys osaan, esim. puristemutterin puristus.")
+    if is_headless():
+        # Not drawn: the editor forgets its edits, so it starts from them.
+        a["bought_seed"] = a.get("bought", a.get("bought_seed", []))
+        return
+    bought = st.data_editor(
+        a.get("bought_seed", []), key=f"asm_bought_{aid}", num_rows="dynamic",
+        hide_index=True, width="stretch",
+        column_config={_NAME: st.column_config.TextColumn(_NAME),
+                       _QTY: st.column_config.NumberColumn(_QTY, min_value=0, step=1),
+                       _EUR: st.column_config.NumberColumn(_EUR, min_value=0.0,
+                                                           step=0.05, format="%.2f"),
+                       _FIT: st.column_config.NumberColumn(_FIT, min_value=0.0,
+                                                           step=0.05, format="%.2f")})
+    a["bought"] = [dict(r) for r in bought]
+
+    cols = st.columns(len(_WORK_LABELS))
+    for col, (f, (label, step, help_)) in zip(cols, _WORK_LABELS.items()):
+        col.number_input(label, min_value=0.0, step=step, help=help_,
+                         value=float(st.session_state.get(f"asm_{f}_{aid}",
+                                                          _WORK_DEFAULTS[f])),
+                         key=f"asm_{f}_{aid}")

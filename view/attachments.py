@@ -134,10 +134,6 @@ def render_doc_list(parts: dict[str, str], labels: dict[str, str]) -> None:
     if n_unlinked:
         title += f" · {n_unlinked} ilman osaa"
     with st.expander(title, expanded=bool(n_unlinked)):
-        st.caption("PDF- ja STEP-tiedostot linkitetään osiin tiedostonimen osanumeron "
-                   "mukaan (revisiotunnus, esim. -revA, ohitetaan). Jos PDF:n nimi on eri "
-                   "(esim. piirustusnumero), osanumero etsitään PDF:n tekstistä. Vaihda "
-                   "osa tarvittaessa.")
         options = ["", *parts]
         manual = st.session_state.setdefault(_MANUAL, {})
         shown = [d for d in all_docs if d not in linked]

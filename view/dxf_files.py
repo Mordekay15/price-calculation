@@ -247,14 +247,13 @@ def _render_path_reader() -> list:
     disk, for an RFQ too big to upload (no upload limit, and it is read one
     file at a time). Returns its files once the button is pressed."""
     with st.expander("Lue ZIP tai kansio koneelta (iso tarjouspyyntö)"):
-        st.caption("Liitä ZIP-tiedoston tai kansion polku, esim. "
-                   "`D:\\Tarjoukset\\RFQ 580-07.zip` (Resurssienhallinnassa: Shift + "
-                   "hiiren oikea → Kopioi polkuna). Tiedostoa ei ladata selaimen kautta, "
-                   "joten kokorajaa ei ole.")
         c1, c2 = st.columns([5, 1], vertical_alignment="bottom")
         path = c1.text_input("Polku", key="dxf_path", label_visibility="collapsed",
                              placeholder="D:\\Tarjoukset\\RFQ.zip")
-        if not c2.button("Lue", key="dxf_path_read", disabled=not path.strip()):
+        if not c2.button("Lue", key="dxf_path_read", disabled=not path.strip(),
+                         help="Liitä ZIP-tiedoston tai kansion polku (Resurssienhallinnassa: "
+                              "Shift + hiiren oikea → Kopioi polkuna). Tiedostoa ei ladata "
+                              "selaimen kautta, joten kokorajaa ei ole."):
             return []
     skipped = st.session_state.setdefault(_PATH_SKIPPED, [])
     skipped.clear()

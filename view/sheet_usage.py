@@ -6,10 +6,10 @@ sheet, the fewest sheets, the fewest programs: see ``core.programs``), and the
 last row may cut the parts from several sizes (``SheetOption.mix``)."""
 
 import pandas as pd
-import streamlit as st
 
 from core.pricing import COPPER_MATERIAL, density_for_material
 from core.sheet_cost import GroupCost, SheetOption, cheapest_index, fmt_m
+from view.ui import is_headless, st
 
 
 def render_group(
@@ -43,8 +43,6 @@ def render_group(
     # The layout and metrics go above the table but depend on the row picked
     # in it: reserve their place, draw the table, then fill it.
     answer = st.container()
-    if len(options) > 1:
-        st.caption("Valitse rivi vaihtaaksesi levykokoa.")
     event = st.dataframe(
         _styled_table(_table_rows(options, result.n_pieces, cheapest_idx), cheapest_idx),
         width="stretch",
@@ -60,7 +58,8 @@ def render_group(
 
     active = options[_selected_index(event, options, cheapest_idx)]
     with answer:
-        draw_layout(active)
+        if not is_headless():
+            draw_layout(active)
         _render_summary(active, result.n_pieces)
 
     _render_breakdown(material, thickness, thickness_mm, margin_pct, result, active)

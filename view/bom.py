@@ -156,10 +156,6 @@ def render_bom(card_of: dict[str, str], on_change) -> None:
         return
     n_parts = sum(len(m["model"].parts) for m in all_models.values())
     with st.expander(f"STEP-mallit ({len(all_models)}) · {n_parts} osaa"):
-        st.caption("Levyosat avataan tasoaihioiksi. Jokainen osa on yksi kortti yhdessä "
-                   "saman osanumeron DXF-, DWG- ja PDF-tiedostojen kanssa, ja määrä tulee "
-                   "mallista. Muut kappaleet (esim. ostettavat tai koneistetut) näkyvät "
-                   "listassa, mutta niitä ei hinnoitella.")
         k = st.number_input(
             "K-kerroin", min_value=0.0, max_value=1.0, step=0.01, format="%.2f",
             value=float(st.session_state.get(K_FACTOR, step.DEFAULT_K_FACTOR)),

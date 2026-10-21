@@ -4,7 +4,12 @@ A Streamlit app that prices sheet-metal parts from supplier price lists.
 
 - **Hintalaskuri** (manual tab): enter rectangular parts. Parts are nested with
   a fast bounding-box packer.
-- **DXF/DWG-nestaus** (DXF tab): upload one DXF or DWG per part. The real shapes are
+- **BOM & Tiedostot**, **Nestaus** and **Hinnoittelu** (the DXF tab's three
+  screens, as in Offeri): the files and the part cards, then the nesting, then
+  each card's work and the prices. Only the open screen is drawn (the menu
+  reruns the page on a click), but each one runs every card, headless where
+  it isn't drawn (`view/ui.py`), so every screen prices every part and the
+  other screens' inputs are kept. Upload one DXF or DWG per part. The real shapes are
   nested with the [Sparrow](https://github.com/JeroenGar/sparrow) solver. Dropped
   files become part cards and the drop area empties; a card's **Poista**
   button removes the part, and **Poista kaikki** above the cards (asks to
@@ -25,8 +30,8 @@ for a plan production can repeat: one sheet program cut many times (see
 
 ## Work (Työvaiheet)
 
-Every part card on both tabs has a folded **Työvaiheet** section, and the page
-ends with **Kappalehinnat**: the price per piece, material plus work, as
+Every part card has a folded **Työvaiheet** section (on the DXF tab, on the
+Hinnoittelu screen), and the prices end with **Kappalehinnat**: the price per piece, material plus work, as
 `c + F / kpl` (what each piece costs, plus the batch's fixed costs shared over
 the quantity). Work has no margin; its rates are selling prices.
 

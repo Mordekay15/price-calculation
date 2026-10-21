@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import re
+from types import SimpleNamespace
 
 import streamlit
 
@@ -25,8 +27,9 @@ _PASS = {"session_state", "cache_data", "cache_resource", "column_config", "secr
 
 
 @contextlib.contextmanager
-def headless():
-    token = _HEADLESS.set(True)
+def headless(on: bool = True):
+    """Run without drawing; ``on`` False: as before (headless or not)."""
+    token = _HEADLESS.set(on or _HEADLESS.get())
     try:
         yield
     finally:
@@ -113,6 +116,10 @@ class _WIDGETS:
     def segmented_control(label, options, *args, default=None, key=None, **kwargs):
         return _state(key, default)
 
+    @staticmethod
+    def dataframe(data, *args, key=None, **kwargs):
+        rows = (_state(key, None) or {}).get("selection", {}).get("rows", [])
+        return SimpleNamespace(selection=SimpleNamespace(rows=list(rows)))
 
     @staticmethod
     def data_editor(data, *args, **kwargs):
@@ -140,3 +147,30 @@ class _St:
 
 
 st = _St()
+
+
+# Buttons, downloads and editors: their value can't be set through the session.
+_BUTTONS = ("dxf_del_", "dxf_fill_yes_", "dxf_fill_no_", "dxf_doc_dl_", "dxf_read_waiting",
+            "dxf_step_del_", "dxf_doc_del_", "dxf_renest::", "dxf_sparrow_run",
+            "dxf_sparrow_update", "dxf_path_read", "dxf_uploader_", "dxf_find_materials",
+            "dxf_ask_claude", "dxf_apply_materials", "dxf_material_table", "asm_del_",
+            "asm_bought_", "quote_pdf_dxf", "quote_xlsx_", "quote_dxf_zip_")
+
+
+def keep(owned) -> None:
+    """Keep the values of the widgets not drawn on this run: Streamlit forgets
+    a widget's value when the widget isn't drawn, and setting it through the
+    session keeps it. ``owned(key)`` picks them."""
+    ss = streamlit.session_state
+    for key in list(ss.keys()):
+        if isinstance(key, str) and not key.startswith(_BUTTONS) and owned(key):
+            ss[key] = ss[key]
+
+
+def ids_in(ids) -> re.Pattern:
+    """Matches a key with one of ``ids`` in it: a card's widget keys end in
+    its id, or have it before "_"."""
+    if not ids:
+        return re.compile(r"(?!)")
+    return re.compile("(?:" + "|".join(map(re.escape, sorted(ids, key=len, reverse=True)))
+                      + ")(?:_|$)")
