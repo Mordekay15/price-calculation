@@ -160,9 +160,9 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
     st.divider()
     st.markdown("**Eräkohtaiset hinnat**", help=(
         "Kpl-hinta jokaisella eräkoolla: materiaali + työ + erän kiinteät kulut "
-        "jaettuna eräkoolla. Materiaali kilohinnalla: osan paino × ryhmän €/kg "
-        "nestattuna osakorttien määrillä (hukka mukana), kaikilla eräkoilla. "
-        "Eräkoot muutetaan sivun yläosan Tarjous-kohdasta."))
+        "jaettuna eräkoolla. Materiaali: ryhmän levyt nestattuna osakorttien "
+        "määrillä; muilla eräkoilla tarvittavat kokonaiset levyt arvioidaan samalla "
+        "hukalla. Eräkoot muutetaan sivun yläosan Tarjous-kohdasta."))
     cols = st.columns(len(sizes) + 1)
     for col, q, t in zip(cols, sizes, quote_totals):
         col.metric(f"Yhteensä, {q} kpl/nimike", fmt_eur(t) or "–",

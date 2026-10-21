@@ -26,23 +26,23 @@ def test_batch_sizes_are_read_from_free_text(text, sizes):
 def test_the_nested_quantity_gets_the_nested_price():
     # Two parts of 1 kg nested 10 each on 2 sheets for 100 €.
     group = GroupSheets(total_eur=100.0, sheets=2, pieces_kg=20.0)
-    assert group.sheets_for(20.0) == 2 and group.eur_per_kg == 5.0
+    assert group.sheets_for(20.0) == 2 and group.eur_for(20.0) == 100.0
     assert group.sheets_for(2.0) == 1            # at least one whole sheet
     assert group.sheets_for(30.0) == 3           # 1.5 × the sheets, rounded up
 
 
-def test_each_batch_size_pays_material_by_the_kilo_and_shares_setup():
+def test_each_batch_size_shares_whole_sheets_and_setup():
     work = WorkInputs(cut_length_m=1.0, laser=LaserSpeed(10, 0.05))   # 0.50 €/kpl
     parts = [BatchPart("a", ("S235", "2"), kg=1.0, work=work),
              BatchPart("b", ("S235", "2"), kg=3.0, work=None)]
     groups = {("S235", "2"): GroupSheets(total_eur=80.0, sheets=1, pieces_kg=40.0)}
     prices = batch_prices(parts, groups, [1, 10], RATES)
     one, ten = prices["a"]
-    # Batch 1 is cut from one sheet but pays the nesting's 2 €/kg, not the sheet.
-    assert one.sheets == 1 and one.material == pytest.approx(2.0)
+    # Batch 1: 4 kg of pieces still takes one 80 € sheet: 20 €/kg.
+    assert one.sheets == 1 and one.material == pytest.approx(20.0)
     # Cutting 0.50 € is under the 7 € sheet minimum; setup 40 € over 1 piece.
     assert one.work.cut_minimum == pytest.approx(6.5)
-    assert one.unit == pytest.approx(2.0 + 0.5 + 6.5 + 40.0)
+    assert one.unit == pytest.approx(20.0 + 0.5 + 6.5 + 40.0)
     # Batch 10 is the nesting: 2 €/kg, the setup over 10 pieces.
     assert ten.material == pytest.approx(2.0)
     assert ten.unit == pytest.approx(2.0 + 0.5 + 0.2 + 4.0)
