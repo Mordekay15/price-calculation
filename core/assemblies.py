@@ -7,7 +7,8 @@ On the quote an assembly is one line and a batch size ``q`` means ``q``
 assemblies: each of its parts is priced at ``q × kpl / kokoonpano`` pieces
 (``core.batches``), and one assembly costs
 
-    Σ parts' €/kpl × kpl/kokoonpano + Σ bought parts + assembly work,
+    Σ parts' €/kpl × kpl/kokoonpano + Σ bought parts (price + putting in)
+    + assembly work,
 
 the work being ``(setup min / q + fitting min) / 60 × €/h``, plus welding
 at the shop's welding rate and anything else per assembly."""
@@ -35,6 +36,12 @@ class BoughtPart:
     name: str
     qty: int                      # per assembly
     eur: float = 0.0              # one piece
+    fit_eur: float = 0.0          # putting one piece in (e.g. pressing a PEM nut)
+
+    @property
+    def unit(self) -> float:
+        """One piece, bought and put in."""
+        return self.eur + self.fit_eur
 
 
 @dataclass(frozen=True)
@@ -90,7 +97,7 @@ def assembly_prices(assembly: Assembly, part_units: dict[str, list[float | None]
                     sizes: list[int], rates: WorkRates) -> list[AssemblyPrice]:
     """The assembly's price at each batch size. ``part_units`` is each part's
     €/kpl at each size (``BatchPrice.unit``), priced at ``q × kpl/kokoonpano``."""
-    bought = sum(b.qty * b.eur for b in assembly.bought)
+    bought = sum(b.qty * b.unit for b in assembly.bought)
     out = []
     for i, q in enumerate(sizes):
         units = [(part_units.get(pid, [None] * len(sizes))[i], n)

@@ -45,6 +45,9 @@ def test_an_assembly_adds_its_parts_bought_parts_and_work():
     assert one.parts == pytest.approx(18.0) and one.bought == pytest.approx(3.0)
     assert one.unit == pytest.approx(18 + 3 + 112)
     assert ten.unit == pytest.approx(14 + 3 + 58) and ten.total == pytest.approx(750)
+    # Putting a bought part in is priced with it.
+    pem = Assembly("z", "Levy", (), (BoughtPart("PEM", 4, 0.10, 0.20),))
+    assert assembly_prices(pem, {}, [1], RATES)[0].bought == pytest.approx(1.2)
     # A part without a price leaves the assembly unpriced.
     assert assembly_prices(a, {"p1": [None]}, [1], RATES)[0].unit is None
 

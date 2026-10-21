@@ -198,13 +198,15 @@ parts, work and contents.
 - **From a STEP assembly.** A dropped STEP file of several parts becomes an
   assembly automatically. Its sheet parts are the cards they are on, with the
   model's quantities as kpl / kokoonpano. Its other bodies (pins, screws,
-  machined parts) become **bought parts** with a € price to fill in. Removing
+  machined parts) become **bought parts** with a € price to fill in and an
+  **Asennus (€/kpl)** for putting one in (0.20 € by default for fasteners and
+  pins, e.g. pressing a PEM nut). Removing
   the STEP file removes its assembly.
 - **Apart from the loose parts.** **Osat** lists only the parts in no
   assembly. Each assembly below it shows its own cards, paged the same way.
 - **No cost twice.** A card in an assembly has no fasteners or welding: the
-  assembly's bought parts (PEM nuts and studs too, their pressing included in
-  the €/kpl) and its welding price them. The card keeps the part's own work
+  assembly's bought parts (PEM nuts and studs too, with their pressing as
+  Asennus) and its welding price them. The card keeps the part's own work
   and its setup (laser, bending); the assembly's setup is for assembling.
 - **Pricing.** A batch size counts assemblies. Each part is priced at
   `batch × kpl / kokoonpano` pieces, so its setup and sheets are shared over

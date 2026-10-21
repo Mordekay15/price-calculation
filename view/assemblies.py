@@ -15,18 +15,24 @@ stays on the right card when the card's files are regrouped."""
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 
 import streamlit as st
 
 from core.assemblies import Assembly, AssemblyWork, BoughtPart
+from core.work import FASTENER_INSERT_EUR
 from view import bom
 
 ASSEMBLIES = "dxf_assemblies"
 _SEEN = "dxf_assemblies_seen"      # STEP file ids already made into assemblies
 KEYS = (ASSEMBLIES, _SEEN)
 
-_NAME, _QTY, _EUR = "Nimike", "Kpl / kokoonpano", "€/kpl"
+_NAME, _QTY, _EUR, _FIT = "Nimike", "Kpl / kokoonpano", "€/kpl", "Asennus (€/kpl)"
+# Bought parts pressed or fitted into a sheet part: their putting in is priced
+# at FASTENER_INSERT_EUR each by default.
+_FASTENER = re.compile(r"PEM|MUTTER|RUUV|PULT|NIIT|HOLK|TAPP|NUT|SCREW|STUD|BOLT|RIVET|PIN",
+                       re.IGNORECASE)
 
 
 def _store() -> dict[str, dict]:
@@ -54,7 +60,8 @@ def sync_from_models() -> None:
             if flat is not None and flat.is_sheet:
                 members[bom.card_id(file_id, p.key)] = p.qty
             else:
-                bought.append({_NAME: p.name, _QTY: p.qty, _EUR: 0.0})
+                bought.append({_NAME: p.name, _QTY: p.qty, _EUR: 0.0,
+                               _FIT: FASTENER_INSERT_EUR if _FASTENER.search(p.name) else 0.0})
         store[f"step:{file_id}"] = {"name": m["name"].rsplit(".", 1)[0], "members": members,
                                     "bought": bought, "bought_seed": bought, "auto": file_id}
 
@@ -75,8 +82,9 @@ def current(card_of: dict[str, str]) -> list[Assembly]:
     out = []
     for aid, a in _store().items():
         bought = tuple(BoughtPart(str(r.get(_NAME) or ""), int(r.get(_QTY) or 0),
-                                  float(r.get(_EUR) or 0.0))
-                       for r in a.get("bought", []) if r.get(_NAME) or r.get(_EUR))
+                                  float(r.get(_EUR) or 0.0), float(r.get(_FIT) or 0.0))
+                       for r in a.get("bought", [])
+                       if r.get(_NAME) or r.get(_EUR) or r.get(_FIT))
         work = AssemblyWork(**{f: float(st.session_state.get(f"asm_{f}_{aid}", d))
                                for f, d in _WORK_DEFAULTS.items()})
         out.append(Assembly(aid, a["name"], tuple(_cards_of(a, card_of).items()), bought,
@@ -144,14 +152,17 @@ def _render_one(aid: str, a: dict, card_of: dict[str, str],
         draw_cards(aid, _cards_of(a, card_of))
 
         st.markdown("Ostetut osat", help="Valmiina ostettavat osat (ruuvit, tapit, "
-                    "puristemutterit, koneistetut osat…): kappalehinta × kpl / kokoonpano. "
-                    "Kiinnikkeen €/kpl sisältää myös sen puristuksen osaan.")
+                    "puristemutterit, koneistetut osat…): (€/kpl + asennus) × kpl / "
+                    "kokoonpano. €/kpl on ostohinta, Asennus (€/kpl) yhden kappaleen "
+                    "kiinnitys osaan, esim. puristemutterin puristus.")
         bought = st.data_editor(
             a.get("bought_seed", []), key=f"asm_bought_{aid}", num_rows="dynamic",
             hide_index=True, width="stretch",
             column_config={_NAME: st.column_config.TextColumn(_NAME),
                            _QTY: st.column_config.NumberColumn(_QTY, min_value=0, step=1),
                            _EUR: st.column_config.NumberColumn(_EUR, min_value=0.0,
+                                                               step=0.05, format="%.2f"),
+                           _FIT: st.column_config.NumberColumn(_FIT, min_value=0.0,
                                                                step=0.05, format="%.2f")})
         a["bought"] = [dict(r) for r in bought]
 

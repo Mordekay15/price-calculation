@@ -145,7 +145,7 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
             [{"name": f"\u2003└ {names.get(pid, '?')} × {n}",
               "units": units.get(pid, [None] * len(sizes))} for pid, n in a.members]
             + [{"name": f"\u2003└ {b.name} × {b.qty} (ostettu)",
-                "units": [b.eur] * len(sizes)} for b in a.bought])
+                "units": [b.unit] * len(sizes)} for b in a.bought])
     quote_totals = [None if any(line.prices[i].total is None for line in lines)
                     else sum(line.prices[i].total for line in lines)
                     for i in range(len(sizes))]

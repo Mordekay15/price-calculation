@@ -283,7 +283,7 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
         assemblies.sync_from_models()
         _render_part_cards(parts, ["S235"], {("2", "S235 | 1000x2000"): 900.0}, False)
         st.session_state["asm"] = [(a.name, dict(a.members),
-                                    [(b.name, b.qty) for b in a.bought])
+                                    [(b.name, b.qty, b.fit_eur) for b in a.bought])
                                    for a in assemblies.current(_card_of())]
         st.session_state["parts"] = [(fid, d.name) for fid, d in parts]
 
@@ -292,7 +292,7 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
     cards = dict((name, fid) for fid, name in at.session_state["parts"])
     # 2 × Kulma and Pohja are sheet cards; 6 × Tappi is a bought part.
     assert at.session_state["asm"] == [
-        ("runko", {cards["Pohja.dxf"]: 1, cards["Kulma.step"]: 2}, [("Tappi", 6)])]
+        ("runko", {cards["Pohja.dxf"]: 1, cards["Kulma.step"]: 2}, [("Tappi", 6, 0.20)])]
     assert any(c.value == "Osat: #1 Pohja.dxf × 1 · #2 Kulma.step × 2" for c in at.caption)
     assert not any("Kokoonpanossa" in c.value for c in at.caption)
     # Its cards are drawn inside it, not among the loose parts.
