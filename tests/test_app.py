@@ -108,3 +108,30 @@ def test_a_dxf_part_is_nested_for_the_largest_batch_size():
     assert "Määrä: **10 kpl**" in [m.value for m in at.markdown]
     at.text_input(key="quote_batch_sizes").set_value("2 25").run()
     assert "Määrä: **25 kpl**" in [m.value for m in at.markdown]
+
+
+def test_an_unpriced_part_leaves_the_money_columns_numeric():
+    # A part with no €/tn yet (one priced, one not): its cells are empty, not
+    # "", so the columns stay numbers (a mixed column fails Arrow, then warns).
+    import pandas as pd
+
+    def page():
+        from core.work import WorkInputs, WorkRates, work_cost
+        from view.common import render_pieces_summary
+
+        RATES = WorkRates()
+
+        prods = [{"id": i, "name": f"p{i}", "material": "S235", "thickness": "2",
+                  "width": 100.0, "height": 50.0, "qty": 2, "work": WorkInputs()}
+                 for i in ("a", "b")]
+        render_pieces_summary(prods, {"a": 900.0}, weight_label="kg", lead="Osa",
+                              work={"a": work_cost(WorkInputs(), 2, RATES),
+                                    "b": work_cost(WorkInputs(), 2, RATES)})
+
+    at = AppTest.from_function(page).run()
+    assert not at.exception
+    assert len(at.dataframe) == 2
+    for frame in at.dataframe:
+        for col in frame.value.columns:
+            if "€" in col:
+                assert pd.api.types.is_numeric_dtype(frame.value[col]), col
