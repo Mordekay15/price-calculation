@@ -5,8 +5,6 @@ one quote line.
   assembly: its sheet parts are the cards they are on, with the model's
   quantities, and its other bodies (pins, screws, machined parts) are bought
   parts to give a price.
-- **By hand.** "Uusi kokoonpano" makes an empty one; any card is ticked into
-  it with its kpl / kokoonpano.
 
 Session keys: ``ASSEMBLIES`` holds ``{assembly id: {"name", "members":
 {source id: kpl}, "bought": [row], "auto": STEP file id or None, …}}``. A
@@ -111,8 +109,7 @@ _WORK_LABELS = {
 
 def render(labels: dict[str, str], card_of: dict[str, str]) -> None:
     """The assemblies: each one's parts (ticked from the cards, with their
-    kpl / kokoonpano), bought parts and assembly work, and a button for a
-    new one. ``labels`` are the cards' "#1 · name"."""
+    kpl / kokoonpano), bought parts and assembly work. ``labels`` are the cards' "#1 · name"."""
     store = _store()
     title = f"Kokoonpanot ({len(store)})" if store else "Kokoonpanot"
     with st.expander(title, expanded=bool(store)):
@@ -122,13 +119,6 @@ def render(labels: dict[str, str], card_of: dict[str, str]) -> None:
                    "tehdään tänne automaattisesti.")
         for aid in list(store):
             _render_one(aid, store[aid], labels, card_of)
-        if st.button("Uusi kokoonpano", key="asm_new"):
-            n = 1 + sum(aid.startswith("m") for aid in store)
-            while f"m{n}" in store:
-                n += 1
-            store[f"m{n}"] = {"name": f"Kokoonpano {n}", "members": {}, "bought": [],
-                              "bought_seed": [], "auto": None}
-            st.rerun()
 
 
 def _render_one(aid: str, a: dict, labels: dict[str, str], card_of: dict[str, str]) -> None:

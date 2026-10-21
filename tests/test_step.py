@@ -296,9 +296,6 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
     assert at.session_state["asm"] == [
         ("runko", {cards["Pohja.dxf"]: 1, cards["Kulma.step"]: 2}, [("Tappi", 6)])]
     assert any("Kokoonpanossa **runko**: 2 kpl" in c.value for c in at.caption)
-    at.button(key="asm_new").click().run()                    # one by hand
-    assert [a[0] for a in at.session_state["asm"]] == ["runko", "Kokoonpano 1"]
-    assert at.session_state["asm"][1][1] == {}
 
 
 def test_a_kept_models_bodies_are_read_again_when_needed():

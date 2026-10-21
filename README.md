@@ -200,8 +200,6 @@ parts, work and contents.
   model's quantities as kpl / kokoonpano. Its other bodies (pins, screws,
   machined parts) become **bought parts** with a € price to fill in. Removing
   the STEP file removes its assembly.
-- **By hand.** **Uusi kokoonpano** makes an empty one, and you tick any cards
-  into it with their kpl / kokoonpano.
 - **Pricing.** A batch size counts assemblies. Each part is priced at
   `batch × kpl / kokoonpano` pieces, so its setup and sheets are shared over
   all of them. One assembly costs its parts' €/kpl × kpl/kokoonpano, plus the
@@ -360,7 +358,7 @@ view/                   Streamlit UI
   attachments.py        PDF/STEP files on the DXF tab, links, previews, Tarkastettu
   material_agent.py     the Materiaaliehdotukset panel
   bom.py                STEP-mallit: BOM, cards from unfolded parts, K factor, 3D view
-  assemblies.py         Kokoonpanot: from STEP assemblies or by hand, parts, bought parts, work
+  assemblies.py         Kokoonpanot: from STEP assemblies, parts, bought parts, work
   drawing.py            every SVG: sheet layouts and the DXF part preview
   sparrow_progress.py   progress bar while Sparrow runs
 
