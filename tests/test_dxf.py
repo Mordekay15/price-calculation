@@ -28,6 +28,20 @@ def test_plate_with_a_hole(drawing):
     assert math.isclose(report.holes[0].area_mm2, math.pi * 40 ** 2, rel_tol=1e-2)
 
 
+def test_windows_line_ends_and_a_broken_file_read_the_same(drawing):
+    """CRLF files (Pro/ENGINEER) and files only ``recover`` can read give the
+    same part as a clean one."""
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    clean = dxf_bytes(doc)
+    crlf = clean.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+    broken = clean.replace(b"EOF", b"")          # no end marker
+    for data in (crlf, broken):
+        report = read_dxf(data, "part.dxf").part()
+        assert report.problems == []
+        assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (300, 200)
+
+
 def test_outline_drawn_as_separate_lines_is_chained(drawing):
     doc, msp = drawing()
     for a, b in [((0, 0), (400, 0)), ((400, 0), (400, 100)), ((400, 100), (100, 100)),
@@ -56,6 +70,16 @@ def test_the_layer_choice_can_be_changed(drawing):
     rect(msp, 400, 0, 100, 100, layer="EXTRA")
     dxf = read_dxf(dxf_bytes(doc), "part.dxf")
     assert round(dxf.part({"EXTRA"}).outline.width_mm) == 100
+
+
+def test_a_drawing_sheets_many_outside_shapes_are_counted_not_all_kept(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    for i in range(400):                       # dimension ticks, text strokes…
+        msp.add_lwpolyline([(400 + i, 0), (400 + i, 5), (401 + i, 5)] * 5)
+    report = part_of(doc)
+    assert report.dropped_count == 400
+    assert sum(map(len, report.dropped)) <= 5000 < 400 * 15
 
 
 def test_detail_views_outside_the_part_are_dropped(drawing):
@@ -284,6 +308,18 @@ def test_gap_in_a_hole(drawing):
     assert "ei sulkeudu" in refused(doc)
 
 
+def test_straight_slits_inside_the_part_are_cut_not_refused(drawing):
+    # A louvred flat pattern (3axd50000036018_3.dxf): rows of single lines.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    for y in (50, 70, 90):
+        msp.add_line((100, y), (200, y))
+    report = part_of(doc)
+    assert report.problems == []
+    assert len(report.open_lines) == 3
+    assert round(report.cut_length_mm) == 1000 + 300
+
+
 def test_self_crossing_outline(drawing):
     doc, msp = drawing()
     msp.add_lwpolyline([(0, 0), (300, 200), (300, 0), (0, 200)], close=True)
@@ -293,3 +329,12 @@ def test_self_crossing_outline(drawing):
 def test_not_a_dxf_file():
     report = read_dxf(b"this is not a dxf file", "x.dxf").part()
     assert "ei voitu lukea" in " ".join(report.problems)
+
+
+def test_a_file_keeps_its_part_after_forgetting_its_lines(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    f = read_dxf(dxf_bytes(doc), "part.dxf")
+    report = f.part()
+    f.forget_lines()
+    assert f.pieces == [] and f.part() is report

@@ -5,16 +5,17 @@ renders both tabs on every run."""
 
 from dataclasses import dataclass
 
-import streamlit as st
-
 from core.pricing import (
     COPPER_MATERIAL,
     COPPER_THICKNESSES,
     get_materials,
     get_thicknesses_for_material,
 )
+from core.cutting_stock import have_solver
 from core.sheet_cost import EdgeGaps, piece_costs
+from core.work import WorkCost
 from view.drawing import edge_gaps_svg
+from view.ui import st
 
 
 def materials_with_copper(lookup: dict) -> list[str]:
@@ -25,13 +26,28 @@ def materials_with_copper(lookup: dict) -> list[str]:
     return materials
 
 
+def render_page_picker(n: int, per_page: int, *, key: str, label: str, prefix: str = "",
+                       suffix: str = "", help: str | None = None) -> range:
+    """The rows of a long list drawn now: all of ``n`` when they fit one page
+    of ``per_page``, else the page picked, labelled ``{prefix}1–20{suffix}``."""
+    pages = -(-n // per_page)
+    if pages <= 1:
+        return range(n)
+    if st.session_state.get(key, 0) >= pages:
+        st.session_state[key] = 0
+    page = st.selectbox(
+        label, range(pages), key=key, help=help,
+        format_func=lambda i: f"{prefix}{i * per_page + 1}–{min(n, (i + 1) * per_page)}{suffix}")
+    return range(page * per_page, min(n, (page + 1) * per_page))
+
+
 # ── Shared inputs ─────────────────────────────────────────────────────────────
 
 _PLACEHOLDER_MAT   = "— Valitse materiaali —"
 _PLACEHOLDER_THICK = "— Valitse paksuus —"
 
 
-def _thicknesses_for(lookup: dict, material: str | None) -> list[str]:
+def thicknesses_for(lookup: dict, material: str | None) -> list[str]:
     """Thicknesses available for ``material`` (empty if none is picked)."""
     if material == COPPER_MATERIAL:
         # Copper's thicknesses are fixed and available even with no price.
@@ -73,7 +89,7 @@ def render_material_thickness(
     )
     material = mat_raw if mat_raw != _PLACEHOLDER_MAT else None
 
-    thicknesses = _thicknesses_for(lookup, material)
+    thicknesses = thicknesses_for(lookup, material)
     if thicknesses:
         th_opts = [_PLACEHOLDER_THICK] + thicknesses
         th_default = thick_default if thick_default in thicknesses else _PLACEHOLDER_THICK
@@ -94,7 +110,7 @@ def render_material_thickness(
     return material, thickness
 
 
-ADVANCED_LABEL = "Lisäasetukset"
+_ADVANCED_LABEL = "Lisäasetukset"
 
 _BOTTOM_HELP = (
     "Kynsiraina — pitkän sivun kaista, johon koneen kynnet tarttuvat — "
@@ -139,11 +155,6 @@ class SheetSettings:
         return {"rankavali_mm": self.rankavali_mm, "edges_mm": self.edges_mm}
 
 
-def settings_summary(values: dict, labels: dict) -> str:
-    """The folded settings as one line, so a changed value is never hidden."""
-    return " · ".join(label(values[k]) for k, label in labels.items())
-
-
 _NEST_HELP = (
     "Yhdistettynä saman materiaalin ja paksuuden tuotteet sijoitellaan "
     "samoille levyille (sekanestaus). Erikseen-vaihtoehdolla kullekin "
@@ -162,12 +173,7 @@ _EDGES_HELP = (
 )
 
 
-def render_main_settings(
-    *,
-    margin_key: str,
-    key_prefix: str = "calc",
-    separate_label: str = "Laske jokainen tuote erikseen",
-) -> tuple[float, str]:
+def _render_main_settings(*, key_prefix: str, separate_label: str) -> tuple[float, str]:
     """The settings every quote touches, in one row: margin and "Sijoittelutapa".
 
     Returns ``(margin_pct, nest_mode)``; ``nest_mode`` is "combined" or
@@ -175,7 +181,8 @@ def render_main_settings(
     """
     c1, c2 = st.columns([1, 3])
     margin_pct = c1.number_input(
-        "Materiaalin kate (%)", min_value=0.0, value=15.0, step=0.5, key=margin_key,
+        "Materiaalin kate (%)", min_value=0.0, value=15.0, step=0.5,
+        key=f"{key_prefix}_margin_pct",
     )
     nest_mode = c2.radio(
         "Sijoittelutapa",
@@ -191,10 +198,21 @@ def render_main_settings(
     return margin_pct, nest_mode
 
 
-def render_nesting_inputs(*, key_prefix: str = "calc") -> SheetSettings:
+def render_settings(*, key_prefix: str, separate_label: str) -> tuple[float, str, SheetSettings]:
+    """The settings row (margin, nesting mode), then the folded sheet settings
+    and their one-line summary: ``(margin_pct, nest_mode, sheet)``."""
+    st.divider()
+    margin_pct, nest_mode = _render_main_settings(key_prefix=key_prefix,
+                                                  separate_label=separate_label)
+    with st.expander(_ADVANCED_LABEL):
+        sheet = _render_nesting_inputs(key_prefix=key_prefix)
+    st.caption(" · ".join(label(sheet.values()[k]) for k, label in NESTING_LABELS.items()))
+    return margin_pct, nest_mode, sheet
+
+
+def _render_nesting_inputs(*, key_prefix: str) -> SheetSettings:
     """Rankaväli and the four edge gaps, with a small sheet diagram that
-    shows which edge is which. The caller puts them in its
-    ``ADVANCED_LABEL`` expander."""
+    shows which edge is which."""
     rankavali_mm = int(st.columns(2)[0].number_input(
         "Rankaväli (mm)", min_value=0, value=0, step=1,
         key=f"{key_prefix}_rankavali_mm", help=_RANKAVALI_HELP,
@@ -219,14 +237,25 @@ def render_groups(groups: dict[tuple, list[dict]], render_one):
     """Render every group and collect the prices for the pieces summary.
 
     ``render_one(key, products)`` renders one group and returns
-    ``(total_eur, price_per_tonne)`` — either may be None when unpriced — or
-    None when the group has no result yet.
+    ``(total_eur, price_per_tonne, sheets)`` — the first two may be None when
+    unpriced — or None when the group has no result yet.
 
-    Returns ``(price_by_product_id, grand_total_eur, missing)``: the price
-    each product's pieces are billed at, the summed total (None when no group
-    was priced), and whether any group had no result yet.
+    Returns ``(price_by_product_id, grand_total_eur, missing, sheets,
+    totals)``: the price each product's pieces are billed at, the summed total
+    (None when no group was priced), whether any group had no result yet, the
+    sheets each priced group is cut from (for the cutting minimum) and each
+    priced group's material total (for the batch-size prices).
     """
+    if not have_solver():
+        # Without it the fewest-sheets and mixed-size plans silently vanish
+        # and an old, worse plan is shown: say so.
+        st.warning("Levysuunnitelmien optimointi ei ole käytössä: Python-paketti **scipy** "
+                   "puuttuu. Asenna se (`pip install -r requirements.txt`) ja käynnistä "
+                   "sovellus uudelleen — muuten näytetään vain levy kerrallaan täytetyt "
+                   "suunnitelmat.")
     prices: dict[str, float] = {}
+    sheets: dict[tuple, int] = {}
+    totals: dict[tuple, float] = {}
     grand_total = None
     missing = False
     for i, (key, prods) in enumerate(groups.items()):
@@ -236,13 +265,15 @@ def render_groups(groups: dict[tuple, list[dict]], render_one):
         if out is None:
             missing = True
             continue
-        total, ppt = out
+        total, ppt, n_sheets = out
         if total is not None:
             grand_total = (grand_total or 0.0) + total
+            sheets[key] = n_sheets
+            totals[key] = total
         if ppt is not None:
             for p in prods:
                 prices[p["id"]] = ppt
-    return prices, grand_total, missing
+    return prices, grand_total, missing, sheets, totals
 
 
 # ── Pieces summary ────────────────────────────────────────────────────────────
@@ -253,17 +284,19 @@ def render_pieces_summary(
     *,
     weight_label: str,
     lead: str,
-    areas_mm2: dict[str, float] | None = None,
+    work: dict[str, WorkCost] | None = None,
 ) -> None:
-    """The per-piece weight / cost table (see ``core.sheet_cost.piece_costs``)
-    and its totals. ``lead`` heads the first column: the product's name, or
-    its running number when it has none."""
-    costs = piece_costs(products, prices, areas_mm2)
+    """The per-piece weight / cost table (see ``core.sheet_cost.piece_costs``),
+    the piece prices with the work (``work`` by product id), and the totals.
+    ``lead`` heads the first column: the product's name, or its running number
+    when it has none."""
+    costs = piece_costs(products, prices)
     if not costs:
         return
+    work = work or {}
 
     def money(value, digits):
-        return "" if value is None else round(value, digits)
+        return None if value is None else round(value, digits)
 
     rows = [{
         lead:             pc.product.get("name", pc.index + 1),
@@ -280,9 +313,49 @@ def render_pieces_summary(
     total_cost_eur = sum(pc.batch_eur for pc in costs if pc.batch_eur)
 
     st.divider()
-    # The one total of the page: the sum of every priced group.
     m1, m2 = st.columns(2)
     if total_cost_eur:
         m1.metric("Materiaalikustannukset yhteensä (€)", f"{total_cost_eur:,.2f}")
     m2.metric(weight_label, f"{sum(pc.batch_kg for pc in costs):.3f}")
     st.dataframe(rows, width="stretch", hide_index=True)
+
+    priced = [(pc, work[pc.product["id"]]) for pc in costs if pc.product["id"] in work]
+    if priced:
+        _render_piece_prices(priced, lead, total_cost_eur)
+
+
+def _render_piece_prices(priced: list, lead: str, material_total: float) -> None:
+    """Price per piece: material + work, the batch costs shared over the
+    quantity (c + F / kpl), and the page's total."""
+    def r(value):
+        return round(value, 2)
+
+    rows = []
+    for pc, wc in priced:
+        unit = None if pc.eur is None or not wc.priced else pc.eur + wc.per_piece
+        rows.append({
+            lead:                     pc.product.get("name", pc.index + 1),
+            "Määrä (kpl)":            pc.product["qty"],
+            "Materiaali €/kpl":       None if pc.eur is None else r(pc.eur),
+            **{f"{phase} €/kpl": r(eur) if wc.priced or phase != "Leikkaus" else None
+               for phase, eur in wc.breakdown().items()},
+            "Asetus ym. €/kpl":       r(wc.batch_fixed / wc.qty),
+            "Kpl-hinta €":            None if unit is None else r(unit),
+            "Yhteensä €":             None if unit is None else r(unit * pc.product["qty"]),
+        })
+    work_total = sum(wc.batch for _, wc in priced if wc.priced)
+    complete = all(pc.eur is not None and wc.priced for pc, wc in priced)
+
+    st.markdown("**Kappalehinnat**", help=(
+        "Kpl-hinta = materiaali + työ + erän kiinteät kulut (asetus, ohjelmointi) "
+        "jaettuna kappalemäärällä. Työssä ei ole katetta. Leikkaus on "
+        "vähintään sivupalkin minimi levyä kohden."))
+    if any(wc.cut_minimum for _, wc in priced):
+        st.caption("Leikkaukseen on lisätty levykohtainen minimiveloitus.")
+    m1, m2 = st.columns(2)
+    m1.metric("Työ yhteensä (€)", f"{work_total:,.2f}")
+    m2.metric("Yhteensä (€, alv 0 %)", f"{material_total + work_total:,.2f}"
+              + ("" if complete else " *"))
+    st.dataframe(rows, width="stretch", hide_index=True)
+    if not complete:
+        st.caption("* Osalta puuttuu materiaalin tai laserin hinta; se ei ole summassa.")

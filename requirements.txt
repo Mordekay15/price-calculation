@@ -1,3 +1,9 @@
 streamlit
 pdfplumber
 ezdxf
+scipy
+reportlab
+openpyxl
+pypdfium2
+cadquery-ocp
+plotly

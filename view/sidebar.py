@@ -1,6 +1,7 @@
 """The sidebar: one PDF upload slot routed to the right supplier, a status line
-per saved price list, and the manual copper price. ``render`` returns the
-merged price data (copper always included)."""
+per saved price list, the manual copper price and the work rates (see
+``view.work``). ``render`` returns the merged price data (copper always
+included)."""
 
 import streamlit as st
 
@@ -12,6 +13,7 @@ from core.pricing import (
     COPPER_PRICE_STEP,
     build_copper_section,
 )
+from view.work import render_rates as render_work_rates
 
 _PLACEHOLDER_SUPPLIER = "— Valitse toimittaja —"
 
@@ -50,6 +52,9 @@ def render() -> dict:
 
         st.divider()
         copper_price_kg = _render_copper()
+
+        st.divider()
+        render_work_rates()
 
     merged.update(build_copper_section(copper_price_kg))
     return merged

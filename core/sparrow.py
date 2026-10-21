@@ -14,8 +14,11 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from core.dxf import DxfReport
-from core.geometry import bbox, bbox_wh, net_area, rotate_translate, signed_area
+from core.geometry import (bbox, bbox_wh, net_area, rotate_translate, signed_area,
+                           untangle)
+from core.cutting_stock import MixedSizes
 from core.programs import choose_plans, kit_plan
+from core.rect_nesting import box_candidates, box_sheet, fewest_sheets, keep_counts
 from core.sheet_cost import (
     EdgeGaps,
     GroupCost,
@@ -76,9 +79,9 @@ class SparrowPart:
 
     def shape_dict(self) -> dict:
         """The jagua-rs ``shape`` object for this part."""
-        outer = [list(p) for p in _clean_ring(self.outer)]
-        inner = [[list(p) for p in ring] for ring in map(_clean_ring, self.holes)
-                 if len(ring) >= 3]
+        outer = [list(p) for p in _simple_ring(self.outer, ccw=True)]
+        inner = [[list(p) for p in ring] for ring in
+                 (_simple_ring(h, ccw=False) for h in self.holes) if len(ring) >= 3]
         if not inner:
             return {"type": "simple_polygon", "data": outer}
         return {"type": "polygon", "data": {"outer": outer, "inner": inner}}
@@ -127,6 +130,20 @@ def _clean_ring(points: list[Point]) -> list[Point]:
             break
         pts.pop()
     return pts
+
+
+def _simple_ring(points: list[Point], *, ccw: bool) -> list[Point]:
+    """A ring jagua-rs accepts: cleaned (``_clean_ring``), with no edges that
+    cross or touch (a drawing's doubled line or small twist would make
+    Sparrow refuse the whole run, see ``core.geometry.untangle``), and wound
+    the standard way."""
+    pts = _clean_ring(points)
+    for _ in range(5):
+        fixed = _clean_ring(untangle(pts))
+        if fixed == pts:
+            break
+        pts = fixed
+    return _oriented(pts, ccw=ccw)
 
 
 def _oriented(points: list[Point], *, ccw: bool) -> list[Point]:
@@ -315,11 +332,6 @@ class PackResult:
     def sheets_needed(self) -> int:
         return sum(s.count for s in self.sheets)
 
-    @property
-    def used_area(self) -> float:
-        """Real part area over every physical sheet."""
-        return sum(s.used_area * s.count for s in self.sheets)
-
 
 def greedy_fixed_sheets(
     parts: list[SparrowPart],
@@ -448,17 +460,13 @@ def _probe(parts, demand: dict[int, int], sheet_w: float, sheet_h: float,
         if local_id < 0 or local_id >= len(active):
             continue
         orig_i = active[local_id]
-        part = parts[orig_i]
-        trans = (trans[0] - pad, trans[1] - pad)
-        outer = rotate_translate(part.outer, rot, trans)
-        minx, miny, maxx, maxy = bbox(outer)
-        if minx < -_TOL or miny < -_TOL or maxx > sheet_w + _TOL or maxy > sheet_h + _TOL:
-            continue  # spills past this sheet
         if left[orig_i] <= 0:
             continue
-        kept.append(Placed(orig_i, part.part_id, rot, outer,
-                           [rotate_translate(h, rot, trans) for h in part.holes],
-                           [rotate_translate(c, rot, trans) for c in part.construction]))
+        placed = _placed(parts, orig_i, rot, (trans[0] - pad, trans[1] - pad))
+        minx, miny, maxx, maxy = bbox(placed.outer)
+        if minx < -_TOL or miny < -_TOL or maxx > sheet_w + _TOL or maxy > sheet_h + _TOL:
+            continue  # spills past this sheet
+        kept.append(placed)
         left[orig_i] -= 1
     return None, kept, res.strip_width - 2 * pad
 
@@ -490,38 +498,45 @@ def sparrow_options(
     edges: EdgeGaps = EdgeGaps(),
     rankavali_mm: int = 0,
     on_progress=None,
+    renest_fn=None,
 ) -> GroupCost | None:
     """``core.sheet_cost.compute_options`` with Sparrow shape nesting.
 
     ``on_progress``, if given, receives ``("size", index=, count=, w=, h=)``
     before each sheet size and ``("sheet", w=, h=, placed=, total=)`` each time
-    a sheet layout is settled.
+    a sheet layout is settled. One more option may cut the parts from several
+    sizes (see ``core.cutting_stock.MixedSizes``). ``renest_fn``, if given, is
+    the solver for nesting a planned sheet again (``_plan_sheets``) instead
+    of ``run_fn``: which sheets those are depends on the prices.
     """
     n_pieces = sum(p.quantity for p in parts)
     part_area_mm2 = sum(net_area(p.outer, p.holes) * p.quantity for p in parts)
     separation = float(rankavali_mm) if rankavali_mm else None
+    mixed = MixedSizes([p.quantity for p in parts], [net_area(p.outer, p.holes) for p in parts])
 
     def pack_fn(sw: int, sh: int) -> list[Packing]:
         return _pack_on_short_side(
             parts, sw, sh, edges,
-            run_fn=run_fn, separation=separation, on_progress=on_progress,
+            run_fn=run_fn, separation=separation, on_progress=on_progress, mixed=mixed,
+            renest_fn=renest_fn,
         )
 
     return compute_options(
         lookup, material, thickness, thickness_mm,
         n_pieces=n_pieces, part_area_mm2=part_area_mm2, pack=pack_fn,
-        margin_pct=margin_pct, on_progress=on_progress,
+        margin_pct=margin_pct, on_progress=on_progress, mix=mixed.plan,
     )
 
 
-def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
-                        on_progress=None) -> list[Packing]:
+def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation, renest_fn=None,
+                        on_progress=None, mixed: MixedSizes | None = None) -> list[Packing]:
     """Pack the sheet one way only: Sparrow's fixed strip height is the sheet's
     short side and the strip runs along the long side (e.g. 1000 high, up to
     2000 long on a 1000 × 2000 sheet), both less the edge gaps.
 
     Returns the fewest-sheets packing and, when it is worth showing, the
-    repeatable-program one (see ``core.programs``)."""
+    repeatable-program one (see ``core.programs``). The size's candidate
+    sheets go to ``mixed``, also when some parts don't fit it."""
     long_side, short_side = max(sw, sh), min(sw, sh)
     x0, y0, ew, eh = usable_area(sw, sh, edges)
     on_sheet = None
@@ -531,15 +546,150 @@ def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation,
     pack = greedy_fixed_sheets(parts, ew, eh, run_fn=run_fn, separation=separation,
                                on_sheet=on_sheet)
 
-    def packing(sheets: list[PackedSheet]) -> Packing:
+    def packing(sheets: list[PackedSheet], ok: bool = pack.ok) -> Packing:
         return Packing(sheets=sheets, sheets_needed=sum(s.count for s in sheets),
                        eff_w=ew, eff_h=eh, draw_w=long_side, draw_h=short_side,
-                       failed=0 if pack.ok else 1, reason=pack.reason, x0=x0, y0=y0)
+                       failed=0 if ok else 1, reason="" if ok else pack.reason,
+                       x0=x0, y0=y0)
 
+    nest = {"run_fn": renest_fn or run_fn, "separation": separation}  # re-nests a holed sheet
     if not pack.ok:
+        if mixed is not None:
+            mixed.keep(_candidates(parts, [], ew, eh, separation),
+                       lambda plan: _packed(packing(_plan_sheets(parts, plan, ew, eh, **nest),
+                                                    ok=True)),
+                       sw * sh)
         return [packing(pack.sheets)]
     kit = _kit(parts, pack.sheets, ew, eh, run_fn=run_fn, separation=separation)
-    return [packing(sheets) for sheets in choose_plans(pack.sheets, kit)]
+    pool = _candidates(parts, [*pack.sheets, *(kit or [])], ew, eh, separation)
+    if pool is not None:
+        pool.update(_near_miss_sheets(parts, ew, eh, run_fn=run_fn, separation=separation))
+    if mixed is not None:
+        mixed.keep(pool, lambda plan: _packed(packing(_plan_sheets(parts, plan, ew, eh, **nest))),
+                   sw * sh)
+    fewest = fewest_sheets([p.quantity for p in parts], pool,
+                           [net_area(p.outer, p.holes) for p in parts], sw * sh)
+    fewest = fewest and _plan_sheets(parts, fewest, ew, eh, **nest)
+    return [packing(sheets) for sheets in choose_plans(pack.sheets, fewest, kit)]
+
+
+# Near misses (below) Sparrow checks on their real shapes, per sheet size, one
+# run each; and how much longer than the sheet a near miss's boxes may need.
+_NEAR_BUDGET = 2
+_NEAR_MAX_OVER = 0.25
+
+
+def _near_miss_sheets(parts, sheet_w, sheet_h, *, run_fn, separation) -> dict:
+    """Sheets the box check just misses, nested on the real shapes.
+
+    Boxes can't see shapes that hook into each other (notched corners in a
+    checkerboard, a part in another's recess), so they miss sheets that hold a
+    little more. For each part and each pair of parts, in the order's ratio:
+    the most the boxes fit on a sheet, then one more — the near miss — and how
+    much longer the sheet would have to be for its boxes. The smallest misses
+    (that have the area) are nested by Sparrow; those that fit join the
+    candidates. ``{counts: PackedSheet}``."""
+    q = [p.quantity for p in parts]
+    n = len(parts)
+    boxes = [p.sheet_size() for p in parts]
+    fixed = frozenset(i for i, p in enumerate(parts) if not p.turns)
+    gap = separation or 0.0
+    areas = [net_area(p.outer, p.holes) for p in parts]
+
+    def fits(counts, length=sheet_w):
+        return box_sheet(boxes, counts, length, sheet_h, gap, fixed=fixed) is not None
+
+    def as_counts(mix):
+        return [mix.get(i, 0) for i in range(n)]
+
+    misses = []
+    groups = [(i,) for i in range(n)] + [(i, j) for i in range(n) for j in range(i + 1, n)]
+    for group in groups:
+        demand = [q[i] if i in group else 0 for i in range(n)]
+        if not all(demand[i] for i in group):
+            continue
+        k = 0
+        while k < sum(demand) and fits(as_counts(_mix(demand, k + 1))):
+            k += 1
+        if k == sum(demand):
+            continue                    # the whole demand fits one sheet already
+        near = as_counts(_mix(demand, k + 1))
+        if sum(a * c for a, c in zip(areas, near)) > sheet_w * sheet_h:
+            continue                    # not even the area
+        lo, hi = sheet_w, sheet_w * (1 + _NEAR_MAX_OVER)
+        if not fits(near, hi):
+            continue                    # too far off
+        while hi - lo > 1:              # the shortest sheet its boxes fit
+            mid = (lo + hi) / 2
+            lo, hi = (lo, mid) if fits(near, mid) else (mid, hi)
+        misses.append((hi - sheet_w, group, near))
+
+    found = {}
+    for _, _, near in sorted(misses, key=lambda m: (m[0], m[1]))[:_NEAR_BUDGET]:
+        err, kept, _ = _probe(parts, {i: c for i, c in enumerate(near) if c}, sheet_w, sheet_h,
+                              run_fn=run_fn, separation=separation)
+        if err is None and len(kept) == sum(near):
+            found[tuple(near)] = _sheet(kept, sheet_w, sheet_h)
+    return found
+
+
+def _packed(packing: Packing) -> tuple[Packing, float]:
+    """A packing and the real part area on its sheets."""
+    return packing, sum(s.used_area * s.count for s in packing.sheets)
+
+
+def _by_part(pl) -> int:
+    return pl.part_index
+
+
+def _candidates(parts, seeds: list[PackedSheet], sheet_w, sheet_h, separation):
+    """Candidate sheets for the cutting-stock plan (``core.cutting_stock``):
+    Sparrow's own sheets (tighter than boxes: the shapes interlock) and the
+    sheets the box packer finds. Needs no Sparrow run."""
+    return box_candidates([p.sheet_size() for p in parts], [p.quantity for p in parts], seeds,
+                          sheet_w, sheet_h, separation or 0.0,
+                          fixed=frozenset(i for i, p in enumerate(parts) if not p.turns),
+                          index=_by_part)
+
+
+def _plan_sheets(parts, plan, sheet_w, sheet_h, *, run_fn=None,
+                 separation=None) -> list[PackedSheet]:
+    """A plan's ``[(repeats, counts, layout)]`` as sheets; a box sheet places
+    each real shape in its box.
+
+    A layout holding more pieces than its sheet needs would keep holes where
+    the extra pieces were: with ``run_fn`` its pieces are nested again on
+    their own (one Sparrow run), packed tight; the holed layout stays if that
+    run doesn't fit them all."""
+    sheets = []
+    for repeats, counts, layout in plan:
+        placed = (layout.placements if isinstance(layout, PackedSheet)
+                  else [_in_box(parts, b) for b in layout.placements])
+        kept = keep_counts(placed, counts, _by_part)
+        if run_fn is not None and len(kept) < len(placed):
+            err, tight, _ = _probe(parts, {i: n for i, n in enumerate(counts) if n},
+                                   sheet_w, sheet_h, run_fn=run_fn, separation=separation)
+            if err is None and len(tight) == len(kept):
+                kept = tight
+        sheets.append(_sheet(kept, sheet_w, sheet_h, repeats))
+    return sheets
+
+
+def _in_box(parts, box) -> Placed:
+    """The real part placed in a box packer's box: turned a quarter more when
+    the box is, its bounding box's corner on the box's."""
+    part = parts[box.product_idx]
+    rot = (part.orientations[0] + (90.0 if box.rotated else 0.0)) % 360.0
+    minx, miny, _, _ = bbox(rotate_translate(part.outer, rot, (0.0, 0.0)))
+    return _placed(parts, box.product_idx, rot, (box.x - minx, box.y - miny))
+
+
+def _placed(parts, index: int, rot: float, t: tuple[float, float]) -> Placed:
+    """Part ``index`` turned by ``rot`` degrees and moved by ``t``."""
+    part = parts[index]
+    return Placed(index, part.part_id, rot, rotate_translate(part.outer, rot, t),
+                  [rotate_translate(h, rot, t) for h in part.holes],
+                  [rotate_translate(c, rot, t) for c in part.construction])
 
 
 # Sparrow runs spent looking for a one-program kit on one sheet size; each run

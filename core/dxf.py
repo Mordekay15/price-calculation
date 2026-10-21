@@ -7,15 +7,19 @@ from __future__ import annotations
 import io
 import math
 import re
+import sys
+from array import array
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+import ezdxf
 from ezdxf import path, recover
 
 from core.geometry import (
     area,
     bbox,
     bbox_wh,
+    length,
     min_area_angle,
     point_in_polygon,
     representative_point,
@@ -100,14 +104,27 @@ _TEXT_UNIT_TO_CODE: dict[str, int] = {
 
 # ── Data model ───────────────────────────────────────────────────────────────
 
-@dataclass
 class _Piece:
-    """One flattened entity, in millimetres."""
+    """One flattened entity, in millimetres. Its points are kept as one flat
+    array of floats, not as a list of tuples: a big RFQ's drawings have
+    millions of them, and tuples take about seven times the memory."""
 
-    points: list[Point]
-    closed: bool
-    layer: str
-    solid: bool          # False for dashed / dotted (reference) linetypes
+    __slots__ = ("_xy", "closed", "layer", "solid")
+
+    def __init__(self, points: list[Point], closed: bool, layer: str, solid: bool):
+        self.points = points
+        self.closed = closed
+        self.layer = sys.intern(layer)
+        self.solid = solid   # False for dashed / dotted (reference) linetypes
+
+    @property
+    def points(self) -> list[Point]:
+        xy = self._xy
+        return list(zip(xy[0::2], xy[1::2]))
+
+    @points.setter
+    def points(self, points: list[Point]) -> None:
+        self._xy = array("d", [v for x, y in points for v in (x, y)])
 
 
 @dataclass
@@ -141,8 +158,31 @@ class DxfReport:
     reference_lines: list[list[Point]] = field(default_factory=list)
     open_lines: list[list[Point]] = field(default_factory=list)   # inside the part
     dropped: list[list[Point]] = field(default_factory=list)      # outside the part
+    dropped_more: int = 0      # shapes outside the part not kept (see _trim_dropped)
     # Why this part cannot be priced (empty = it can).
     problems: list[str] = field(default_factory=list)
+    # For the work price: threads drawn with the ISO mark, and bend lines.
+    threads: int = 0
+    bends: int = 0
+
+    @property
+    def dropped_count(self) -> int:
+        return len(self.dropped) + self.dropped_more
+
+    @property
+    def net_area_mm2(self) -> float:
+        """The part's real area: the outline less its holes."""
+        if self.outline is None:
+            return 0.0
+        return self.outline.area_mm2 - sum(h.area_mm2 for h in self.holes)
+
+    @property
+    def cut_length_mm(self) -> float:
+        """What the laser cuts: the outline, every hole and any open cut."""
+        if self.outline is None:
+            return 0.0
+        return (sum(length(c.points, closed=True) for c in (self.outline, *self.holes))
+                + sum(length(line) for line in self.open_lines))
 
 
 @dataclass
@@ -158,6 +198,15 @@ class DxfFile:
     texts: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)          # file-level
     unreadable: dict[str, dict[str, int]] = field(default_factory=dict)  # layer -> type -> n
+    # The part from the default layers, once built (see ``part``).
+    _default: DxfReport | None = field(default=None, repr=False, compare=False)
+
+    def forget_lines(self) -> None:
+        """Build the part from the default layers, then drop the drawing's
+        lines: only the part is used after that (a big RFQ's drawings are
+        millions of points). ``part`` with other layers can't be built after."""
+        self.part()
+        self.pieces = []
 
     def available_layers(self) -> list[str]:
         """Layers that carry geometry, sorted."""
@@ -172,7 +221,15 @@ class DxfFile:
         return [n for n in avail if not _is_non_cut_layer(n)] or avail
 
     def part(self, layers: set[str] | None = None) -> DxfReport:
-        """Build the main part from ``layers`` (default: ``suggested_layers``)."""
+        """Build the main part from ``layers`` (default: ``suggested_layers``,
+        built once and kept)."""
+        if layers is None:
+            if self._default is None:
+                self._default = self._part(None)
+            return self._default
+        return self._part(layers)
+
+    def _part(self, layers: set[str] | None) -> DxfReport:
         chosen = set(self.suggested_layers() if layers is None else layers)
         report = DxfReport(name=self.name, unit_label=self.unit_label,
                            problems=list(self.problems))
@@ -187,6 +244,8 @@ class DxfFile:
                 f"Valituilla tasoilla on elementtejä, joita ei vielä osata lukea: {listed}."
             )
 
+        if self.problems and not self.pieces:
+            return report  # the file couldn't be read: its own problem says why
         cut = [p for p in self.pieces if p.layer in chosen and p.solid]
         reference = [p for p in self.pieces if not (p.layer in chosen and p.solid)]
         contours = [Contour(p.points, True) for p in cut if p.closed]
@@ -199,6 +258,7 @@ class DxfFile:
         if not top:
             report.problems.append("Valituilta tasoilta ei löytynyt suljettua ääriviivaa.")
             report.dropped = [c.points for c in contours]
+            _trim_dropped(report)
             return report
 
         # The main part is the largest outline; everything inside it belongs to
@@ -221,16 +281,42 @@ class DxfFile:
         # that hole: drawn, not cut. Any other open line is a real gap.
         report.holes = [c for c in inner if c.closed and c.depth == 1]
         report.reference_lines = _lines_inside(main, [p.points for p in reference])
+        report.bends = len(_lines_inside(main, [p.points for p in reference
+                                                if _is_bend_layer(p.layer)]))
         rings = [c for c in inner if c.closed]
         for c in inner:
-            if c.closed and c.depth >= 2 or not c.closed and _is_thread_mark(c.points, rings):
+            if not c.closed and _is_thread_mark(c.points, rings):
+                report.threads += 1
+                report.reference_lines.append(c.points)
+            elif c.closed and c.depth >= 2:
                 report.reference_lines.append(c.points)
             elif not c.closed:
                 report.open_lines.append(c.points)
 
         report.problems += _part_problems(report)
+        _trim_dropped(report)
         _lay_along_length(report)
         return report
+
+
+_DROPPED_POINTS = 5000   # points kept of the shapes outside the part
+
+
+def _trim_dropped(report: DxfReport) -> None:
+    """Keep only the biggest shapes outside the part, up to ``_DROPPED_POINTS``
+    points: they are only drawn grey in a small preview, and a drawing sheet's
+    views and dimensions can be a million points (a big RFQ's memory). The
+    rest are counted in ``dropped_more``."""
+    if sum(map(len, report.dropped)) <= _DROPPED_POINTS:
+        return
+    kept, n = [], 0
+    for line in sorted(report.dropped, key=lambda ln: -sum(bbox_wh(ln))):
+        if n + len(line) > _DROPPED_POINTS:
+            continue
+        kept.append(line)
+        n += len(line)
+    report.dropped_more = len(report.dropped) - len(kept)
+    report.dropped = kept
 
 
 # A part within this many degrees of lying along its length is left as drawn,
@@ -273,7 +359,7 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
     """Read one DXF file's bytes. Never raises: a bad file comes back with problems."""
     f = DxfFile(name=name)
     try:
-        doc, _auditor = recover.read(io.BytesIO(data))
+        doc = _load(data)
     except Exception as exc:  # noqa: BLE001 — never let a bad file crash the app
         f.problems.append(f"Tiedostoa ei voitu lukea DXF-muodossa ({exc}).")
         return f
@@ -318,12 +404,48 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
     return f
 
 
+def _load(data: bytes):
+    """The DXF document: read the usual way and checked (``audit``), which is
+    several times faster than ezdxf's ``recover``; a file that can't be read
+    so (broken structure, binary DXF) goes through ``recover``."""
+    if not data.startswith(b"AutoCAD Binary DXF"):
+        try:
+            from ezdxf.lldxf.validator import dxf_info
+
+            head = io.StringIO(data[:1 << 16].decode("cp1252", errors="ignore"), newline=None)
+            text = data.decode(dxf_info(head).encoding, errors="surrogateescape")
+            doc = ezdxf.read(io.StringIO(text, newline=None))   # CRLF files too
+            doc.audit()
+            return doc
+        except Exception:  # noqa: BLE001 — recover reads what it can
+            pass
+    doc, _auditor = recover.read(io.BytesIO(data))
+    return doc
+
+
+_SLIT_TOL_MM = 0.01      # a slit's points are this close to the line between its ends
+_SLIT_MIN_MM = 1.0
+
+
+def is_slit(points: list[Point]) -> bool:
+    """A single straight line inside the part, such as a louvre or a lanced
+    slit in a flat pattern: cut as a line, not a broken hole outline (a gap
+    in a hole leaves a bent chain: an arc or the rest of a rectangle)."""
+    (x0, y0), (x1, y1) = points[0], points[-1]
+    span = math.hypot(x1 - x0, y1 - y0)
+    if span < _SLIT_MIN_MM:
+        return False
+    return all(abs((x - x0) * (y1 - y0) - (y - y0) * (x1 - x0)) / span <= _SLIT_TOL_MM
+               for x, y in points)
+
+
 def _part_problems(report: DxfReport) -> list[str]:
     """Why a built part cannot be priced — each reason in plain Finnish."""
     out = []
     rings = [report.outline, *report.holes]
-    if report.open_lines:
-        n = len(report.open_lines)
+    gaps = [line for line in report.open_lines if not is_slit(line)]
+    if gaps:
+        n = len(gaps)
         lines = "1 viiva osan sisällä ei" if n == 1 else f"{n} viivaa osan sisällä ei"
         out.append(f"{lines} sulkeudu ääriviivaksi — reiän ääriviivassa on aukko?")
     if any(len(c.points) <= _SELF_INTERSECT_EDGE_CAP and _self_intersects(c.points)
@@ -408,6 +530,24 @@ def _explode_blocks(entities):
             yield from e.attribs
         else:
             yield e
+
+
+_FASTENERS = re.compile(r"(?:MUTTER|RUUV|PULT|NIIT|HOLK|TAPP)\w*\D*?(\d+)\s*KPL",
+                        re.IGNORECASE)
+
+
+def fasteners_from_texts(texts: list[str]) -> int:
+    """Fasteners the drawing's notes ask for (nuts, screws, bolts, rivets,
+    bushes, studs), e.g. "M5-PURISTEMUTTERIT X4KPL" and "M4-PURISTEMUTTERIT
+    5KPL" make 9."""
+    return sum(int(n) for t in texts for n in _FASTENERS.findall(t))
+
+
+def _is_bend_layer(name: str) -> bool:
+    """A layer of bend lines (e.g. IV_BEND, IV_BEND_DOWN), not their extents."""
+    name = name.lower()
+    return (any(k in name for k in ("bend", "taiv", "taitto", "kantti"))
+            and "extent" not in name)
 
 
 def _is_non_cut_layer(name: str) -> bool:

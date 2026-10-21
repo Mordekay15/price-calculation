@@ -57,7 +57,12 @@ def test_rect_options_prices_every_sheet_size():
     assert math.isclose(small.utilization, 0.655)
     assert result.n_pieces == 20
     assert math.isclose(result.pieces_kg, (400 * 300 * 17 + 900 * 700 * 3) * 2 * 8e-6)
-    assert cheapest_index(result.options) == 0
+    # of the single sizes, the small one is cheapest; one small sheet and one
+    # 1250 × 2500 together are cheaper still (see test_cutting_stock)
+    *single, mixed = result.options
+    assert cheapest_index(single) == 0
+    assert [(o.sw, o.sheets_needed) for o in mixed.mix] == [(1000, 1), (1250, 1)]
+    assert mixed.total_eur < small.total_eur and cheapest_index(result.options) == 3
 
 
 def test_margin_raises_the_price_per_tonne():
@@ -172,12 +177,13 @@ def test_rect_quantities_that_split_evenly_become_one_program():
 
 def test_mixed_rect_parts_get_both_plans_with_exact_quantities():
     lookup = {("2", "S235 | 1000x2000"): 900.0}
-    # 20 a + 5 b: greedy needs 4 sheets over 4 layouts; one program of
-    # 4 a + 1 b cut 5 times needs a sheet more
+    # 20 a + 5 b: the fewest sheets are 4 (the greedy packer's 4 layouts, the
+    # cutting-stock plan's 2); one program of 4 a + 1 b cut 5 times needs a
+    # sheet more
     products = [{"id": "a", "width": 500, "height": 500, "qty": 20, "_global_idx": 0},
                 {"id": "b", "width": 1000, "height": 500, "qty": 5, "_global_idx": 1}]
     options = rect_options(lookup, "S235", "2", 2.0, products).options
-    assert [(o.sheets_needed, o.programs) for o in options] == [(4, 4), (5, 1)]
+    assert [(o.sheets_needed, o.programs) for o in options] == [(4, 2), (5, 1)]
     for o in options:
         made = [0, 0]
         for sheet in o.packing.sheets:
@@ -185,3 +191,31 @@ def test_mixed_rect_parts_get_both_plans_with_exact_quantities():
                 made[pl.product_idx] += sheet.count
         assert made == [20, 5]
     assert cheapest_index(options) == 0          # the extra sheet costs more
+
+
+def test_repricing_matches_computing_again_when_prices_scale_evenly():
+    # Computed at 15 % on 2 mm, re-priced to 20 % on 3 mm: the same numbers as
+    # computing at 20 % on 3 mm, mixed-size option included.
+    from core.sheet_cost import reprice, scales_evenly, sheet_eur, size_prices
+    lookup = {(t, f"S235 | {s}"): p for t in ("2", "3")
+              for s, p in (("1000x2000", 900.0), ("1500x3000", 850.0))}
+    products = [{"id": "a", "width": 1400, "height": 1200, "qty": 1, "_global_idx": 0},
+                {"id": "b", "width": 950, "height": 950, "qty": 2, "_global_idx": 1}]
+    before = rect_options(lookup, "S235", "2", 2.0, products, margin_pct=15.0)
+    after = rect_options(lookup, "S235", "3", 3.0, products, margin_pct=20.0)
+    prices = {(w, h): p for w, h, p in size_prices(lookup, "S235", "3")}
+    again = reprice(before, material="S235", thickness_mm=3.0, base_ppt=prices, margin_pct=20.0)
+    assert any(o.mix for o in again.options)
+    for got, want in zip(again.options, after.options):
+        assert (got.sheets_needed, got.programs) == (want.sheets_needed, want.programs)
+        assert math.isclose(got.total_eur, want.total_eur)
+        assert math.isclose(got.bill_rate_ppt, want.bill_rate_ppt)
+        assert math.isclose(got.utilization, want.utilization)
+    assert math.isclose(again.pieces_kg, after.pieces_kg)
+
+    def eur(thickness_mm, margin, prices):
+        return {(w, h): sheet_eur(w, h, p, thickness_mm, "S235", margin) for w, h, p in prices}
+    two = size_prices(lookup, "S235", "2")
+    assert scales_evenly(eur(2.0, 15.0, two), eur(3.0, 20.0, two))          # margin, thickness
+    uneven = [(w, h, p * (1.1 if w == 1000 else 1.0)) for w, h, p in two]  # a new price list
+    assert not scales_evenly(eur(2.0, 15.0, two), eur(2.0, 15.0, uneven))

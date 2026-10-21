@@ -79,7 +79,7 @@ def test_greedy_fills_a_sheet_then_repeats_the_layout():
     assert pack.ok
     assert [(len(s.placements), s.count) for s in pack.sheets] == [(4, 2), (2, 1)]
     assert pack.sheets_needed == 3
-    assert math.isclose(pack.used_area, 10 * 100 * 100)
+    assert math.isclose(sum(s.used_area * s.count for s in pack.sheets), 10 * 100 * 100)
 
 
 def made(packing):
@@ -92,13 +92,14 @@ def made(packing):
 
 
 def test_mixed_parts_get_a_one_program_plan_next_to_the_fewest_sheets():
-    # 4 squares per 250 × 250 sheet. Greedy: 4 sheets over 3 layouts; one
-    # program of 2 a + 1 b, cut 5 times, needs a sheet more.
+    # 4 squares per 250 × 250 sheet. Greedy: 4 sheets over 3 layouts; the
+    # fewest sheets in 2 programs (3 a + 1 b ×3, 1 a + 2 b); one program of
+    # 2 a + 1 b, cut 5 times, needs a sheet more.
     result = sparrow_options({("2", "S235 | 250x250"): 900.0}, "S235", "2", 2.0,
                              [square(quantity=10, name="a"), square(quantity=5, name="b")],
                              run_fn=fake_solver)
     fewest, kit = result.options
-    assert (fewest.sheets_needed, fewest.programs) == (4, 3)
+    assert (fewest.sheets_needed, fewest.programs) == (4, 2)
     assert (kit.sheets_needed, kit.programs) == (5, 1)
     assert made(fewest.packing) == made(kit.packing) == {"a": 10, "b": 5}
 
@@ -262,3 +263,24 @@ def test_real_sparrow_binary():
     assert 199 < result.strip_width < 301
     bad = {**instance, "items": [{**instance["items"][0], "shape": {"type": "simple_polygon", "data": [[0, 0], [1, 0]]}}]}
     assert "at least 3 points" in run_sparrow(bad, executable=exe, time_limit_sec=2).message
+
+
+def test_a_ring_that_crosses_itself_is_made_simple_for_sparrow():
+    from core.geometry import area, first_crossing, untangle
+    from core.sparrow import SparrowPart
+
+    square = [(0, 0), (100, 0), (100, 50), (0, 50)]
+    assert untangle(square + [(0, 0)]) == square                  # simple: unchanged
+    # A line drawn twice (out to x=120 and back) and a small twist on the
+    # top edge: Sparrow said "Simple polygon contains intersecting edges".
+    spike = [(0, 0), (100, 0), (120, 0), (100, 0), (100, 50), (60, 50),
+             (55, 55), (55, 45), (50, 50), (0, 50)]
+    assert first_crossing(spike) is not None
+    fixed = untangle(spike)
+    assert first_crossing(fixed) is None
+    assert abs(area(fixed) - 5000) < 30
+    shape = SparrowPart("p", 1, spike, holes=[[(10, 10), (20, 20), (20, 10), (10, 20)]]
+                        ).shape_dict()
+    outer, (hole,) = shape["data"]["outer"], shape["data"]["inner"]
+    assert first_crossing([tuple(p) for p in outer]) is None
+    assert first_crossing([tuple(p) for p in hole]) is None

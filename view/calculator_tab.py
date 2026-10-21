@@ -1,4 +1,4 @@
-"""The manual calculator tab ("Hintalaskuri"): rectangular product cards, their
+"""The manual calculator tab ("Peruslaskuri"): rectangular product cards, their
 sheet usage per material + thickness group (bounding-box packer) and the
 pieces summary."""
 
@@ -8,20 +8,19 @@ import streamlit as st
 
 from core.pricing import build_lookup, parse_thickness_mm
 from core.rect_nesting import rect_options
-from core.sheet_cost import group_products
+from core.sheet_cost import EdgeGaps, group_products, price_by_size, reprice
+from core.work import rect_cut_length_m
 from view.common import (
-    ADVANCED_LABEL,
-    NESTING_LABELS,
     materials_with_copper,
     render_groups,
-    render_main_settings,
     render_material_thickness,
-    render_nesting_inputs,
     render_pieces_summary,
-    settings_summary,
+    render_settings,
 )
 from view.drawing import draw_rect_layout
+from view.quote import render_batch_prices
 from view.sheet_usage import render_group
+from view.work import render_work_inputs, work_costs
 
 
 def render(data: dict) -> None:
@@ -29,21 +28,26 @@ def render(data: dict) -> None:
 
     products = _render_products(materials_with_copper(lookup), lookup)
 
-    st.divider()
-    margin_pct, nest_mode = render_main_settings(margin_key="calc_margin_pct")
-    with st.expander(ADVANCED_LABEL):
-        sheet = render_nesting_inputs()
-    st.caption(settings_summary(sheet.values(), NESTING_LABELS))
+    margin_pct, nest_mode, sheet = render_settings(
+        key_prefix="calc", separate_label="Laske jokainen tuote erikseen")
 
     def render_one(key, prods):
         material, thickness = key[0], key[1]
         thickness_mm = parse_thickness_mm(thickness)
         if thickness_mm is None:
             return None
-        result = rect_options(
-            lookup, material, thickness, thickness_mm, prods,
-            margin_pct=margin_pct, edges=sheet.gaps(), rankavali_mm=sheet.rankavali_mm,
+        gaps = sheet.gaps()
+        result = _options(
+            lookup, material, thickness, thickness_mm,
+            [{k: v for k, v in p.items() if k != "work"} for p in prods],
+            (gaps.top, gaps.bottom, gaps.left, gaps.right), sheet.rankavali_mm,
         )
+        if result is not None:
+            # The margin only prices the plans: applied here, so changing it
+            # is instant (one factor on every sheet keeps the same plans).
+            result = reprice(result, material=material, thickness_mm=thickness_mm,
+                             base_ppt=price_by_size(lookup, material, thickness),
+                             margin_pct=margin_pct)
         ids = "-".join(str(p["id"]) for p in prods)
         return render_group(
             material, thickness, thickness_mm, result, margin_pct=margin_pct,
@@ -53,11 +57,24 @@ def render(data: dict) -> None:
 
     groups = group_products(products, nest_mode)
     prices: dict[str, float] = {}
+    sheets: dict[tuple, int] = {}
+    totals: dict[tuple, float] = {}
     if groups:
         st.divider()
-        prices, _, _ = render_groups(groups, render_one)
+        prices, _, _, sheets, totals = render_groups(groups, render_one)
     render_pieces_summary(products, prices,
-                          weight_label="Kappaleiden yhteispaino (kg)", lead="#")
+                          weight_label="Kappaleiden yhteispaino (kg)", lead="#",
+                          work=work_costs(products, groups, sheets))
+    render_batch_prices(products, prices, groups, sheets, totals, lead="#", key="calc")
+
+
+@st.cache_data(max_entries=64, show_spinner="Etsitään vähiten levyjä käyttävää suunnitelmaa…")
+def _options(lookup, material, thickness, thickness_mm, prods, edges, rankavali_mm):
+    """``rect_options`` without the margin, kept until a part or setting
+    changes: the fewest-sheets search can take a few seconds on a large
+    order. The caller applies the margin (``reprice``)."""
+    return rect_options(lookup, material, thickness, thickness_mm, prods,
+                        edges=EdgeGaps(*edges), rankavali_mm=rankavali_mm)
 
 
 # ── Product cards ─────────────────────────────────────────────────────────────
@@ -114,11 +131,15 @@ def _render_product(prod: dict, index: int, materials: list[str], lookup: dict) 
             step=1, key=f"q_{pid}",
         )
 
+        work = render_work_inputs(pid, material=material, thickness=thickness, qty=q,
+                                  cut_length_m=rect_cut_length_m(w, h))
+
     prod["material"]  = material
     prod["thickness"] = thickness
     prod["width"]     = w
     prod["height"]    = h
     prod["qty"]       = q
+    prod["work"]      = work
     return delete_requested
 
 
