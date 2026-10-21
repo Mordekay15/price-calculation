@@ -301,9 +301,9 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
         "Pohja.dxf", "Kulma.step"]
     # The assembly prices fasteners and welding, so its cards don't.
     keys = {n.key for n in at.number_input}
-    assert f"work_insert_eur_{cards['Kulma.step']}" in keys
-    assert not {f"work_weld_{cards['Kulma.step']}",
-                f"work_fastener_eur_{cards['Kulma.step']}"} & keys
+    assert f"work_bends_{cards['Kulma.step']}" in keys
+    assert not {f"work_{k}_{cards['Kulma.step']}"
+                for k in ("fasteners", "fastener_eur", "insert_eur", "weld")} & keys
 
 
 def test_a_kept_models_bodies_are_read_again_when_needed():

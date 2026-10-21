@@ -145,7 +145,7 @@ def _render_one(aid: str, a: dict, card_of: dict[str, str],
 
         st.markdown("Ostetut osat", help="Valmiina ostettavat osat (ruuvit, tapit, "
                     "puristemutterit, koneistetut osat…): kappalehinta × kpl / kokoonpano. "
-                    "Osakortti laskee vain kiinnikkeiden asennuksen.")
+                    "Kiinnikkeen €/kpl sisältää myös sen puristuksen osaan.")
         bought = st.data_editor(
             a.get("bought_seed", []), key=f"asm_bought_{aid}", num_rows="dynamic",
             hide_index=True, width="stretch",
