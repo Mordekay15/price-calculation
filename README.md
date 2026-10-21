@@ -182,6 +182,12 @@ osat*). Every card is still priced: the ones not shown run the same card code
 without drawing (`view/ui.py`), with their inputs kept. The attached-files list
 shows only files without a part, 30 at a time.
 
+To keep memory low (a hosted app's memory is shared by everyone using it), a
+DXF's lines are dropped once its part is built, a file of a ZIP or folder is
+kept as a way to read it again rather than its bytes, and a STEP model's 3D
+bodies are let go after unfolding (read again for **Näytä 3D** or a new K
+factor). The 580-07 RFQ (1,020 files) takes about 0.9 GB.
+
 ## Assemblies (Kokoonpanot)
 
 Parts sold together are one **assembly** (`core/assemblies.py`,

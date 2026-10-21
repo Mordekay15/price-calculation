@@ -299,3 +299,29 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
     at.button(key="asm_new").click().run()                    # one by hand
     assert [a[0] for a in at.session_state["asm"]] == ["runko", "Kokoonpano 1"]
     assert at.session_state["asm"][1][1] == {}
+
+
+def test_a_kept_models_bodies_are_read_again_when_needed():
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        import streamlit as st
+
+        from tests.step_models import assembly_step
+        from view import attachments, bom
+
+        if "done" not in st.session_state:
+            data = assembly_step()
+            attachments.add_doc("m", "runko.step", data, load=lambda: data)
+            bom.add_model("m", "runko.step", data)
+            st.session_state["done"] = True
+        parts = bom.models()["m"]["model"].parts
+        st.session_state["dropped"] = all(p.shape is None for p in parts)
+        st.session_state["again"] = sorted(bom.shapes("m")) == sorted(p.key for p in parts)
+        bom.refold(0.5)
+        st.session_state["flats"] = len(bom.models()["m"]["flats"])
+
+    at = AppTest.from_function(page, default_timeout=60).run()
+    assert not at.exception
+    assert at.session_state["dropped"] and at.session_state["again"]
+    assert at.session_state["flats"] == 3

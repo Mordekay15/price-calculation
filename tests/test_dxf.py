@@ -329,3 +329,12 @@ def test_self_crossing_outline(drawing):
 def test_not_a_dxf_file():
     report = read_dxf(b"this is not a dxf file", "x.dxf").part()
     assert "ei voitu lukea" in " ".join(report.problems)
+
+
+def test_a_file_keeps_its_part_after_forgetting_its_lines(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    f = read_dxf(dxf_bytes(doc), "part.dxf")
+    report = f.part()
+    f.forget_lines()
+    assert f.pieces == [] and f.part() is report

@@ -131,7 +131,7 @@ def _search(parts, doc_links, docs, materials, thicknesses_for) -> list[Proposal
             if doc is None or doc["kind"] != "pdf":
                 continue
             if d not in texts:
-                texts[d] = pdf_text(doc["data"])
+                texts[d] = pdf_text(doc["load"]())
             for page, text in texts[d]:
                 hints += extract_hints(text, f"{doc['name']}, s. {page}")
         by_part[fid] = (dxf.name, hints)

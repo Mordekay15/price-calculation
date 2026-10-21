@@ -225,7 +225,7 @@ def _read_waiting(doc_ids: list[str]) -> None:
     the cards."""
     docs, waiting = attachments.docs(), st.session_state.get(_WAITING, set())
     for d in doc_ids:
-        bom.add_model(d, docs[d]["name"], docs[d]["data"])
+        bom.add_model(d, docs[d]["name"], docs[d]["load"]())
         waiting.discard(d)
     _sync()
 
@@ -237,7 +237,7 @@ def _render_waiting(doc_ids: list[str] | None) -> None:
     if not waiting:
         return
     docs = attachments.docs()
-    mb = sum(len(docs[d]["data"]) for d in waiting) / (1 << 20)
+    mb = sum(docs[d]["size"] for d in waiting) / (1 << 20)
     if doc_ids is None:
         label = f"Lue isot STEP-mallit ({len(waiting)} kpl, {mb:.0f} Mt)"
         text = (f"{len(waiting)} isoa STEP-mallia odottaa, jotta lataus olisi nopeampi. "
@@ -715,7 +715,8 @@ def _ingest(uploaded) -> bool:
             folders[up.file_id] = folder
         data = up.getvalue()
         if attachments.is_doc(up.name):
-            attachments.add_doc(up.file_id, up.name, data)
+            attachments.add_doc(up.file_id, up.name, data,
+                                load=up.getvalue if hasattr(up, "folder") else None)
             if bom.is_step(up.name) and step_available():
                 if len(todo) > 5 and len(data) > _BIG_STEP_BYTES:
                     st.session_state.setdefault(_WAITING, set()).add(up.file_id)
@@ -723,17 +724,32 @@ def _ingest(uploaded) -> bool:
                     bom.add_model(up.file_id, up.name, data)
         else:
             files[up.file_id] = read_drawing(data, up.name)
+            files[up.file_id].forget_lines()   # the part is all that's used (memory)
         names.add((folder, up.name))
     if bar is not None:
         bar.empty()
     if dropped:
         _sync()
+        _release_memory()
         st.session_state[_INBOX] = st.session_state.get(_INBOX, 0) + 1
         st.session_state[_DUPES] = (dupes, time.time() + _DUPE_WARNING_S)
         st.session_state[_SKIPPED] = skipped
     if len(dropped) > len(dupes) + len(skipped):
         st.session_state.pop(_FILL_ASKED, None)  # new empty parts: ask again
     return bool(dropped)
+
+
+def _release_memory() -> None:
+    """Give memory freed while reading back to the system (Linux, e.g. a
+    hosted app): Python keeps it otherwise, and the host counts it."""
+    import ctypes
+    import gc
+
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass    # not glibc (Windows, macOS)
 
 
 def _render_path_reader() -> list:

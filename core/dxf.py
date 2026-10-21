@@ -191,6 +191,15 @@ class DxfFile:
     texts: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)          # file-level
     unreadable: dict[str, dict[str, int]] = field(default_factory=dict)  # layer -> type -> n
+    # The part from the default layers, once built (see ``part``).
+    _default: DxfReport | None = field(default=None, repr=False, compare=False)
+
+    def forget_lines(self) -> None:
+        """Build the part from the default layers, then drop the drawing's
+        lines: only the part is used after that (a big RFQ's drawings are
+        millions of points). ``part`` with other layers can't be built after."""
+        self.part()
+        self.pieces = []
 
     def available_layers(self) -> list[str]:
         """Layers that carry geometry, sorted."""
@@ -205,7 +214,15 @@ class DxfFile:
         return [n for n in avail if not _is_non_cut_layer(n)] or avail
 
     def part(self, layers: set[str] | None = None) -> DxfReport:
-        """Build the main part from ``layers`` (default: ``suggested_layers``)."""
+        """Build the main part from ``layers`` (default: ``suggested_layers``,
+        built once and kept)."""
+        if layers is None:
+            if self._default is None:
+                self._default = self._part(None)
+            return self._default
+        return self._part(layers)
+
+    def _part(self, layers: set[str] | None) -> DxfReport:
         chosen = set(self.suggested_layers() if layers is None else layers)
         report = DxfReport(name=self.name, unit_label=self.unit_label,
                            problems=list(self.problems))

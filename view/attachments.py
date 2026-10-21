@@ -12,7 +12,7 @@ import streamlit as st
 
 from core.linking import link_by_text, link_files
 
-DOCS = "dxf_docs"            # {doc id: {"name", "data", "kind"}}
+DOCS = "dxf_docs"            # {doc id: {"name", "size", "kind", "load"}}
 _MANUAL = "dxf_doc_links"    # {doc id: part id or "" (= no part)}, set by hand
 _PREVIEWS = "dxf_doc_previews"  # {doc id: PNG bytes of page 1}
 TEXTS = "dxf_doc_texts"      # {doc id: [(page, text)]}, see core.materials.pdf_text
@@ -25,9 +25,18 @@ def is_doc(name: str) -> bool:
     return name.rsplit(".", 1)[-1].lower() in DOC_TYPES
 
 
-def add_doc(file_id: str, name: str, data: bytes) -> None:
+def add_doc(file_id: str, name: str, data: bytes, load=None) -> None:
+    """Keep a dropped PDF or STEP file. With ``load`` (a file of a ZIP or a
+    folder, read again when needed) its bytes aren't kept: a big RFQ's
+    drawings and models are hundreds of MB."""
     st.session_state.setdefault(DOCS, {})[file_id] = {
-        "name": name, "data": data, "kind": DOC_TYPES[name.rsplit(".", 1)[-1].lower()]}
+        "name": name, "size": len(data), "kind": DOC_TYPES[name.rsplit(".", 1)[-1].lower()],
+        "load": load or (lambda: data)}
+
+
+def data(doc_id: str) -> bytes:
+    """A kept file's bytes."""
+    return docs()[doc_id]["load"]()
 
 
 def remove_doc(doc_id: str) -> None:
@@ -101,7 +110,7 @@ def _text(doc_id: str, doc: dict) -> str:
 
     cache = st.session_state.setdefault(TEXTS, {})
     if doc_id not in cache:
-        cache[doc_id] = pdf_text(doc["data"])
+        cache[doc_id] = pdf_text(doc["load"]())
     return "\n".join(text for _, text in cache[doc_id])
 
 
@@ -167,14 +176,14 @@ def render_card_docs(card_id: str, doc_ids: list[str]) -> None:
         for d in doc_ids:
             doc = all_docs[d]
             if doc["kind"] == "pdf":
-                png = _preview(d, doc["data"])
+                png = _preview(d, doc["load"])
                 if png:
                     st.image(png, caption=doc["name"], width="stretch")
                 else:
                     st.caption(f"{doc['name']}: esikatselua ei voitu tehdä.")
             else:
                 _step_preview(card_id, d)
-            st.download_button(f"Avaa {doc['name']}", data=doc["data"],
+            st.download_button(f"Avaa {doc['name']}", data=doc["load"](),
                                file_name=doc["name"], key=f"dxf_doc_dl_{card_id}_{d}",
                                mime="application/pdf" if doc["kind"] == "pdf"
                                else "application/step")
@@ -185,13 +194,13 @@ def _step_preview(card_id: str, doc_id: str) -> None:
 
     part = bom.single_part(doc_id)
     if part is not None and st.toggle(f"Näytä 3D: {part.name}", key=f"dxf_doc_3d_{card_id}_{doc_id}"):
-        bom.render_3d(part.shape, f"{card_id}:{doc_id}")
+        bom.render_3d(lambda: bom.shapes(doc_id)[part.key], f"{card_id}:{doc_id}")
 
 
-def _preview(doc_id: str, data: bytes) -> bytes | None:
+def _preview(doc_id: str, load) -> bytes | None:
     cache = st.session_state.setdefault(_PREVIEWS, {})
     if doc_id not in cache:
-        cache[doc_id] = pdf_first_page_png(data)
+        cache[doc_id] = pdf_first_page_png(load())
     return cache[doc_id]
 
 

@@ -28,13 +28,32 @@ def is_step(name: str) -> bool:
 
 
 def add_model(file_id: str, name: str, data: bytes) -> step.StepModel:
-    """Read a dropped STEP file and unfold its parts."""
+    """Read a dropped STEP file and unfold its parts. The 3D bodies are let
+    go after unfolding when the file is kept (``attachments``): they are read
+    again for a 3D view or a new K factor (see ``shapes``)."""
+    from view import attachments
+
     model = step.read_step(data, name)
     k = st.session_state.get(K_FACTOR, step.DEFAULT_K_FACTOR)
     st.session_state.setdefault(MODELS, {})[file_id] = {
         "name": name, "model": model,
         "flats": {p.key: step.unfold(p.shape, k) for p in model.parts}}
+    if file_id in attachments.docs():
+        for p in model.parts:
+            p.shape = None
     return model
+
+
+def shapes(file_id: str) -> dict:
+    """A model's 3D bodies by part key, read again from its file if they
+    were let go."""
+    from view import attachments
+
+    parts = models()[file_id]["model"].parts
+    if all(p.shape is not None for p in parts):
+        return {p.key: p.shape for p in parts}
+    again = step.read_step(attachments.data(file_id), models()[file_id]["name"])
+    return {p.key: p.shape for p in again.parts}
 
 
 def models() -> dict[str, dict]:
@@ -113,8 +132,8 @@ def _keys(m: dict, part: step.StepPart) -> set[str]:
 
 def refold(k: float) -> None:
     """Unfold every model again with a new K factor."""
-    for m in models().values():
-        m["flats"] = {p.key: step.unfold(p.shape, k) for p in m["model"].parts}
+    for file_id, m in models().items():
+        m["flats"] = {key: step.unfold(shape, k) for key, shape in shapes(file_id).items()}
         m.pop("cards", None)
 
 
@@ -193,14 +212,14 @@ def _render_preview_picker(file_id: str, m: dict, parts: list[step.StepPart]) ->
     if st.toggle("Näytä 3D", key=f"dxf_step_3d_{file_id}"):
         key = st.selectbox("Osa", list(names), format_func=names.get,
                            key=f"dxf_step_pick_{file_id}")
-        part = next(p for p in parts if p.key == key)
-        render_3d(part.shape, f"{file_id}:{key}")
+        render_3d(lambda: shapes(file_id)[key], f"{file_id}:{key}")
 
 
 # ── 3D and the card ───────────────────────────────────────────────────────────
 
 def render_3d(shape, cache_key: str) -> None:
-    """The body as a shaded 3D view you can turn (plotly)."""
+    """The body as a shaded 3D view you can turn (plotly). ``shape()`` gives
+    the body (read only when its mesh isn't made yet)."""
     try:
         import plotly.graph_objects as go
     except ImportError:
@@ -208,7 +227,7 @@ def render_3d(shape, cache_key: str) -> None:
         return
     cache = st.session_state.setdefault("dxf_step_meshes", {})
     if cache_key not in cache:
-        cache[cache_key] = step.mesh(shape)
+        cache[cache_key] = step.mesh(shape())
     verts, tris = cache[cache_key]
     if not tris:
         st.caption("Mallista ei voitu tehdä 3D-näkymää.")
@@ -238,7 +257,8 @@ def render_card_model(card: str, source_ids: list[str]) -> None:
                        f"{len(flat.bends)} taivutusta{': ' + bends if bends else ''} "
                        f"(K = {k:.2f}).")
             if st.toggle("Näytä 3D", key=f"dxf_step_card_3d_{card}_{sid}"):
-                render_3d(part.shape, sid)
+                file_id = sid.split(_SEP, 1)[0]
+                render_3d(lambda: shapes(file_id)[part.key], sid)
 
 
 def single_part(file_id: str) -> step.StepPart | None:
