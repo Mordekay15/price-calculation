@@ -110,14 +110,14 @@ _WORK_LABELS = {
 }
 
 
-def cards(card_of: dict[str, str]) -> dict[str, list[str]]:
-    """Each assembly's cards, ``{assembly id: [card id]}``."""
-    return {aid: list(_cards_of(a, card_of)) for aid, a in _store().items()}
+def cards(card_of: dict[str, str]) -> dict[str, dict[str, int]]:
+    """Each assembly's cards, ``{assembly id: {card id: kpl / kokoonpano}}``."""
+    return {aid: _cards_of(a, card_of) for aid, a in _store().items()}
 
 
-def render(card_of: dict[str, str], draw_cards: Callable[[str, list[str]], None]) -> None:
+def render(card_of: dict[str, str], draw_cards: Callable[[str, dict[str, int]], None]) -> None:
     """The assemblies, apart from the loose parts: each one's cards (drawn by
-    ``draw_cards(assembly id, card ids)``), bought parts and assembly work."""
+    ``draw_cards(assembly id, {card id: kpl / kokoonpano})``), bought parts and assembly work."""
     store = _store()
     if not store:
         return
@@ -132,7 +132,7 @@ def render(card_of: dict[str, str], draw_cards: Callable[[str, list[str]], None]
 
 
 def _render_one(aid: str, a: dict, card_of: dict[str, str],
-                draw_cards: Callable[[str, list[str]], None]) -> None:
+                draw_cards: Callable[[str, dict[str, int]], None]) -> None:
     with st.container(border=True):
         c1, c2 = st.columns([6, 1], vertical_alignment="bottom")
         a["name"] = c1.text_input("Kokoonpano", value=a["name"], key=f"asm_name_{aid}")
@@ -141,7 +141,7 @@ def _render_one(aid: str, a: dict, card_of: dict[str, str],
             st.rerun()
         if a.get("auto"):
             st.caption("Tehty STEP-mallista: osat ja määrät mallin rakenteesta.")
-        draw_cards(aid, list(_cards_of(a, card_of)))
+        draw_cards(aid, _cards_of(a, card_of))
 
         st.markdown("Ostetut osat", help="Valmiina ostettavat osat (ruuvit, tapit, "
                     "puristemutterit, koneistetut osat…): kappalehinta × kpl / kokoonpano. "

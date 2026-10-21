@@ -211,8 +211,9 @@ parts, work and contents.
   all of them. One assembly costs its parts' €/kpl × kpl/kokoonpano, plus the
   bought parts, plus the assembly work. The work is `(setup min / batch +
   fitting min) / 60 × €/h`, welding at the sidebar's welding rate, and
-  anything else per assembly. Each card in an assembly says so, and a part in
-  an assembly is not quoted separately.
+  anything else per assembly. The assembly lists its parts with their kpl /
+  kokoonpano (the cards don't mention it), and a part in an assembly is not
+  quoted separately.
 
 ## Material proposals (Materiaaliehdotukset)
 

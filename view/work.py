@@ -170,9 +170,6 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
         if not in_assembly:
             weld_m = c[3].number_input("Hitsaus (m/kpl)", min_value=0.0, value=0.0, step=0.1,
                                        key=f"work_weld_{key}")
-        else:
-            st.caption("Kiinnikkeiden hinta ja hitsaus lasketaan kokoonpanossa "
-                       "(ostetut osat ja hitsaus), ei tällä kortilla.")
 
         c = st.columns(4)
         subcontract = c[0].number_input("Alihankinta (€/kpl)", min_value=0.0, value=0.0,

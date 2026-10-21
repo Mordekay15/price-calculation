@@ -374,9 +374,11 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
         st.caption("Kaikki osat ovat kokoonpanoissa.")
     draw(loose, _PAGE)
 
-    def draw_assembly(aid: str, cids: list[str]) -> None:
+    def draw_assembly(aid: str, cids: dict[str, int]) -> None:
         # A card in two assemblies is drawn in the first one only.
         mine = sorted(index[c] for c in cids if c in index)
+        st.caption("Osat: " + " · ".join(f"#{i + 1} {parts[i][1].name} × {cids[parts[i][0]]}"
+                                         for i in mine))
         elsewhere = [i for i in mine if i in products]
         for i in elsewhere:
             st.caption(f"#{i + 1} · {parts[i][1].name}: kortti on toisessa kokoonpanossa.")
@@ -1078,9 +1080,7 @@ def _render_part_config(
             st.caption("📁 " + " · ".join(folders))
         if item is not None and len(item.members) > 1:
             _render_item_files(fid, item)
-        in_assembly = assemblies.membership(fid, _card_of())
-        for name, n in in_assembly:
-            st.caption(f"🧩 Kokoonpanossa **{name}**: {n} kpl / kokoonpano")
+        in_assembly = bool(assemblies.membership(fid, _card_of()))
 
         # Text found in the drawing (Mat=…, Thk=…) — shown to cross-check the
         # material choice, never nested.
@@ -1110,7 +1110,7 @@ def _render_part_config(
                                       cut_length_m=report.cut_length_mm / 1000,
                                       bends=_bends(report, item), threads=report.threads,
                                       fasteners=_fasteners(dxf, item),
-                                      in_assembly=bool(in_assembly),
+                                      in_assembly=in_assembly,
                                       **piece_size(report.outline.area_mm2 - sum(
                                           h.area_mm2 for h in report.holes),
                                           material, thickness))

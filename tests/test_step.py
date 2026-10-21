@@ -293,7 +293,8 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
     # 2 × Kulma and Pohja are sheet cards; 6 × Tappi is a bought part.
     assert at.session_state["asm"] == [
         ("runko", {cards["Pohja.dxf"]: 1, cards["Kulma.step"]: 2}, [("Tappi", 6)])]
-    assert any("Kokoonpanossa **runko**: 2 kpl" in c.value for c in at.caption)
+    assert any(c.value == "Osat: #1 Pohja.dxf × 1 · #2 Kulma.step × 2" for c in at.caption)
+    assert not any("Kokoonpanossa" in c.value for c in at.caption)
     # Its cards are drawn inside it, not among the loose parts.
     assert any("Kaikki osat ovat kokoonpanoissa." in c.value for c in at.caption)
     assert [m.value.split(" · ")[1] for m in at.markdown if m.value.startswith("**#")] == [
