@@ -1,4 +1,4 @@
-"""The manual calculator tab ("Hintalaskuri"): rectangular product cards, their
+"""The manual calculator tab ("Peruslaskuri"): rectangular product cards, their
 sheet usage per material + thickness group (bounding-box packer) and the
 pieces summary."""
 

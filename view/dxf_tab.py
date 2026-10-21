@@ -58,6 +58,7 @@ from view.work import piece_size, render_work_inputs
 
 BOM, NESTING, PRICING = "BOM & Tiedostot", "Nestaus", "Hinnoittelu"
 SCREENS = (BOM, NESTING, PRICING)
+MENU = "dxf_menu"   # the screens' menu, under "Edistynyt"
 
 # The keys of the widgets each screen draws, besides the cards', which draw
 # their material on BOM and their work on PRICING.
@@ -94,6 +95,7 @@ def render(data: dict, screen: str | None) -> None:
     inputs are kept)."""
     if screen is None:
         _keep_closed(None, list(st.session_state.get(CONFIG, {})))
+        keep(lambda key: key == MENU)   # back on the same screen
         return
     lookup = build_lookup(data)
     if screen == BOM:

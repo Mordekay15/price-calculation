@@ -6,12 +6,23 @@ from streamlit.testing.v1 import AppTest
 def test_app_renders_the_menu_and_each_screen():
     at = AppTest.from_file("../app.py", default_timeout=60).run()
     assert not at.exception
-    assert [t.label for t in at.tabs] == ["Hintalaskuri", "BOM & Tiedostot", "Nestaus",
-                                          "Hinnoittelu"]
-    for screen in ("BOM & Tiedostot", "Nestaus", "Hinnoittelu", "Hintalaskuri"):
-        at.session_state["menu"] = screen
+    assert [t.label for t in at.tabs] == ["Peruslaskuri", "Edistynyt"]
+    at.session_state["menu"] = "Edistynyt"
+    at.run()
+    assert [t.label for t in at.tabs] == ["Peruslaskuri", "Edistynyt", "BOM & Tiedostot",
+                                          "Nestaus", "Hinnoittelu"]
+    for screen in ("Nestaus", "Hinnoittelu", "BOM & Tiedostot"):
+        at.session_state["dxf_menu"] = screen
         at.run()
         assert not at.exception
+    at.session_state["dxf_menu"] = "Nestaus"
+    at.run()
+    at.session_state["menu"] = "Peruslaskuri"
+    at.run()
+    assert not at.exception and len(at.tabs) == 2
+    at.session_state["menu"] = "Edistynyt"
+    at.run()
+    assert at.session_state["dxf_menu"] == "Nestaus"        # back on the same screen
 
 
 def test_a_missing_solver_is_said_on_the_page(monkeypatch):
@@ -50,33 +61,33 @@ def test_each_screen_keeps_the_others_inputs_and_prices_on_hinnoittelu(tmp_path,
     doc.modelspace().add_lwpolyline([(0, 0), (300, 0), (300, 200), (0, 200)], close=True)
     at = AppTest.from_file("../app.py", default_timeout=120)
     at.session_state["dxf_files"] = {"f0": read_dxf(dxf_bytes(doc), "p.dxf")}
-    at.session_state["menu"] = "BOM & Tiedostot"
+    at.session_state["menu"] = "Edistynyt"
     at.run()
     at.selectbox(key="dxf_mat_f0").select("S235").run()
     at.selectbox(key="dxf_th_f0").select("2").run()
     at.number_input(key="dxf_q_f0").set_value(12).run()
-    at.session_state["menu"] = "Hinnoittelu"
+    at.session_state["dxf_menu"] = "Hinnoittelu"
     at.run()
     at.number_input(key="work_bends_f0").set_value(3.0).run()
     assert any("Laske levykäyttö ensin" in i.value for i in at.info)
-    at.session_state["menu"] = "Nestaus"
+    at.session_state["dxf_menu"] = "Nestaus"
     at.run()
     at.number_input(key="dxf_sparrow_t").set_value(1).run()
     at.button(key="dxf_sparrow_run").click().run()
     assert not at.exception
     assert not any(n.key == "work_bends_f0" for n in at.number_input)   # not drawn here
     assert not any("kpl, €/kpl" in "".join(d.value.columns) for d in at.dataframe)
-    at.session_state["menu"] = "Hinnoittelu"
+    at.session_state["dxf_menu"] = "Hinnoittelu"
     at.run()
     assert not at.exception
     assert at.number_input(key="work_bends_f0").value == 3.0
     batches = next(d.value for d in at.dataframe if "10 kpl, €/kpl" in d.value.columns)
     assert len(batches) == 1
-    at.session_state["menu"] = "BOM & Tiedostot"
+    at.session_state["dxf_menu"] = "BOM & Tiedostot"
     at.run()
     assert at.selectbox(key="dxf_mat_f0").value == "S235"
     assert at.number_input(key="dxf_q_f0").value == 12
-    at.session_state["menu"] = "Nestaus"
+    at.session_state["dxf_menu"] = "Nestaus"
     at.run()
     assert at.number_input(key="dxf_sparrow_t").value == 1
     assert at.button(key="dxf_sparrow_run").label.endswith("kaikki laskettu")
