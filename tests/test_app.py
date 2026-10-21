@@ -86,14 +86,14 @@ def test_each_screen_keeps_the_others_inputs_and_prices_on_hinnoittelu(tmp_path,
     at.run()
     assert at.number_input(key="work_bends_f0").value == 3.0
     assert at.selectbox(key="dxf_mat_f0").value == "S235"
-    assert "Määrä: **10 kpl**" in [m.value for m in at.markdown]   # the largest batch
+    assert at.number_input(key="dxf_q_f0").proto.placeholder == "10"   # the largest batch
     at.session_state["dxf_menu"] = "Nestaus"
     at.run()
     assert at.number_input(key="dxf_sparrow_t").value == 1
     assert at.button(key="dxf_sparrow_run").label.endswith("kaikki laskettu")
 
 
-def test_a_dxf_part_is_nested_for_the_largest_batch_size():
+def test_a_dxf_part_is_nested_for_the_largest_batch_size_unless_typed():
     import ezdxf
 
     from core.dxf import read_dxf
@@ -106,9 +106,16 @@ def test_a_dxf_part_is_nested_for_the_largest_batch_size():
     at.session_state["dxf_files"] = {"f0": read_dxf(dxf_bytes(doc), "p.dxf")}
     at.session_state["menu"] = "Edistynyt"
     at.run()
-    assert "Määrä: **10 kpl**" in [m.value for m in at.markdown]
+    assert at.number_input(key="dxf_q_f0").proto.placeholder == "10"
     at.text_input(key="quote_batch_sizes").set_value("2 25").run()
-    assert "Määrä: **25 kpl**" in [m.value for m in at.markdown]
+    assert at.number_input(key="dxf_q_f0").proto.placeholder == "25"
+    # A typed quantity wins, and stays when the screen changes.
+    at.number_input(key="dxf_q_f0").set_value(7).run()
+    at.session_state["dxf_menu"] = "Nestaus"
+    at.run()
+    at.session_state["dxf_menu"] = "BOM & Tiedostot"
+    at.run()
+    assert at.number_input(key="dxf_q_f0").value == 7
 
 
 def test_an_unpriced_part_leaves_the_money_columns_numeric():

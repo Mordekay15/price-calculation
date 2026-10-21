@@ -55,7 +55,7 @@ from view.dxf_files import (
 from view.dxf_nesting import ANGLE_MODE, PER_PART, render_nesting, render_nesting_angles
 from view.quote import current_sizes
 from view.ui import headless, ids_in, is_headless, keep, st
-from view.work import render_work_inputs
+from view.work import auto_input, render_work_inputs
 
 BOM, NESTING, PRICING = "BOM & Tiedostot", "Nestaus", "Hinnoittelu"
 SCREENS = (BOM, NESTING, PRICING)
@@ -397,7 +397,7 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict,
                         per_assembly: int = 0) -> tuple:
     """Material, thickness and quantity; returns ``(material, thickness, qty)``.
     A part is nested for the largest batch size (in an assembly,
-    ``per_assembly`` kpl in each), so its quantity is not typed.
+    ``per_assembly`` kpl in each) unless another quantity is typed.
 
     Material + thickness are persisted per file: the selectboxes are seeded
     from the stored choice, then the current choice is written back.
@@ -416,12 +416,13 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict,
     if note:
         st.caption("Materiaali täytetty automaattisesti", help=note)
     batch = max(current_sizes())
-    qty = max(per_assembly, 1) * batch
-    st.markdown(f"Määrä: **{qty} kpl**",
-                help=(f"{per_assembly} kpl / kokoonpano × " if per_assembly else "")
-                + f"suurin eräkoko {batch}: levyt nestataan tälle määrälle. Eräkoot "
-                  "muutetaan sivun yläosan Tarjous-kohdasta.")
-    return material, thickness, qty
+    qty = auto_input(
+        st.columns(2)[0], "Määrä (kpl)", f"dxf_q_{fid}", max(per_assembly, 1) * batch,
+        step=1.0, fmt="%.0f",
+        help="Levyt nestataan tälle määrälle. Oletus: "
+             + (f"{per_assembly} kpl / kokoonpano × " if per_assembly else "")
+             + f"suurin eräkoko {batch} (eräkoot sivun yläosan Tarjous-kohdasta).")
+    return material, thickness, max(int(qty), 1)
 
 
 @dataclass

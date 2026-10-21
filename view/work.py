@@ -77,7 +77,7 @@ _AUTO_HELP = ("Harmaa arvo on laskettu automaattisesti. Kirjoita oma arvo "
               "korvataksesi sen; tyhjennä kenttä palataksesi automaattiseen.")
 
 
-def _auto(col, label: str, key: str, auto: float | None, *, step: float,
+def auto_input(col, label: str, key: str, auto: float | None, *, step: float,
           fmt: str = "%.2f", help: str | None = None) -> float | None:
     """A number input that is empty by default and then uses ``auto``; the
     placeholder shows that value in grey. Clearing it goes back to ``auto``."""
@@ -109,13 +109,13 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
         hits = 0
         laser = None
         if method == LASER:
-            cut_length_m = _auto(c[1], "Leikkuupituus (m/kpl)", f"work_len_{key}",
+            cut_length_m = auto_input(c[1], "Leikkuupituus (m/kpl)", f"work_len_{key}",
                                  cut_length_m, step=0.1, fmt="%.3f",
                                  help="Ulkoreuna ja kaikki reiät.")
-            s_per_m = _auto(c[2], "Leikkausaika (s/m)", f"work_spm_{key}",
+            s_per_m = auto_input(c[2], "Leikkausaika (s/m)", f"work_spm_{key}",
                             table.s_per_m if table else None, step=1.0, fmt="%.1f",
                             help=_speed_help(material))
-            eur_per_s = _auto(c[3], "Laser (€/s)", f"work_eps_{key}",
+            eur_per_s = auto_input(c[3], "Laser (€/s)", f"work_eps_{key}",
                               table.eur_per_s if table else None, step=0.005, fmt="%.3f")
             if s_per_m is not None and eur_per_s is not None:
                 laser = LaserSpeed(s_per_m, eur_per_s)
@@ -135,11 +135,11 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
                 laser = LaserSpeed(table.s_per_m, table.eur_per_s)
 
         c = st.columns(4)
-        n_bends = int(_auto(c[0], "Taivutuksia (kpl/osa)", f"work_bends_{key}", bends,
+        n_bends = int(auto_input(c[0], "Taivutuksia (kpl/osa)", f"work_bends_{key}", bends,
                             step=1.0, fmt="%.0f"))
         eur_per_bend = c[1].number_input("€ / taivutus", min_value=0.0, value=0.20,
                                          step=0.05, key=f"work_bend_eur_{key}")
-        n_threads = int(_auto(c[2], "Kierteitä (kpl/osa)", f"work_threads_{key}", threads,
+        n_threads = int(auto_input(c[2], "Kierteitä (kpl/osa)", f"work_threads_{key}", threads,
                               step=1.0, fmt="%.0f"))
         eur_per_thread = c[3].number_input("€ / kierre", min_value=0.0, value=0.20,
                                            step=0.05, key=f"work_thread_eur_{key}")
@@ -148,12 +148,12 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
             n_fasteners, eur_per_fastener, eur_per_insert, weld_m = 0, 0.0, 0.0, 0.0
         else:
             c = st.columns(4)
-            n_fasteners = int(_auto(
+            n_fasteners = int(auto_input(
                 c[0], "Kiinnikkeet (kpl/osa)", f"work_fasteners_{key}", fasteners,
                 step=1.0, fmt="%.0f",
                 help="Puristemutterit, -ruuvit, pultit, niitit… Luetaan piirustuksen "
                      "teksteistä, esim. \"M5-PURISTEMUTTERIT X4KPL\"."))
-            eur_per_fastener = _auto(c[1], "Kiinnikkeen hinta (€/kpl)",
+            eur_per_fastener = auto_input(c[1], "Kiinnikkeen hinta (€/kpl)",
                                      f"work_fastener_eur_{key}", fastener_price(material),
                                      step=0.05, help="Yhden kiinnikkeen hinta ilman asennusta.")
             eur_per_insert = c[2].number_input("Asennus (€/kiinnike)", min_value=0.0,
@@ -177,7 +177,7 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
                             eur_per_insert=eur_per_insert, weld_m=weld_m,
                             subcontract_eur=subcontract,
                             programming_eur=programming)
-        setup = _auto(c[2], "Asetus (€/erä)", f"work_setup_{key}",
+        setup = auto_input(c[2], "Asetus (€/erä)", f"work_setup_{key}",
                       default_setup(inputs, rates), step=5.0, fmt="%.0f",
                       help="Oletus työvaiheiden määrän mukaan (sivupalkin Työn hinnat).")
         inputs = WorkInputs(**{**inputs.__dict__, "setup_eur": setup})

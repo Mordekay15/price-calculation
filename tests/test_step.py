@@ -311,8 +311,8 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
     assert [m.value.split(" · ")[1] for m in at.markdown if m.value.startswith("**#")] == [
         "Pohja.dxf", "Kulma.step"]
     # Its cards are nested for the largest batch (10) of assemblies.
-    assert [m.value for m in at.markdown if m.value.startswith("Määrä")] == [
-        "Määrä: **10 kpl**", "Määrä: **20 kpl**"]
+    assert [n.proto.placeholder for n in at.number_input if n.key.startswith("dxf_q_")] == [
+        "10", "20"]
     # The assembly prices fasteners and welding, so its cards don't.
     keys = {n.key for n in at.number_input}
     assert f"work_bends_{cards['Kulma.step']}" in keys

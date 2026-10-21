@@ -202,8 +202,9 @@ parts, work and contents.
   (one also in another assembly stays), its drawing and its STEP file.
 - **Apart from the loose parts.** **Osat** lists only the parts in no
   assembly. Each assembly below it shows its own cards, paged the same way.
-  Their **Määrä** is not typed: it is kpl / kokoonpano × the largest batch
-  size, the quantity they are nested at.
+  Their **Määrä** starts as kpl / kokoonpano × the largest batch size (a
+  loose card's as the largest batch size), shown in grey: the quantity they
+  are nested at. A typed Määrä is nested instead; clearing it goes back.
 - **No cost twice.** A card in an assembly has no fasteners or welding: the
   assembly's bought parts (PEM nuts and studs too, with their pressing as
   Asennus) and its welding price them. The card keeps the part's own work
