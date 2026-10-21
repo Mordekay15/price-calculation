@@ -1,0 +1,5 @@
+[global]
+# The DXF tab sets its inputs through the session on every run, so a screen
+# opened again shows what was chosen (see view/ui.py keep); that is not a
+# duplicated default.
+disableWidgetStateDuplicationWarning = true

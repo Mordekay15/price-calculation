@@ -61,39 +61,33 @@ BOM, NESTING, PRICING = "BOM & Tiedostot", "Nestaus", "Hinnoittelu"
 SCREENS = (BOM, NESTING, PRICING)
 MENU = "dxf_menu"   # the screens' menu, under "Edistynyt"
 
-# The keys of the widgets each screen draws, besides the cards' (all on BOM).
-_DRAWN_ON = [(re.compile(p), on) for p, on in (
-    (r"dxf_(doc_show_linked|doc_page|doc_link_.*|step_k_input|step_3d_.*|step_pick_.*"
-     r"|rfq_note|material_remember)", {BOM}),
-    (r"dxf_card_page.*|asm_(name|fit_min|weld_m|setup_min|eur_per_h|other_eur)_.*", {BOM}),
-    (r"dxf_(margin_pct|nest_mode|rankavali_mm|edge_.*|sparrow_t|angle_(0|90)|angle_mode"
-     r"|su_select::.*)", {NESTING}),
-    (r"quote_(breakdown_q|pdf_mat|dxf_name|dxf_marks)_dxf", {PRICING}),
+# The keys of the widgets the screens draw, besides the cards'.
+_DRAWN_ON = [re.compile(p) for p in (
+    r"dxf_(doc_show_linked|doc_page|doc_link_.*|step_k_input|step_3d_.*|step_pick_.*"
+    r"|rfq_note|material_remember)",                                         # BOM
+    r"dxf_card_page.*|asm_(name|fit_min|weld_m|setup_min|eur_per_h|other_eur)_.*",
+    r"dxf_(margin_pct|nest_mode|rankavali_mm|edge_.*|sparrow_t|angle_(0|90)|angle_mode"
+    r"|su_select::.*)",                                                      # Nestaus
+    r"quote_(breakdown_q|pdf_mat|dxf_name|dxf_marks)_dxf",                   # Hinnoittelu
 )]
 
 
-def _keep_closed(screen: str | None, fids: list[str]) -> None:
-    """Keep the inputs of the screens not open (``screen`` None: another tab)."""
-    cards = ids_in(fids)
-
-    def closed(key: str) -> bool:
-        for pattern, on in _DRAWN_ON:
-            if pattern.fullmatch(key):
-                return screen not in on
-        if cards.search(key):
-            return screen != BOM
-        return False
-
-    keep(closed)
-
-
+def _keep_inputs() -> None:
+    """Keep every screen's and card's inputs, on every run: a screen not
+    open draws none of them, and one opened again draws them anew in the
+    browser, from their defaults unless set through the session (see
+    ``view.ui.keep``). Run before anything is drawn; a card added on this
+    run has nothing to keep yet."""
+    ss = st.session_state
+    cards = ids_in({*ss.get(ITEMS, {}), *ss.get(CONFIG, {})})
+    keep(lambda key: any(p.fullmatch(key) for p in _DRAWN_ON) or bool(cards.search(key)))
 
 
 def render(data: dict, screen: str | None) -> None:
     """One of ``SCREENS``; None when another tab is open (then only the
     inputs are kept)."""
+    _keep_inputs()
     if screen is None:
-        _keep_closed(None, list(st.session_state.get(CONFIG, {})))
         keep(lambda key: key == MENU)   # back on the same screen
         return
     lookup = build_lookup(data)
@@ -102,7 +96,6 @@ def render(data: dict, screen: str | None) -> None:
     else:
         parts = sync()
         sync_assemblies()
-    _keep_closed(screen, [fid for fid, _ in parts])
     if not parts:
         st.info("Lataa vähintään yksi DXF- tai DWG-tiedosto aloittaaksesi"
                 + ("." if screen == BOM else f" ({BOM})."))
@@ -135,7 +128,7 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
     """One card per uploaded part; returns the configured product dicts. The
     loose parts come first, then each assembly with its cards in it. The
     nesting angle is on the cards only when it is chosen per part. A card
-    draws its material on BOM, its work on PRICING."""
+    draws its material and work on BOM."""
     title, clear = st.columns([6, 2], vertical_alignment="center")
     title.markdown("**Osat**")
     if len(parts) > 1:
@@ -156,8 +149,6 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
 
     def draw(idxs: list[int], page_key: str) -> None:
         shown = {idxs[i] for i in _render_page_picker(len(idxs), page_key)}
-        hidden = [parts[i][0] for i in idxs if i not in shown]
-        keep(ids_in(hidden).search)
         for idx in idxs:
             fid, part = parts[idx]
             offer = idx in shown

@@ -158,9 +158,11 @@ _BUTTONS = ("dxf_del_", "dxf_fill_yes_", "dxf_fill_no_", "dxf_doc_dl_", "dxf_rea
 
 
 def keep(owned) -> None:
-    """Keep the values of the widgets not drawn on this run: Streamlit forgets
-    a widget's value when the widget isn't drawn, and setting it through the
-    session keeps it. ``owned(key)`` picks them."""
+    """Keep the values of widgets that may not be drawn, or be drawn anew:
+    Streamlit forgets a widget's value when the widget isn't drawn, and the
+    browser starts a widget drawn again from its default. Setting the value
+    through the session, before the widget is drawn, keeps it for both.
+    ``owned(key)`` picks them."""
     ss = streamlit.session_state
     for key in list(ss.keys()):
         if isinstance(key, str) and not key.startswith(_BUTTONS) and owned(key):

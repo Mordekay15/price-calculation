@@ -1,7 +1,8 @@
 price_data*.json
 __pycache__/
 *.pyc
-.streamlit/
+.streamlit/*
+!.streamlit/config.toml
 
 # Sparrow run logs
 output/
