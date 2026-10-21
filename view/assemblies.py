@@ -6,14 +6,16 @@ one quote line.
   quantities, and its other bodies (pins, screws, machined parts) are bought
   parts to give a price.
 
+Its cards are drawn inside it, apart from the loose parts.
+
 Session keys: ``ASSEMBLIES`` holds ``{assembly id: {"name", "members":
-{source id: kpl}, "bought": [row], "auto": STEP file id or None, …}}``. A
+{source id: kpl}, "bought": [row], "auto": STEP file id, …}}``. A
 member is stored by a source id of its card (see ``core.items``), so it
 stays on the right card when the card's files are regrouped."""
 
 from __future__ import annotations
 
-import hashlib
+from collections.abc import Callable
 
 import streamlit as st
 
@@ -25,7 +27,6 @@ _SEEN = "dxf_assemblies_seen"      # STEP file ids already made into assemblies
 KEYS = (ASSEMBLIES, _SEEN)
 
 _NAME, _QTY, _EUR = "Nimike", "Kpl / kokoonpano", "€/kpl"
-_IN, _PART = "Mukana", "Osa"
 
 
 def _store() -> dict[str, dict]:
@@ -107,21 +108,29 @@ _WORK_LABELS = {
 }
 
 
-def render(labels: dict[str, str], card_of: dict[str, str]) -> None:
-    """The assemblies: each one's parts (ticked from the cards, with their
-    kpl / kokoonpano), bought parts and assembly work. ``labels`` are the cards' "#1 · name"."""
+def cards(card_of: dict[str, str]) -> dict[str, list[str]]:
+    """Each assembly's cards, ``{assembly id: [card id]}``."""
+    return {aid: list(_cards_of(a, card_of)) for aid, a in _store().items()}
+
+
+def render(card_of: dict[str, str], draw_cards: Callable[[str, list[str]], None]) -> None:
+    """The assemblies, apart from the loose parts: each one's cards (drawn by
+    ``draw_cards(assembly id, card ids)``), bought parts and assembly work."""
     store = _store()
-    title = f"Kokoonpanot ({len(store)})" if store else "Kokoonpanot"
-    with st.expander(title, expanded=bool(store)):
-        st.caption("Kokoonpano on yksi tarjousrivi: sen osat (kortit), ostetut osat ja "
-                   "kokoamistyö. Eräkoko tarkoittaa kokoonpanojen määrää, ja jokainen osa "
-                   "hinnoitellaan määrällä eräkoko × kpl / kokoonpano. STEP-kokoonpano "
-                   "tehdään tänne automaattisesti.")
-        for aid in list(store):
-            _render_one(aid, store[aid], labels, card_of)
+    if not store:
+        return
+    st.divider()
+    st.markdown(f"**Kokoonpanot ({len(store)})**")
+    st.caption("Kokoonpano on yksi tarjousrivi: sen osat (kortit), ostetut osat ja "
+               "kokoamistyö. Eräkoko tarkoittaa kokoonpanojen määrää, ja jokainen osa "
+               "hinnoitellaan määrällä eräkoko × kpl / kokoonpano. STEP-kokoonpano "
+               "tehdään tänne automaattisesti.")
+    for aid in list(store):
+        _render_one(aid, store[aid], card_of, draw_cards)
 
 
-def _render_one(aid: str, a: dict, labels: dict[str, str], card_of: dict[str, str]) -> None:
+def _render_one(aid: str, a: dict, card_of: dict[str, str],
+                draw_cards: Callable[[str, list[str]], None]) -> None:
     with st.container(border=True):
         c1, c2 = st.columns([6, 1], vertical_alignment="bottom")
         a["name"] = c1.text_input("Kokoonpano", value=a["name"], key=f"asm_name_{aid}")
@@ -130,24 +139,7 @@ def _render_one(aid: str, a: dict, labels: dict[str, str], card_of: dict[str, st
             st.rerun()
         if a.get("auto"):
             st.caption("Tehty STEP-mallista: osat ja määrät mallin rakenteesta.")
-
-        # The parts: every card, ticked in or not. The editor's rows are seeded
-        # once per set of cards (its key changes with them), and what it returns
-        # is stored: feeding it back would apply the edits twice.
-        members = _cards_of(a, card_of)
-        cards = list(labels)
-        digest = hashlib.sha1("\0".join(cards).encode()).hexdigest()[:8]
-        if a.get("parts_digest") != digest:
-            a["parts_digest"] = digest
-            a["parts_v"] = a.get("parts_v", 0) + 1
-            a["parts_seed"] = [{_IN: cid in members, _PART: labels[cid],
-                                _QTY: members.get(cid, 1)} for cid in cards]
-        rows = st.data_editor(
-            a["parts_seed"], key=f"asm_parts_{aid}_{a['parts_v']}", hide_index=True,
-            width="stretch", disabled=[_PART],
-            column_config={_IN: st.column_config.CheckboxColumn(_IN, width="small"),
-                           _QTY: st.column_config.NumberColumn(_QTY, min_value=1, step=1)})
-        a["members"] = {cid: int(r[_QTY] or 1) for cid, r in zip(cards, rows) if r[_IN]}
+        draw_cards(aid, list(_cards_of(a, card_of)))
 
         st.markdown("Ostetut osat", help="Valmiina ostettavat osat (ruuvit, tapit, "
                     "koneistetut osat…): kappalehinta × kpl / kokoonpano.")

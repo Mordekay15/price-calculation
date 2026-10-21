@@ -130,8 +130,6 @@ def render(data: dict) -> None:
     # switch decides it: read the switch's value from the last run.
     per_part = len(parts) > 1 and st.session_state.get(_ANGLE_MODE) == _PER_PART
     products = _render_part_cards(parts, materials, lookup, per_part)
-    assemblies.render({fid: f"#{i + 1} · {d.name}" for i, (fid, d) in enumerate(parts)},
-                      _card_of())
     margin_pct, nest_mode, sheet = _render_settings()
     if not any(is_ready(p) for p in products):
         st.info("Valitse materiaali ja paksuus vähintään yhdelle osalle.")
@@ -338,6 +336,7 @@ def _run_label(n_new: int, n_stale: int, n_groups: int) -> str:
 def _render_part_cards(parts, materials: list[str], lookup: dict,
                        per_part_angles: bool = False) -> list[dict]:
     """One card per uploaded part; returns the configured product dicts. The
+    loose parts come first, then each assembly with its cards in it. The
     nesting angle is on the cards only when it is chosen per part."""
     title, clear = st.columns([6, 2], vertical_alignment="center")
     title.markdown("**Osat**")
@@ -347,38 +346,60 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
             st.button(f"Kyllä, poista kaikki {len(parts)} osaa", key="dxf_del_all",
                       type="primary", on_click=_evict_all)
     attachments.render_checked_count([fid for fid, _ in parts])
-    shown = _render_page_picker(len(parts))
-    _keep_widget_state([fid for i, (fid, _) in enumerate(parts) if i not in shown])
+    card_of = _card_of()
+    index = {fid: idx for idx, (fid, _) in enumerate(parts)}
+    in_assembly = {cid for cids in assemblies.cards(card_of).values() for cid in cids}
     doc_links = _doc_links()
-    products, fill = [], _FillOffer()
-    for idx, (fid, part) in enumerate(parts):
-        if idx in shown:
-            fill.slot = st.empty()  # above the card: where the question goes if it asks
-            product = _render_part_config(fid, part, idx, materials, lookup,
-                                          per_part_angles, fill, doc_links.get(fid, []))
-        else:
-            with headless():    # priced as drawn, not drawn
-                product = _render_part_config(fid, part, idx, materials, lookup,
-                                              per_part_angles, None, doc_links.get(fid, []))
-        if product is not None:
-            products.append(product)
-    return products
+    products: dict[int, dict | None] = {}
+    fill = _FillOffer()
+
+    def draw(idxs: list[int], page_key: str) -> None:
+        shown = {idxs[i] for i in _render_page_picker(len(idxs), page_key)}
+        _keep_widget_state([parts[i][0] for i in idxs if i not in shown])
+        for idx in idxs:
+            fid, part = parts[idx]
+            if idx in shown:
+                fill.slot = st.empty()  # above the card: where the question goes if it asks
+                products[idx] = _render_part_config(fid, part, idx, materials, lookup,
+                                                    per_part_angles, fill,
+                                                    doc_links.get(fid, []))
+            else:
+                with headless():    # priced as drawn, not drawn
+                    products[idx] = _render_part_config(fid, part, idx, materials, lookup,
+                                                        per_part_angles, None,
+                                                        doc_links.get(fid, []))
+
+    loose = [idx for idx, (fid, _) in enumerate(parts) if fid not in in_assembly]
+    if not loose:
+        st.caption("Kaikki osat ovat kokoonpanoissa.")
+    draw(loose, _PAGE)
+
+    def draw_assembly(aid: str, cids: list[str]) -> None:
+        # A card in two assemblies is drawn in the first one only.
+        mine = sorted(index[c] for c in cids if c in index)
+        elsewhere = [i for i in mine if i in products]
+        for i in elsewhere:
+            st.caption(f"#{i + 1} · {parts[i][1].name}: kortti on toisessa kokoonpanossa.")
+        draw([i for i in mine if i not in products], f"{_PAGE}_{aid}")
+
+    assemblies.render(card_of, draw_assembly)
+    return [products[i] for i in sorted(products) if products[i] is not None]
 
 
 _PAGE = "dxf_card_page"
 _PAGE_SIZE = 20     # cards drawn at once: hundreds would take minutes and the memory
 
 
-def _render_page_picker(n: int) -> range:
+def _render_page_picker(n: int, key: str = _PAGE) -> range:
     """Which cards are drawn: all of a few, else one page of ``_PAGE_SIZE``.
     Every card is priced either way (see ``view.ui``)."""
     pages = -(-n // _PAGE_SIZE)
     if pages <= 1:
         return range(n)
-    if st.session_state.get(_PAGE, 0) >= pages:
-        st.session_state[_PAGE] = 0
+    if st.session_state.get(key, 0) >= pages:
+        st.session_state[key] = 0
     page = st.selectbox(
-        "Näytettävät osat", range(pages), key=_PAGE,
+        "Näytettävät osat", range(pages), key=key,
         format_func=lambda i: f"#{i * _PAGE_SIZE + 1}–{min(n, (i + 1) * _PAGE_SIZE)}",
         help=f"Osia näytetään {_PAGE_SIZE} kerrallaan, jotta sivu pysyy nopeana. Kaikki "
              f"{n} osaa hinnoitellaan silti, myös piilossa olevat.")

@@ -282,8 +282,6 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
         parts = _sync()
         assemblies.sync_from_models()
         _render_part_cards(parts, ["S235"], {("2", "S235 | 1000x2000"): 900.0}, False)
-        assemblies.render({fid: f"#{i + 1} · {d.name}" for i, (fid, d) in enumerate(parts)},
-                          _card_of())
         st.session_state["asm"] = [(a.name, dict(a.members),
                                     [(b.name, b.qty) for b in a.bought])
                                    for a in assemblies.current(_card_of())]
@@ -296,6 +294,10 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
     assert at.session_state["asm"] == [
         ("runko", {cards["Pohja.dxf"]: 1, cards["Kulma.step"]: 2}, [("Tappi", 6)])]
     assert any("Kokoonpanossa **runko**: 2 kpl" in c.value for c in at.caption)
+    # Its cards are drawn inside it, not among the loose parts.
+    assert any("Kaikki osat ovat kokoonpanoissa." in c.value for c in at.caption)
+    assert [m.value.split(" · ")[1] for m in at.markdown if m.value.startswith("**#")] == [
+        "Pohja.dxf", "Kulma.step"]
 
 
 def test_a_kept_models_bodies_are_read_again_when_needed():

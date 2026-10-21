@@ -200,6 +200,8 @@ parts, work and contents.
   model's quantities as kpl / kokoonpano. Its other bodies (pins, screws,
   machined parts) become **bought parts** with a € price to fill in. Removing
   the STEP file removes its assembly.
+- **Apart from the loose parts.** **Osat** lists only the parts in no
+  assembly. Each assembly below it shows its own cards, paged the same way.
 - **Pricing.** A batch size counts assemblies. Each part is priced at
   `batch × kpl / kokoonpano` pieces, so its setup and sheets are shared over
   all of them. One assembly costs its parts' €/kpl × kpl/kokoonpano, plus the
