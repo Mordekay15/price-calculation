@@ -95,7 +95,7 @@ def render_material_thickness(
     return material, thickness
 
 
-ADVANCED_LABEL = "Lisäasetukset"
+_ADVANCED_LABEL = "Lisäasetukset"
 
 _BOTTOM_HELP = (
     "Kynsiraina — pitkän sivun kaista, johon koneen kynnet tarttuvat — "
@@ -140,11 +140,6 @@ class SheetSettings:
         return {"rankavali_mm": self.rankavali_mm, "edges_mm": self.edges_mm}
 
 
-def settings_summary(values: dict, labels: dict) -> str:
-    """The folded settings as one line, so a changed value is never hidden."""
-    return " · ".join(label(values[k]) for k, label in labels.items())
-
-
 _NEST_HELP = (
     "Yhdistettynä saman materiaalin ja paksuuden tuotteet sijoitellaan "
     "samoille levyille (sekanestaus). Erikseen-vaihtoehdolla kullekin "
@@ -163,12 +158,7 @@ _EDGES_HELP = (
 )
 
 
-def render_main_settings(
-    *,
-    margin_key: str,
-    key_prefix: str = "calc",
-    separate_label: str = "Laske jokainen tuote erikseen",
-) -> tuple[float, str]:
+def _render_main_settings(*, key_prefix: str, separate_label: str) -> tuple[float, str]:
     """The settings every quote touches, in one row: margin and "Sijoittelutapa".
 
     Returns ``(margin_pct, nest_mode)``; ``nest_mode`` is "combined" or
@@ -176,7 +166,8 @@ def render_main_settings(
     """
     c1, c2 = st.columns([1, 3])
     margin_pct = c1.number_input(
-        "Materiaalin kate (%)", min_value=0.0, value=15.0, step=0.5, key=margin_key,
+        "Materiaalin kate (%)", min_value=0.0, value=15.0, step=0.5,
+        key=f"{key_prefix}_margin_pct",
     )
     nest_mode = c2.radio(
         "Sijoittelutapa",
@@ -192,10 +183,21 @@ def render_main_settings(
     return margin_pct, nest_mode
 
 
-def render_nesting_inputs(*, key_prefix: str = "calc") -> SheetSettings:
+def render_settings(*, key_prefix: str, separate_label: str) -> tuple[float, str, SheetSettings]:
+    """The settings row (margin, nesting mode), then the folded sheet settings
+    and their one-line summary: ``(margin_pct, nest_mode, sheet)``."""
+    st.divider()
+    margin_pct, nest_mode = _render_main_settings(key_prefix=key_prefix,
+                                                  separate_label=separate_label)
+    with st.expander(_ADVANCED_LABEL):
+        sheet = _render_nesting_inputs(key_prefix=key_prefix)
+    st.caption(" · ".join(label(sheet.values()[k]) for k, label in NESTING_LABELS.items()))
+    return margin_pct, nest_mode, sheet
+
+
+def _render_nesting_inputs(*, key_prefix: str) -> SheetSettings:
     """Rankaväli and the four edge gaps, with a small sheet diagram that
-    shows which edge is which. The caller puts them in its
-    ``ADVANCED_LABEL`` expander."""
+    shows which edge is which."""
     rankavali_mm = int(st.columns(2)[0].number_input(
         "Rankaväli (mm)", min_value=0, value=0, step=1,
         key=f"{key_prefix}_rankavali_mm", help=_RANKAVALI_HELP,

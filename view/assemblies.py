@@ -16,6 +16,7 @@ stays on the right card when the card's files are regrouped."""
 from __future__ import annotations
 
 import re
+from dataclasses import fields
 from collections.abc import Callable
 
 import streamlit as st
@@ -94,8 +95,7 @@ def current(card_of: dict[str, str]) -> list[Assembly]:
 
 # ── The panel ─────────────────────────────────────────────────────────────────
 
-_WORK_DEFAULTS = {"fit_min": 0.0, "weld_m": 0.0, "setup_min": 0.0, "eur_per_h": 0.0,
-                  "other_eur": 0.0}
+_WORK_DEFAULTS = {f.name: f.default for f in fields(AssemblyWork)}
 _WORK_LABELS = {
     "fit_min": ("Kokoonpanotyö (min/kok.)", 1.0, "Osien kokoaminen yhdeksi kokoonpanoksi."),
     "weld_m": ("Hitsaus (m/kok.)", 0.1, "Osien hitsaus yhteen. Hinnoitellaan sivupalkin "
@@ -105,11 +105,6 @@ _WORK_LABELS = {
     "eur_per_h": ("Työ (€/h)", 5.0, "Kokoonpanotyön ja asetuksen tuntihinta."),
     "other_eur": ("Muut (€/kok.)", 0.5, "Esim. pakkaus tai koko kokoonpanon maalaus."),
 }
-
-
-def cards(card_of: dict[str, str]) -> dict[str, dict[str, int]]:
-    """Each assembly's cards, ``{assembly id: {card id: kpl / kokoonpano}}``."""
-    return {aid: _cards_of(a, card_of) for aid, a in _store().items()}
 
 
 def render(card_of: dict[str, str], draw_cards: Callable[[str, dict[str, int]], None]) -> None:

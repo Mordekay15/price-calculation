@@ -103,15 +103,19 @@ def text(doc_id: str) -> str:
     return _text(doc_id, doc) if doc is not None and doc["kind"] == "pdf" else ""
 
 
-def _text(doc_id: str, doc: dict) -> str:
-    """A PDF's text (first pages), read once and shared with the material
-    proposals."""
+def pages(doc_id: str, doc: dict) -> list[tuple[int, str]]:
+    """A PDF's first pages, ``[(page, text)]``, read once for the card links
+    and the material proposals."""
     from core.materials import pdf_text
 
     cache = st.session_state.setdefault(TEXTS, {})
     if doc_id not in cache:
         cache[doc_id] = pdf_text(doc["load"]())
-    return "\n".join(text for _, text in cache[doc_id])
+    return cache[doc_id]
+
+
+def _text(doc_id: str, doc: dict) -> str:
+    return "\n".join(text for _, text in pages(doc_id, doc))
 
 
 _ROWS = 30   # files listed at once: a big RFQ has hundreds, each with a part picker

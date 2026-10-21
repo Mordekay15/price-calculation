@@ -23,6 +23,8 @@ import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from core.pricing import parse_thickness_mm
+
 ROOT = Path(__file__).resolve().parent.parent
 ALIAS_FILE = ROOT / "material_aliases.json"
 
@@ -216,13 +218,9 @@ def match_thickness(thickness_mm: float | None, available: list[str]) -> str | N
     """The available thickness label equal to ``thickness_mm`` (± 0.05 mm)."""
     if thickness_mm is None:
         return None
-    for label in available:
-        try:
-            if abs(float(label.replace(",", ".")) - thickness_mm) <= 0.05:
-                return label
-        except ValueError:
-            continue
-    return None
+    return next((label for label in available
+                 if (mm := parse_thickness_mm(label)) is not None
+                 and abs(mm - thickness_mm) <= 0.05), None)
 
 
 def propose(parts: dict[str, tuple[str, list[Hint]]], note_hints: list[Hint],

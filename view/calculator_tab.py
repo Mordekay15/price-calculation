@@ -8,18 +8,14 @@ import streamlit as st
 
 from core.pricing import build_lookup, parse_thickness_mm
 from core.rect_nesting import rect_options
-from core.sheet_cost import EdgeGaps, group_products, reprice, size_prices
+from core.sheet_cost import EdgeGaps, group_products, price_by_size, reprice
 from core.work import rect_cut_length_m
 from view.common import (
-    ADVANCED_LABEL,
-    NESTING_LABELS,
     materials_with_copper,
     render_groups,
-    render_main_settings,
     render_material_thickness,
-    render_nesting_inputs,
     render_pieces_summary,
-    settings_summary,
+    render_settings,
 )
 from view.drawing import draw_rect_layout
 from view.quote import render_batch_prices
@@ -32,11 +28,8 @@ def render(data: dict) -> None:
 
     products = _render_products(materials_with_copper(lookup), lookup)
 
-    st.divider()
-    margin_pct, nest_mode = render_main_settings(margin_key="calc_margin_pct")
-    with st.expander(ADVANCED_LABEL):
-        sheet = render_nesting_inputs()
-    st.caption(settings_summary(sheet.values(), NESTING_LABELS))
+    margin_pct, nest_mode, sheet = render_settings(
+        key_prefix="calc", separate_label="Laske jokainen tuote erikseen")
 
     def render_one(key, prods):
         material, thickness = key[0], key[1]
@@ -53,8 +46,7 @@ def render(data: dict) -> None:
             # The margin only prices the plans: applied here, so changing it
             # is instant (one factor on every sheet keeps the same plans).
             result = reprice(result, material=material, thickness_mm=thickness_mm,
-                             base_ppt={(w, h): p for w, h, p in
-                                       size_prices(lookup, material, thickness)},
+                             base_ppt=price_by_size(lookup, material, thickness),
                              margin_pct=margin_pct)
         ids = "-".join(str(p["id"]) for p in prods)
         return render_group(

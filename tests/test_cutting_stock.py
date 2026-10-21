@@ -235,8 +235,6 @@ def test_the_smallest_near_misses_are_tried_on_the_real_shapes():
 def test_notched_plates_make_a_checkerboard_with_the_real_solver():
     # 8 + 8 notched plates: as boxes 4 + 4 don't fit 2500 mm, but big and small
     # alternating with their notches hooked together do: 2 sheets, 1 program.
-    from functools import partial
-
     from core.sparrow import find_executable, run_sparrow
     exe = find_executable()
     if exe is None:

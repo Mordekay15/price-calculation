@@ -199,10 +199,9 @@ def _part_columns(file_id, m, row, card_of) -> dict:
     flat = m["flats"].get(row.part_key)
     if flat is None or not flat.is_sheet:
         return {"Tyyppi": "ei levyosa", "Levy": flat.reason if flat else "", "Kortti": "—"}
-    xs = [p[0] for p in flat.outline]
-    ys = [p[1] for p in flat.outline]
+    w, h = flat.blank_mm or (0.0, 0.0)
     sheet = (f"t {flat.thickness_mm:g} mm · {len(flat.bends)} taiv. · "
-             f"aihio {max(xs) - min(xs):.0f} × {max(ys) - min(ys):.0f} mm")
+             f"aihio {w:.0f} × {h:.0f} mm")
     return {"Tyyppi": "levyosa", "Levy": sheet,
             "Kortti": card_of.get(card_id(file_id, row.part_key), "poistettu")}
 

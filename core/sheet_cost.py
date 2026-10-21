@@ -236,6 +236,11 @@ def size_prices(lookup: dict, material: str, thickness: str) -> list[tuple[int, 
     return out
 
 
+def price_by_size(lookup: dict, material: str, thickness: str) -> dict[tuple[int, int], float]:
+    """``size_prices`` as ``{(w, h): €/tn}``."""
+    return {(w, h): p for w, h, p in size_prices(lookup, material, thickness)}
+
+
 def sheet_eur(sw: int, sh: int, price_per_tonne: float, thickness_mm: float,
               material: str, margin_pct: float) -> float:
     """What one sheet costs, the margin included."""

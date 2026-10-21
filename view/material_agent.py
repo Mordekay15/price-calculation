@@ -17,13 +17,12 @@ from core.materials import (
     claude_available,
     extract_hints,
     load_aliases,
-    pdf_text,
     propose,
     save_aliases,
 )
+from view import attachments
 
 _RESULT = "dxf_material_proposals"   # list[Proposal] from the last search
-_PDF_TEXT = "dxf_doc_texts"          # {doc id: [(page, text)]}, as view.attachments.TEXTS
 _NOTE = "dxf_rfq_note"
 _AUTO = "dxf_material_auto"          # {card id: what it was filled from (see auto_fill)}
 _AUTO_NOTE = "dxf_material_auto_note"  # {card id: (material, thickness, sources)}
@@ -118,7 +117,6 @@ def auto_note(fid: str, material: str | None, thickness: str | None) -> str | No
 
 
 def _search(parts, doc_links, docs, materials, thicknesses_for) -> list[Proposal]:
-    texts = st.session_state.setdefault(_PDF_TEXT, {})
     by_part = {}
     for fid, dxf in parts:
         hints = extract_hints("\n".join(dxf.texts), f"{dxf.name} (DXF)")
@@ -130,9 +128,7 @@ def _search(parts, doc_links, docs, materials, thicknesses_for) -> list[Proposal
             doc = docs.get(d)
             if doc is None or doc["kind"] != "pdf":
                 continue
-            if d not in texts:
-                texts[d] = pdf_text(doc["load"]())
-            for page, text in texts[d]:
+            for page, text in attachments.pages(d, doc):
                 hints += extract_hints(text, f"{doc['name']}, s. {page}")
         by_part[fid] = (dxf.name, hints)
     note = extract_hints(st.session_state.get(_NOTE, ""), "Tarjouspyyntö")

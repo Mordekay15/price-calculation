@@ -69,9 +69,14 @@ class FlatPart:
 
     @property
     def flat_area_mm2(self) -> float:
-        from core.geometry import area
-        return (abs(area(self.outline)) - sum(abs(area(h)) for h in self.holes)
-                if self.outline else 0.0)
+        from core.geometry import net_area
+        return net_area(self.outline, self.holes) if self.outline else 0.0
+
+    @property
+    def blank_mm(self) -> tuple[float, float] | None:
+        """The flat's ``(width, height)`` in mm, None when it has none."""
+        from core.geometry import bbox_wh
+        return bbox_wh(self.outline) if self.outline else None
 
 
 @dataclass

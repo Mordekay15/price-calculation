@@ -8,7 +8,6 @@ import ezdxf
 import streamlit as st
 from reportlab.pdfgen import canvas
 
-from core.dxf import read_dxf
 from tests.conftest import dxf_bytes
 from view import attachments, material_agent
 from view.dxf_tab import _STORE, _apply_material, _ingest, _render_part_cards

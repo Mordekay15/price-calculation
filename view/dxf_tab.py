@@ -4,6 +4,7 @@ priced sheet size, behind a button and a progress bar, cached until an input
 changes."""
 
 import hashlib
+from contextlib import nullcontext
 import json
 import re
 import time
@@ -11,9 +12,10 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 
 from core.archive import ArchiveError, is_zip, read_path, unpack
-from core.pricing import build_lookup, get_sizes_for_material, parse_thickness_mm
+from core.pricing import build_lookup, parse_thickness_mm
 from core.dwg import read_drawing
 from core.dxf import DxfFile, DxfReport, fasteners_from_texts, is_slit
+from core.assemblies import per_unit
 from core.geometry import net_area
 from core.items import (Choice, Source, choose, confirm_unit, group_sources,
                         looks_like_drawing, score_dxf, score_step)
@@ -23,10 +25,10 @@ from core.step import bends_on
 from core.sheet_cost import (
     group_products,
     is_ready,
+    price_by_size,
     reprice,
     scales_evenly,
     sheet_eur,
-    size_prices,
 )
 from core.sparrow import (
     NESTING_ANGLES,
@@ -36,16 +38,13 @@ from core.sparrow import (
     sparrow_options,
 )
 from view.common import (
-    ADVANCED_LABEL,
     NESTING_LABELS,
+    SheetSettings,
     materials_with_copper,
     render_groups,
-    render_main_settings,
     render_material_thickness,
-    render_nesting_inputs,
-    SheetSettings,
     render_pieces_summary,
-    settings_summary,
+    render_settings,
     thicknesses_for,
 )
 from view.drawing import draw_sparrow_layout, preview_svg
@@ -130,7 +129,8 @@ def render(data: dict) -> None:
     # switch decides it: read the switch's value from the last run.
     per_part = len(parts) > 1 and st.session_state.get(_ANGLE_MODE) == _PER_PART
     products = _render_part_cards(parts, materials, lookup, per_part)
-    margin_pct, nest_mode, sheet = _render_settings()
+    margin_pct, nest_mode, sheet = render_settings(
+        key_prefix="dxf", separate_label="Laske jokainen osa erikseen")
     if not any(is_ready(p) for p in products):
         st.info("Valitse materiaali ja paksuus vähintään yhdelle osalle.")
         return
@@ -348,10 +348,7 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
     attachments.render_checked_count([fid for fid, _ in parts])
     card_of = _card_of()
     index = {fid: idx for idx, (fid, _) in enumerate(parts)}
-    per_assembly: dict[str, int] = {}     # card id: kpl in one of each of its assemblies
-    for cids in assemblies.cards(card_of).values():
-        for cid, n in cids.items():
-            per_assembly[cid] = per_assembly.get(cid, 0) + n
+    per_assembly = per_unit(assemblies.current(card_of))  # card id: kpl in its assemblies
     doc_links = _doc_links()
     products: dict[int, dict | None] = {}
     fill = _FillOffer()
@@ -363,16 +360,12 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
             fid, part = parts[idx]
             if idx in shown:
                 fill.slot = st.empty()  # above the card: where the question goes if it asks
+            with nullcontext() if idx in shown else headless():  # hidden: priced, not drawn
                 products[idx] = _render_part_config(fid, part, idx, materials, lookup,
-                                                    per_part_angles, fill,
+                                                    per_part_angles,
+                                                    fill if idx in shown else None,
                                                     doc_links.get(fid, []),
                                                     per_assembly.get(fid, 0))
-            else:
-                with headless():    # priced as drawn, not drawn
-                    products[idx] = _render_part_config(fid, part, idx, materials, lookup,
-                                                        per_part_angles, None,
-                                                        doc_links.get(fid, []),
-                                                        per_assembly.get(fid, 0))
 
     loose = [idx for idx, (fid, _) in enumerate(parts) if fid not in per_assembly]
     if not loose:
@@ -433,22 +426,6 @@ def _keep_widget_state(fids: list[str]) -> None:
             ss[key] = ss[key]
 
 
-def _render_settings() -> tuple[float, str, SheetSettings]:
-    """Margin, nesting mode and the folded sheet settings; returns
-    ``(margin_pct, nest_mode, sheet)``. The search time is read later, next
-    to the run button."""
-    st.divider()
-    margin_pct, nest_mode = render_main_settings(
-        margin_key="dxf_margin_pct",
-        key_prefix="dxf",
-        separate_label="Laske jokainen osa erikseen",
-    )
-    with st.expander(ADVANCED_LABEL):
-        sheet = render_nesting_inputs(key_prefix="dxf")
-    st.caption(settings_summary(sheet.values(), NESTING_LABELS))
-    return margin_pct, nest_mode, sheet
-
-
 def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
     """Stable cache key: what decides the nesting — the parts (quantity,
     nesting angles) and the sheet sizes they are nested on (those with a price
@@ -463,14 +440,14 @@ def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
     """
     prod_sig = ",".join(f"{p['id']}:{p.get('source', p['id'])}:{p['qty']}:"
                         f"{'/'.join(map(str, p['angles']))}" for p in products)
-    sizes = sorted({(w, h) for w, h, _ in size_prices(settings.lookup, key[0], key[1])})
+    sizes = sorted(price_by_size(settings.lookup, key[0], key[1]))
     return f"{prod_sig}|{sizes}"
 
 
 def _pricing(lookup: dict, key: tuple, margin_pct: float) -> dict:
     """What a result was priced with: material, thickness, €/tn by size, margin."""
     return {"material": key[0], "thickness_mm": parse_thickness_mm(key[1]),
-            "prices": {(w, h): p for w, h, p in size_prices(lookup, key[0], key[1])},
+            "prices": price_by_size(lookup, key[0], key[1]),
             "margin_pct": margin_pct}
 
 
@@ -733,7 +710,7 @@ def _ingest(uploaded) -> bool:
             bar.progress(n / len(todo), text=f"Luetaan tiedostoja {n + 1} / {len(todo)}: "
                                              f"{up.name}")
         folder = getattr(up, "folder", "")
-        if up.name.rsplit(".", 1)[-1].lower() not in _USED:
+        if not _is_used(up.name):
             skipped.append(up.name)     # e.g. Creo's part.prt.1, part.drw.1
             continue
         if (folder, up.name) in names:
@@ -875,7 +852,7 @@ def _sync() -> list[tuple[str, DxfFile]]:
             if inherited is not None:
                 config[cid] = dict(inherited)
         models = [bom.source(m) for m in members if bom.is_source(m)]
-        blank = _blank_size(models[0][2]) if models else None
+        blank = models[0][2].blank_mm if models and models[0][2] is not None else None
         scores = {sid: (score_dxf(report(sid), files[sid].unit_guessed, files[sid].texts, blank)
                         if sid in files else score_step(True)) for sid in members}
         chosen = choose(scores, config.get(cid, {}).get("source")) or members[0]
@@ -897,14 +874,6 @@ def _resync() -> None:
     st.session_state.get(_SRC_REPORTS, {}).clear()
     st.session_state.get(_REPORTS, {}).clear()
     _sync()
-
-
-def _blank_size(flat) -> tuple[float, float] | None:
-    if flat is None or not flat.outline:
-        return None
-    xs = [p[0] for p in flat.outline]
-    ys = [p[1] for p in flat.outline]
-    return max(xs) - min(xs), max(ys) - min(ys)
 
 
 def _card_of() -> dict[str, str]:
@@ -1119,9 +1088,7 @@ def _render_part_config(
                                       bends=_bends(report, item), threads=report.threads,
                                       fasteners=0 if in_assembly else _fasteners(dxf, item),
                                       in_assembly=in_assembly,
-                                      **piece_size(report.outline.area_mm2 - sum(
-                                          h.area_mm2 for h in report.holes),
-                                          material, thickness))
+                                      **piece_size(report.net_area_mm2, material, thickness))
         if angles == ():
             return None
 
@@ -1361,13 +1328,8 @@ def _fill_material(material: str | None, thickness: str | None) -> None:
     is clicked, so a card filled meanwhile keeps its own choice. Their
     selectboxes get new keys (see ``_material_keys``), so they start from the
     stored choice."""
-    config = st.session_state.setdefault(_CONFIG, {})
     for f in _empty_cards() if material else []:
-        old = config.get(f, {})
-        for key in _material_keys(f, old):
-            st.session_state.pop(key, None)
-        config[f] = {**old, "material": material, "thickness": thickness,
-                     "v": old.get("v", 0) + 1}
+        _apply_material(f, material, thickness)
     st.session_state[_FILL_ASKED] = True
 
 
