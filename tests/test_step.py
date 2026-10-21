@@ -80,6 +80,15 @@ def test_bent_parts_unfold_to_the_neutral_length(segments):
         assert (flat.bends[0].up == flat.bends[1].up) == (bends[0] * bends[1] > 0)
 
 
+def test_a_joggle_finds_its_thickness_past_the_nearer_flange():
+    """In a small joggle the other flange's face is nearer than the sheet's
+    own other skin: the thickness is the one that unfolds to the volume."""
+    t, r, k = 1.5, 1.0, 0.44
+    flat = unfold(bent_part([(25, 20), (2, -20), (15, 0)], t, r), k)
+    assert flat.is_sheet and flat.thickness_mm == pytest.approx(t)
+    assert [round(b.angle_deg) for b in flat.bends] == [20, 20]
+
+
 def test_the_l_bracket_keeps_its_hole_and_k_changes_the_length():
     half = unfold(l_bracket(), 0.5)
     assert len(half.holes) == 1
