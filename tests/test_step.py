@@ -344,3 +344,42 @@ def test_a_kept_models_bodies_are_read_again_when_needed():
     assert not at.exception
     assert at.session_state["dropped"] and at.session_state["again"]
     assert at.session_state["flats"] == 3
+
+
+def test_removing_an_assembly_removes_its_parts_and_its_step_file():
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        from types import SimpleNamespace
+
+        import ezdxf
+        import streamlit as st
+
+        from tests.conftest import dxf_bytes
+        from tests.step_models import assembly_step
+        from view import bom
+        from view.dxf_files import ingest, sync, sync_assemblies
+        from view.dxf_tab import _render_part_cards
+
+        if "dropped" not in st.session_state:
+            doc = ezdxf.new()
+            doc.header["$INSUNITS"] = 4
+            doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 60), (0, 60)],
+                                            close=True)
+            data, model = dxf_bytes(doc), assembly_step()
+            ingest([SimpleNamespace(file_id="d1", name="Pohja.dxf", getvalue=lambda: data),
+                    SimpleNamespace(file_id="s1", name="runko.step", getvalue=lambda: model),
+                    SimpleNamespace(file_id="d2", name="Irto.dxf", getvalue=lambda: data)])
+            st.session_state["dropped"] = True
+        parts = sync()
+        sync_assemblies()
+        _render_part_cards(parts, ["S235"], {("2", "S235 | 1000x2000"): 900.0}, False)
+        st.session_state["parts"] = [d.name for _, d in sync()]
+        st.session_state["models"] = list(bom.models())
+
+    at = AppTest.from_function(page, default_timeout=60).run()
+    assert at.session_state["parts"] == ["Pohja.dxf", "Irto.dxf", "Kulma.step"]
+    at.button(key="asm_del_step:s1").click().run()
+    assert not at.exception
+    at.run()
+    assert at.session_state["parts"] == ["Irto.dxf"] and at.session_state["models"] == []

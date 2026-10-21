@@ -150,8 +150,8 @@ def render(card_of: dict[str, str], draw_cards: Callable[[str, dict[str, int]], 
            remove_card: Callable[[str], None]) -> None:
     """The assemblies, apart from the loose parts: each one's cards (drawn by
     ``draw_cards(assembly id, {card id: kpl / kokoonpano})``), bought parts and
-    assembly work. Removing an assembly made from a drawing removes the
-    drawing (``remove_card``), which made it."""
+    assembly work. Removing an assembly removes its cards and drawing
+    (``remove_card``) and its STEP file."""
     store = _store()
     if not store:
         return
@@ -179,7 +179,9 @@ def _render_one(aid: str, a: dict, card_of: dict[str, str],
         c1, c2 = st.columns([6, 1], vertical_alignment="bottom")
         a["name"] = c1.text_input("Kokoonpano", value=a["name"], key=f"asm_name_{aid}",
                                   help=_ORIGIN.get(next((k for k in _ORIGIN if a.get(k)), "")))
-        c2.button("Poista", key=f"asm_del_{aid}", on_click=_remove, args=(aid, remove_card))
+        c2.button("Poista", key=f"asm_del_{aid}", on_click=_remove,
+                  args=(aid, card_of, remove_card),
+                  help="Poistaa kokoonpanon ja sen osat (kortit, piirustuksen ja STEP-mallin).")
         if a.get("awaited"):
             st.warning("Piirustuksessa on osia, joita ei ole ladattu: "
                        + ", ".join(a["awaited"]) + ". Lataa niiden DXF- tai STEP-tiedostot, "
@@ -188,10 +190,17 @@ def _render_one(aid: str, a: dict, card_of: dict[str, str],
         _render_work(aid, a)
 
 
-def _remove(aid: str, remove_card: Callable[[str], None]) -> None:
-    a = _store().pop(aid, {})
-    if a.get("drawing"):
-        remove_card(a["drawing"])
+def _remove(aid: str, card_of: dict[str, str], remove_card: Callable[[str], None]) -> None:
+    """The assembly's "Poista": it goes with its parts' cards (a card in
+    another assembly too stays), its drawing and its STEP file."""
+    store = _store()
+    a = store.pop(aid, {})
+    others = {c for b in store.values() for c in _cards_of(b, card_of)}
+    for cid in [*_cards_of(a, card_of), *filter(None, [a.get("drawing")])]:
+        if cid not in others:
+            remove_card(cid)
+    if a.get("auto"):
+        bom.remove_model(a["auto"])
 
 
 def _render_work(aid: str, a: dict) -> None:
