@@ -16,7 +16,7 @@ from core.archive import ArchiveError, is_zip, read_path, unpack
 from core.dwg import read_drawing
 from core.dxf import DxfFile, DxfReport, fasteners_from_texts
 from core.items import (Choice, Source, choose, group_sources, looks_like_drawing,
-                        score_dxf, score_step)
+                        score_dxf, STEP_CHOICE)
 from core.sparrow import NESTING_ANGLES
 from core.step import available as step_available
 from core.step import bends_on
@@ -339,7 +339,7 @@ def sync() -> list[tuple[str, DxfFile]]:
         models = [bom.source(m) for m in members if bom.is_source(m)]
         blank = models[0][2].blank_mm if models and models[0][2] is not None else None
         scores = {sid: (score_dxf(report(sid), files[sid].unit_guessed, files[sid].texts, blank)
-                        if sid in files else score_step(True)) for sid in members}
+                        if sid in files else STEP_CHOICE) for sid in members}
         chosen = choose(scores, config.get(cid, {}).get("source")) or members[0]
         if cid in old and old[cid].chosen != chosen:
             ss.get(REPORTS, {}).pop(cid, None)

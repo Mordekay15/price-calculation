@@ -94,7 +94,6 @@ def _drawings(groups: dict[str, list[Source]], is_drawing):
 
 @dataclass
 class Choice:
-    id: str
     score: float
     note: str                          # why, in Finnish, for the card
     valid: bool = True
@@ -106,7 +105,7 @@ def score_dxf(report, unit_guessed: bool, texts: list[str],
     better). ``report`` is its ``DxfReport``, ``blank_mm`` the STEP blank's
     size when the item has a model."""
     if report.problems or report.outline is None:
-        return Choice("", -1e9, "ei luettavaa ääriviivaa", valid=False)
+        return Choice(-1e9, "ei luettavaa ääriviivaa", valid=False)
     w, h = sorted((report.outline.width_mm, report.outline.height_mm))
     score, notes = 100.0, []
     if _is_paper(w, h):
@@ -131,13 +130,11 @@ def score_dxf(report, unit_guessed: bool, texts: list[str],
             notes.append("eri koko kuin STEP-mallin aihio")
     if not notes:
         notes.append("puhdas aihio")
-    return Choice("", score, ", ".join(notes))
+    return Choice(score, ", ".join(notes))
 
 
-def score_step(is_sheet: bool, reason: str = "") -> Choice:
-    if not is_sheet:
-        return Choice("", -1e9, reason or "ei levyosa", valid=False)
-    return Choice("", 90.0, "avattu STEP-mallista")
+# A STEP model's unfolded sheet part: clean by construction.
+STEP_CHOICE = Choice(90.0, "avattu STEP-mallista")
 
 
 def choose(scored: dict[str, Choice], override: str | None = None) -> str | None:

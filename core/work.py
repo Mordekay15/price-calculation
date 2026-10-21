@@ -211,18 +211,12 @@ BREAKDOWN = ("Leikkaus", "Taivutus", "Kierteet", "Kiinnikkeet", "Hitsaus", "Alih
 def work_cost(inp: WorkInputs, qty: int, rates: WorkRates) -> WorkCost:
     """What ``qty`` pieces' work costs, before the per-sheet cutting minimum."""
     qty = max(int(qty), 1)
-    if inp.method == PUNCH:
-        cutting, seconds, priced = inp.hits * rates.eur_per_hit, 0.0, True
-    elif inp.laser is None:
-        cutting, seconds, priced = 0.0, 0.0, inp.cut_length_m == 0
-    else:
-        seconds = inp.cut_length_m * inp.laser.s_per_m
-        cutting, priced = seconds * inp.laser.eur_per_s, True
+    laser = inp.laser if inp.method == LASER else None
     setup = default_setup(inp, rates) if inp.setup_eur is None else inp.setup_eur
     replaced = {op.replaces for op in inp.operations}
     return WorkCost(
         qty=qty,
-        cutting=cutting,
+        cutting=cutting_eur(inp, inp.method, rates) or 0.0,
         bending=0.0 if "bending" in replaced else inp.bends * inp.eur_per_bend,
         threads=inp.threads * inp.eur_per_thread,
         fasteners=inp.fasteners * (inp.eur_per_fastener + inp.eur_per_insert),
@@ -230,8 +224,8 @@ def work_cost(inp: WorkInputs, qty: int, rates: WorkRates) -> WorkCost:
         subcontract=inp.subcontract_eur,
         setup=setup,
         programming=inp.programming_eur,
-        cut_seconds=seconds,
-        priced=priced,
+        cut_seconds=inp.cut_length_m * laser.s_per_m if laser else 0.0,
+        priced=not (inp.method == LASER and inp.laser is None and inp.cut_length_m),
         operations=sum(op.per_piece_eur for op in inp.operations),
         operations_setup=sum(op.batch_eur for op in inp.operations),
     )

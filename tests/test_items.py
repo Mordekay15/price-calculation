@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 from core.items import (Choice, Source, choose, confirm_unit, group_sources, score_dxf,
-                        score_step)
+                        STEP_CHOICE)
 
 
 def _report(w, h, dropped=0, problems=()):
@@ -46,15 +46,15 @@ def test_the_step_blank_confirms_a_dxf_or_wins_over_a_wrong_one():
     blank = (76.5, 40.0)
     same = score_dxf(_report(40.0, 76.6), False, [], blank)
     other = score_dxf(_report(120, 80), False, [], blank)
-    step = score_step(True)
+    step = STEP_CHOICE
     assert "STEP" in same.note
     assert choose({"s": step, "same": same}) == "same"
     assert choose({"other": other, "s": step}) == "s"
 
 
 def test_the_users_choice_wins_while_valid():
-    scores = {"a": Choice("", 100, ""), "b": Choice("", 50, ""),
-              "bad": Choice("", -1e9, "", valid=False)}
+    scores = {"a": Choice(100, ""), "b": Choice(50, ""),
+              "bad": Choice(-1e9, "", valid=False)}
     assert choose(scores) == "a"
     assert choose(scores, "b") == "b"
     assert choose(scores, "bad") == "a"
