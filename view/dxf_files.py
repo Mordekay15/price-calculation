@@ -25,7 +25,7 @@ from view.common import thicknesses_for
 from view.ui import st
 STORE   = "dxf_store"         # {card id: DxfFile}: each card's chosen shape
 REPORTS = "dxf_part_reports"  # {card id: DxfReport}
-CONFIG  = "dxf_part_config"   # {card id: {"material", "thickness", "qty", "source"}}
+CONFIG  = "dxf_part_config"   # {card id: {"material", "thickness", "source"}}
 FILES   = "dxf_files"         # {file id: DxfFile}: every dropped DXF/DWG, in drop order
 ITEMS   = "dxf_items"         # {card id: Item}: the files on each card
 _HIDDEN  = "dxf_hidden"        # model parts removed from the cards
@@ -344,9 +344,6 @@ def sync() -> list[tuple[str, DxfFile]]:
             ss.get(REPORTS, {}).pop(cid, None)
         store[cid] = shape(chosen)
         items[cid] = Item(members, chosen, scores, {m: shape(m).name for m in members}, blank)
-        if models and "qty" not in config.get(cid, {}):
-            config.setdefault(cid, {"material": None, "thickness": None})["qty"] = max(
-                part.qty for _, part, _ in models)
     ss[STORE], ss[ITEMS] = store, items
     return list(store.items())
 
@@ -464,7 +461,7 @@ def evict(fid: str) -> None:
     ss.get(STORE, {}).pop(fid, None)
     cfg = ss.get(CONFIG, {}).pop(fid, {})
     ss.get(REPORTS, {}).pop(fid, None)
-    for key in (*material_keys(fid, cfg), f"dxf_q_{fid}", f"dxf_unit_ok_{fid}",
+    for key in (*material_keys(fid, cfg), f"dxf_unit_ok_{fid}",
                 f"dxf_src_{fid}", attachments.CHECKED.format(fid),
                 *(f"dxf_angle_{a}_{fid}" for a in NESTING_ANGLES)):
         ss.pop(key, None)

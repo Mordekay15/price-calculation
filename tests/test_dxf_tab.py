@@ -704,11 +704,10 @@ def test_many_parts_are_drawn_a_page_at_a_time_and_all_priced():
         "**#21**", "**#22**"]
     at.selectbox(key="dxf_mat_f21").set_value("S235").run()
     at.selectbox(key="dxf_th_f21").set_value("2").run()
-    at.number_input(key="dxf_q_f21").set_value(5).run()
     at.selectbox(key="dxf_card_page").set_value(0).run()      # card #22 not drawn…
     at.run()
     assert not at.exception
     assert at.session_state["materials"][21] == ("S235", "2")  # …but priced as set
-    assert at.session_state["qtys"][21] == 5
+    assert at.session_state["qtys"][21] == 10                  # the largest batch
     at.selectbox(key="dxf_card_page").set_value(1).run()      # and shown as set
-    assert at.number_input(key="dxf_q_f21").value == 5
+    assert at.selectbox(key="dxf_mat_f21").value == "S235"

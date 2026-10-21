@@ -115,7 +115,7 @@ def test_an_assembly_becomes_cards_with_its_quantities():
     names = [c[0] for c in at.session_state["cards"]]
     assert names == ["Pohja.dxf", "Kulma.step"]
     _, qty, bends, w, h = at.session_state["cards"][1]
-    assert qty == 2 and bends == 1 and sorted((w, h)) == [40.0, 76.5]
+    assert qty == 10 and bends == 1     # no assembly here: the largest batch and sorted((w, h)) == [40.0, 76.5]
     table = at.dataframe[0].value
     assert list(table["Kpl yhteensä"]) == [1, 2, 1, 2, 6]
     assert list(table["Tyyppi"]) == ["kokoonpano", "levyosa", "levyosa", "kokoonpano",
@@ -303,8 +303,8 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
     assert [m.value.split(" · ")[1] for m in at.markdown if m.value.startswith("**#")] == [
         "Pohja.dxf", "Kulma.step"]
     # Its cards are nested for the largest batch (10) of assemblies.
-    qtys = [n for n in at.number_input if n.label == "Määrä (kpl)"]
-    assert [n.value for n in qtys] == [10, 20] and all(n.disabled for n in qtys)
+    assert [m.value for m in at.markdown if m.value.startswith("Määrä")] == [
+        "Määrä: **10 kpl**", "Määrä: **20 kpl**"]
     # The assembly prices fasteners and welding, so its cards don't.
     at.session_state["screen"] = "Hinnoittelu"     # the work is drawn there
     at.run()

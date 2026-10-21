@@ -384,8 +384,8 @@ def _checked_size(fid: str, dxf: DxfFile, report: DxfReport, badge,
 def _render_part_inputs(fid: str, materials: list[str], lookup: dict,
                         per_assembly: int = 0) -> tuple:
     """Material, thickness and quantity; returns ``(material, thickness, qty)``.
-    A part in an assembly (``per_assembly`` kpl in one) is nested for the
-    largest batch of assemblies, so its quantity is not typed.
+    A part is nested for the largest batch size (in an assembly,
+    ``per_assembly`` kpl in each), so its quantity is not typed.
 
     Material + thickness are persisted per file: the selectboxes are seeded
     from the stored choice, then the current choice is written back.
@@ -403,16 +403,12 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict,
     note = material_agent.auto_note(fid, material, thickness)
     if note:
         st.caption(note)
-    if per_assembly:
-        batch = max(current_sizes())
-        qty = per_assembly * batch
-        st.number_input("Määrä (kpl)", value=qty, disabled=True,
-                        help=f"{per_assembly} kpl / kokoonpano × suurin eräkoko {batch}. "
-                             "Eräkoot muutetaan sivun yläosan Tarjous-kohdasta.")
-        return material, thickness, qty
-    qty = int(st.number_input("Määrä (kpl)", min_value=1, value=int(cfg.get("qty", 1)),
-                              step=1,
-                              key=f"dxf_q_{fid}"))
+    batch = max(current_sizes())
+    qty = max(per_assembly, 1) * batch
+    st.markdown(f"Määrä: **{qty} kpl**",
+                help=(f"{per_assembly} kpl / kokoonpano × " if per_assembly else "")
+                + f"suurin eräkoko {batch}: levyt nestataan tälle määrälle. Eräkoot "
+                  "muutetaan sivun yläosan Tarjous-kohdasta.")
     return material, thickness, qty
 
 
