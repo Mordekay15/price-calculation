@@ -141,7 +141,8 @@ def test_a_parts_flat_drawing_model_and_pdf_make_one_card():
         from core.step import flat_dxf, unfold
         from tests.conftest import dxf_bytes
         from tests.step_models import l_bracket, part_step
-        from view.dxf_tab import _ingest, _render_part_cards, _sync
+        from view.dxf_files import ingest, sync
+        from view.dxf_tab import _render_part_cards
 
         flat = flat_dxf(unfold(l_bracket()), "ITM-072558")
         drawing = ezdxf.new()
@@ -161,9 +162,9 @@ def test_a_parts_flat_drawing_model_and_pdf_make_one_card():
                  ("d", "ITM-072558_A.stp", part_step(l_bracket(), "Part1"))]
         if "done" not in st.session_state:
             st.session_state["done"] = True
-            _ingest([SimpleNamespace(file_id=i, name=n, getvalue=lambda d=d: d)
-                     for i, n, d in files])
-        parts = _sync()
+            ingest([SimpleNamespace(file_id=i, name=n, getvalue=lambda d=d: d)
+                    for i, n, d in files])
+        parts = sync()
         _render_part_cards(parts, ["S235"], {("2", "S235 | 1000x2000"): 900.0}, False)
         st.session_state["cards"] = [(cid, d.name) for cid, d in parts]
 
@@ -194,8 +195,8 @@ def test_a_card_takes_its_bends_from_the_model_and_its_material_from_the_pdf():
         from core.step import flat_dxf, unfold
         from tests.conftest import dxf_bytes
         from tests.step_models import l_bracket, part_step
-        from view.dxf_tab import (_auto_fill_materials, _ingest, _render_part_cards,
-                                  _sync)
+        from view.dxf_files import auto_fill_materials, ingest, sync
+        from view.dxf_tab import _render_part_cards
 
         flat = ezdxf.read(io.StringIO(flat_dxf(unfold(l_bracket()), "ITM-072558")
                                       .decode()))
@@ -209,13 +210,13 @@ def test_a_card_takes_its_bends_from_the_model_and_its_material_from_the_pdf():
         pdf.save()
         if "done" not in st.session_state:
             st.session_state["done"] = True
-            _ingest([SimpleNamespace(file_id=i, name=n, getvalue=lambda d=d: d) for i, n, d in
-                     [("c", "ITM-072558_A.dxf", dxf_bytes(flat)),
-                      ("d", "ITM-072558_A.stp", part_step(l_bracket(), "Part1")),
-                      ("b", "ITM-072558_A.pdf", buf.getvalue())]])
-        parts = _sync()
+            ingest([SimpleNamespace(file_id=i, name=n, getvalue=lambda d=d: d) for i, n, d in
+                    [("c", "ITM-072558_A.dxf", dxf_bytes(flat)),
+                     ("d", "ITM-072558_A.stp", part_step(l_bracket(), "Part1")),
+                     ("b", "ITM-072558_A.pdf", buf.getvalue())]])
+        parts = sync()
         lookup = {("2", "S235 | 1000x2000"): 900.0, ("3", "S235 | 1000x2000"): 950.0}
-        _auto_fill_materials(parts, ["S235"], lookup)
+        auto_fill_materials(parts, ["S235"], lookup)
         products = _render_part_cards(parts, ["S235"], lookup, False)
         st.session_state["cards"] = [(p["name"], p["material"], p["thickness"],
                                       p["report"].bends, p["work"].bends) for p in products]
@@ -268,7 +269,8 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
         from tests.conftest import dxf_bytes
         from tests.step_models import assembly_step
         from view import assemblies
-        from view.dxf_tab import _card_of, _ingest, _render_part_cards, _sync
+        from view.dxf_files import ingest, source_cards, sync
+        from view.dxf_tab import _render_part_cards
 
         if "dropped" not in st.session_state:
             doc = ezdxf.new()
@@ -276,15 +278,15 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
             doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 60), (0, 60)],
                                             close=True)
             data, model = dxf_bytes(doc), assembly_step()
-            _ingest([SimpleNamespace(file_id="d1", name="Pohja.dxf", getvalue=lambda: data),
-                     SimpleNamespace(file_id="s1", name="runko.step", getvalue=lambda: model)])
+            ingest([SimpleNamespace(file_id="d1", name="Pohja.dxf", getvalue=lambda: data),
+                    SimpleNamespace(file_id="s1", name="runko.step", getvalue=lambda: model)])
             st.session_state["dropped"] = True
-        parts = _sync()
+        parts = sync()
         assemblies.sync_from_models()
         _render_part_cards(parts, ["S235"], {("2", "S235 | 1000x2000"): 900.0}, False)
         st.session_state["asm"] = [(a.name, dict(a.members),
                                     [(b.name, b.qty, b.fit_eur) for b in a.bought])
-                                   for a in assemblies.current(_card_of())]
+                                   for a in assemblies.current(source_cards())]
         st.session_state["parts"] = [(fid, d.name) for fid, d in parts]
 
     at = AppTest.from_function(page, default_timeout=60).run()

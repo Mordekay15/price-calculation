@@ -369,7 +369,9 @@ core/                   pure logic, no Streamlit
 view/                   Streamlit UI
   sidebar.py            price-list upload, supplier status, copper price
   calculator_tab.py     manual tab and its product cards
-  dxf_tab.py            DXF tab, its part cards and the Sparrow run
+  dxf_tab.py            DXF tab: the order of the page and the part cards
+  dxf_files.py          the DXF tab's dropped files, grouped into cards (ingest, sync, remove)
+  dxf_nesting.py        the DXF tab's run row, the Sparrow runs, cached results and prices
   common.py             inputs, the per-group loop, totals, pieces summary
   sheet_usage.py        the sheet-size table, metrics and price breakdown
   work.py               the work rates (sidebar), Työvaiheet on the cards, calculators, work per product
