@@ -69,9 +69,14 @@ class FlatPart:
 
     @property
     def flat_area_mm2(self) -> float:
-        from core.geometry import area
-        return (abs(area(self.outline)) - sum(abs(area(h)) for h in self.holes)
-                if self.outline else 0.0)
+        from core.geometry import net_area
+        return net_area(self.outline, self.holes) if self.outline else 0.0
+
+    @property
+    def blank_mm(self) -> tuple[float, float] | None:
+        """The flat's ``(width, height)`` in mm, None when it has none."""
+        from core.geometry import bbox_wh
+        return bbox_wh(self.outline) if self.outline else None
 
 
 @dataclass
@@ -388,11 +393,27 @@ def _unfold(solid, flat: FlatPart, k: float) -> None:
         raise _NotSheet("ei tasomaisia pintoja")
     base = max(planes, key=lambda f: f.area)
 
-    t = _thickness(base, planes)
-    if t is None:
+    # The nearest opposite face is usually the flange's other skin, but in a
+    # joggle another flange's face can be nearer: the first that unfolds to
+    # the body's volume is the thickness.
+    ts = _thicknesses(base, planes)
+    if not ts:
         raise _NotSheet("ei vastakkaista samansuuntaista pintaa (ei levyosa)")
-    if t > _MAX_THICKNESS_RATIO * flat.bbox_mm[1]:
-        raise _NotSheet(f"paksuus {t:g} mm on suuri kappaleen kokoon nähden (ei levyosa)")
+    first = None
+    for t in ts:
+        if t > _MAX_THICKNESS_RATIO * flat.bbox_mm[1]:
+            first = first or _NotSheet(
+                f"paksuus {t:g} mm on suuri kappaleen kokoon nähden (ei levyosa)")
+            break
+        try:
+            return _lay_flat(faces, base, t, flat, k)
+        except _NotSheet as exc:
+            first = first or exc
+    raise first
+
+
+def _lay_flat(faces: list, base, t: float, flat: FlatPart, k: float) -> None:
+    """Unfold the skin from ``base`` at thickness ``t`` into ``flat``."""
     flat.thickness_mm = t
 
     # Edge -> the faces it bounds (a shape's hash ignores its orientation).
@@ -462,17 +483,12 @@ def _unfold(solid, flat: FlatPart, k: float) -> None:
                         f"({expected:.0f} mm²): ei tasapaksu levyosa")
 
 
-def _thickness(base: _Face, planes: list[_Face]) -> float | None:
-    """The distance to the nearest face facing the other way, parallel to the
-    largest flange."""
-    best = None
-    for f in planes:
-        if _dot(f.normal, base.normal) > -_TANGENT_COS:
-            continue
-        d = _dot(_sub(base.origin, f.origin), base.normal)
-        if d > 1e-3 and (best is None or d < best):
-            best = d
-    return best
+def _thicknesses(base: _Face, planes: list[_Face]) -> list[float]:
+    """The distances to the faces facing the other way, parallel to the
+    largest flange, nearest first."""
+    ds = {round(_dot(_sub(base.origin, f.origin), base.normal), 6) for f in planes
+          if _dot(f.normal, base.normal) <= -_TANGENT_COS}
+    return sorted(d for d in ds if d > 1e-3)
 
 
 def _plane_map(face: _Face, a3, b3, a2, b2):

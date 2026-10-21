@@ -11,6 +11,7 @@ import io
 import streamlit as st
 
 from core.linking import link_by_text, link_files
+from view.common import render_page_picker
 
 DOCS = "dxf_docs"            # {doc id: {"name", "size", "kind", "load"}}
 _MANUAL = "dxf_doc_links"    # {doc id: part id or "" (= no part)}, set by hand
@@ -103,65 +104,67 @@ def text(doc_id: str) -> str:
     return _text(doc_id, doc) if doc is not None and doc["kind"] == "pdf" else ""
 
 
-def _text(doc_id: str, doc: dict) -> str:
-    """A PDF's text (first pages), read once and shared with the material
-    proposals."""
+def pages(doc_id: str, doc: dict) -> list[tuple[int, str]]:
+    """A PDF's first pages, ``[(page, text)]``, read once for the card links
+    and the material proposals."""
     from core.materials import pdf_text
 
     cache = st.session_state.setdefault(TEXTS, {})
     if doc_id not in cache:
         cache[doc_id] = pdf_text(doc["load"]())
-    return "\n".join(text for _, text in cache[doc_id])
+    return cache[doc_id]
+
+
+def _text(doc_id: str, doc: dict) -> str:
+    return "\n".join(text for _, text in pages(doc_id, doc))
 
 
 _ROWS = 30   # files listed at once: a big RFQ has hundreds, each with a part picker
 
 
+def doc_list_title(parts: dict[str, str]) -> tuple[str, int] | None:
+    """The supporting files' tab label and how many are on no part; None
+    when there are none."""
+    all_docs = _linkable()
+    if not all_docs:
+        return None
+    linked = {d for ids in links(parts).values() for d in ids}
+    n_unlinked = sum(1 for d in all_docs if d not in linked)
+    return f"Liitetiedostot ({len(all_docs)})", n_unlinked
+
+
 def render_doc_list(parts: dict[str, str], labels: dict[str, str]) -> None:
-    """The supporting files, folded under the drop area: which part each is
-    linked to, changeable by hand, and a remove button."""
+    """The supporting files: which part each is linked to, changeable by
+    hand, and a remove button."""
     all_docs = _linkable()
     if not all_docs:
         return
     linked = {d: pid for pid, ids in links(parts).items() for d in ids}
-    n_unlinked = sum(1 for d in all_docs if d not in linked)
-    title = f"Liitetiedostot ({len(all_docs)})"
-    if n_unlinked:
-        title += f" · {n_unlinked} ilman osaa"
-    with st.expander(title, expanded=bool(n_unlinked)):
-        st.caption("PDF- ja STEP-tiedostot linkitetään osiin tiedostonimen osanumeron "
-                   "mukaan (revisiotunnus, esim. -revA, ohitetaan). Jos PDF:n nimi on eri "
-                   "(esim. piirustusnumero), osanumero etsitään PDF:n tekstistä. Vaihda "
-                   "osa tarvittaessa.")
-        options = ["", *parts]
-        manual = st.session_state.setdefault(_MANUAL, {})
-        shown = [d for d in all_docs if d not in linked]
-        n_linked = len(all_docs) - len(shown)
-        if n_linked and st.toggle(f"Näytä myös osiin linkitetyt ({n_linked})",
-                                  value=len(all_docs) <= _ROWS, key="dxf_doc_show_linked"):
-            shown = list(all_docs)
-        if len(shown) > _ROWS:
-            pages = -(-len(shown) // _ROWS)
-            if st.session_state.get("dxf_doc_page", 0) >= pages:
-                st.session_state["dxf_doc_page"] = 0
-            page = st.selectbox(
-                "Näytettävät tiedostot", range(pages), key="dxf_doc_page",
-                format_func=lambda i: f"{i * _ROWS + 1}–{min(len(shown), (i + 1) * _ROWS)} "
-                                      f"/ {len(shown)}")
-            shown = shown[page * _ROWS:(page + 1) * _ROWS]
-        for d in shown:
-            doc = all_docs[d]
-            c1, c2, c3 = st.columns([3, 4, 1], vertical_alignment="center")
-            c1.markdown(f"{'📄' if doc['kind'] == 'pdf' else '🧊'} {doc['name']}")
-            current = linked.get(d, "")
-            choice = c2.selectbox(
-                "Osa", options, index=options.index(current) if current in options else 0,
-                key=f"dxf_doc_link_{d}_{current}", label_visibility="collapsed",
-                format_func=lambda pid: "— ei osaa —" if not pid else labels.get(pid, pid))
-            if choice != current:
-                manual[d] = choice
-                st.rerun()
-            c3.button("Poista", key=f"dxf_doc_del_{d}", on_click=remove_doc, args=(d,))
+    options = ["", *parts]
+    manual = st.session_state.setdefault(_MANUAL, {})
+    shown = [d for d in all_docs if d not in linked]
+    n_linked = len(all_docs) - len(shown)
+    if n_linked and st.toggle(f"Näytä myös osiin linkitetyt ({n_linked})",
+                              value=len(all_docs) <= _ROWS, key="dxf_doc_show_linked"):
+        shown = list(all_docs)
+    rows = render_page_picker(len(shown), _ROWS, key="dxf_doc_page",
+                              label="Näytettävät tiedostot", suffix=f" / {len(shown)}")
+    shown = shown[rows.start:rows.stop]
+    for d in shown:
+        doc = all_docs[d]
+        c1, c2, c3 = st.columns([3, 4, 1], vertical_alignment="center")
+        c1.markdown(f"{'📄' if doc['kind'] == 'pdf' else '🧊'} {doc['name']}")
+        current = linked.get(d, "")
+        key = f"dxf_doc_link_{d}_{current}"
+        if st.session_state.get(key) not in options:   # seeded, not a default: kept keys
+            st.session_state[key] = current if current in options else ""
+        choice = c2.selectbox(
+            "Osa", options, key=key, label_visibility="collapsed",
+            format_func=lambda pid: "— ei osaa —" if not pid else labels.get(pid, pid))
+        if choice != current:
+            manual[d] = choice
+            st.rerun()
+        c3.button("Poista", key=f"dxf_doc_del_{d}", on_click=remove_doc, args=(d,))
 
 
 def render_card_docs(card_id: str, doc_ids: list[str]) -> None:

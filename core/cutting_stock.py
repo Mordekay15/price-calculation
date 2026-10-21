@@ -56,22 +56,6 @@ GOOD_FILL = 0.80        # a sheet this full that uses up its parts is kept as it
 KEEP_MAX_EXTRA = 0.05   # …while the plan then costs at most this much more
 
 
-def cutting_stock_plan(quantities: list[int], sizes: list[tuple[float, float]],
-                       fits, seeds: list[tuple[Pattern, object]] = (), *,
-                       max_checks: int = 4000) -> list[tuple[int, Pattern, object]] | None:
-    """The plan as ``[(repeats, counts, layout)]``, fewest sheets then fewest
-    programs; None if there is nothing to plan or no solver.
-
-    ``sizes`` are the parts' boxes (w, h), used only to order the fills.
-    ``seeds`` are ``(counts, layout)`` sheets known to fit. A plan's ``layout``
-    may hold more pieces than its ``counts`` (a copy with surplus pieces taken
-    off): the caller drops the extra placements.
-    """
-    pool = candidate_sheets(quantities, sizes, fits, seeds, max_checks=max_checks)
-    plan = best_plan(quantities, [(1.0, pool)]) if pool else None
-    return None if plan is None else [(r, p, layout) for _, r, p, layout in plan]
-
-
 def candidate_sheets(quantities: list[int], sizes: list[tuple[float, float]],
                      fits, seeds: list[tuple[Pattern, object]] = (), *,
                      max_checks: int = 4000) -> dict[Pattern, object] | None:

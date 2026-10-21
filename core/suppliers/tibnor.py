@@ -103,10 +103,6 @@ def _join_header_rows(table: list, max_header_rows: int = 3) -> list[str]:
     return joined
 
 
-def _table_max_cols(table: list) -> int:
-    return max((len(r) for r in table), default=0)
-
-
 def _parse_tibnor_table(
     table: list,
     products: list[tuple[int, str, str, int]],
@@ -124,7 +120,7 @@ def _parse_tibnor_table(
 
     # Skip tables that obviously don't have enough columns to hold the products.
     needed_cols = max((c for c, *_ in products), default=0) + 1
-    if _table_max_cols(table) < needed_cols:
+    if max((len(r) for r in table), default=0) < needed_cols:
         return []
 
     headers = _join_header_rows(table)

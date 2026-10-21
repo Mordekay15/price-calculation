@@ -27,6 +27,8 @@ from core.linking import base_key, link_by_text
 _PAPER = [(210, 297), (297, 420), (420, 594), (594, 841), (841, 1189)]
 _PAPER_TOL = 0.03
 _SIZE_TOL = 0.03          # a DXF within 3 % of the STEP blank is the same part
+_MIN_PART_MM = 3.0        # narrower, among other shapes: a line, not a part
+NO_BLANK = "piirustus, ei osan aihiota"
 
 
 @dataclass
@@ -60,10 +62,7 @@ def group_sources(sources: list[Source], is_drawing=lambda source_id: True
     # A group named otherwise whose texts name exactly one other group's part
     # number is that part's drawing: it joins it.
     names = {key: key for key in groups}
-    for key in list(groups):
-        members = groups.get(key)
-        if not members or any(s.kind == "step" or not is_drawing(s.id) for s in members):
-            continue
+    for key, members in _drawings(groups, is_drawing):
         texts = "\n".join(t for s in members for t in s.texts)
         others = {k: n for k, n in names.items() if k != key and k in groups}
         found = link_by_text(others, {"x": texts})
@@ -73,10 +72,7 @@ def group_sources(sources: list[Source], is_drawing=lambda source_id: True
 
     # A drawing still on its own joins the one other item in its folder (a
     # ZIP of item folders: DRW-023179_A.dwg in the folder of ITM-072558).
-    for key in list(groups):
-        members = groups.get(key)
-        if not members or any(s.kind == "step" or not is_drawing(s.id) for s in members):
-            continue
+    for key, members in _drawings(groups, is_drawing):
         folders = {s.folder for s in members}
         folder = folders.pop() if len(folders) == 1 else ""
         others = [k for k, ms in groups.items()
@@ -89,9 +85,17 @@ def group_sources(sources: list[Source], is_drawing=lambda source_id: True
     return sorted(items, key=lambda ids: order[ids[0]])
 
 
+def _drawings(groups: dict[str, list[Source]], is_drawing):
+    """The groups still there whose every file is a drawing, ``(key,
+    members)``, looked up one by one: a group may join another meanwhile."""
+    for key in list(groups):
+        members = groups.get(key)
+        if members and all(s.kind != "step" and is_drawing(s.id) for s in members):
+            yield key, members
+
+
 @dataclass
 class Choice:
-    id: str
     score: float
     note: str                          # why, in Finnish, for the card
     valid: bool = True
@@ -103,8 +107,12 @@ def score_dxf(report, unit_guessed: bool, texts: list[str],
     better). ``report`` is its ``DxfReport``, ``blank_mm`` the STEP blank's
     size when the item has a model."""
     if report.problems or report.outline is None:
-        return Choice("", -1e9, "ei luettavaa ääriviivaa", valid=False)
+        return Choice(-1e9, "ei luettavaa ääriviivaa", valid=False)
     w, h = sorted((report.outline.width_mm, report.outline.height_mm))
+    if w < _MIN_PART_MM and report.dropped_count:
+        # A drawing sheet with no flat pattern on it (an assembly drawing):
+        # the "part" found is one of its lines.
+        return Choice(-1e9, NO_BLANK, valid=False)
     score, notes = 100.0, []
     if _is_paper(w, h):
         score -= 200
@@ -128,13 +136,11 @@ def score_dxf(report, unit_guessed: bool, texts: list[str],
             notes.append("eri koko kuin STEP-mallin aihio")
     if not notes:
         notes.append("puhdas aihio")
-    return Choice("", score, ", ".join(notes))
+    return Choice(score, ", ".join(notes))
 
 
-def score_step(is_sheet: bool, reason: str = "") -> Choice:
-    if not is_sheet:
-        return Choice("", -1e9, reason or "ei levyosa", valid=False)
-    return Choice("", 90.0, "avattu STEP-mallista")
+# A STEP model's unfolded sheet part: clean by construction.
+STEP_CHOICE = Choice(90.0, "avattu STEP-mallista")
 
 
 def choose(scored: dict[str, Choice], override: str | None = None) -> str | None:

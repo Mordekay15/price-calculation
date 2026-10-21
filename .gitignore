@@ -5,5 +5,4 @@ __pycache__/
 
 # Sparrow run logs
 output/
-calculators.local.yaml
 material_aliases.json

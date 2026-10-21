@@ -146,51 +146,52 @@ def remove_model(file_id: str) -> None:
 
 # ── BOM ───────────────────────────────────────────────────────────────────────
 
-def render_bom(card_of: dict[str, str], on_change) -> None:
-    """The models' BOMs, folded under the drop area: every part's quantity,
-    what it is (sheet: thickness, bends, flat size; or why not) and the card
-    it is on (``card_of``: source id -> card label). ``on_change()`` runs
-    after the K factor or the models change."""
+def bom_title() -> str | None:
+    """The models' tab label; None when there are none."""
     all_models = models()
     if not all_models:
-        return
+        return None
     n_parts = sum(len(m["model"].parts) for m in all_models.values())
-    with st.expander(f"STEP-mallit ({len(all_models)}) · {n_parts} osaa"):
-        st.caption("Levyosat avataan tasoaihioiksi. Jokainen osa on yksi kortti yhdessä "
-                   "saman osanumeron DXF-, DWG- ja PDF-tiedostojen kanssa, ja määrä tulee "
-                   "mallista. Muut kappaleet (esim. ostettavat tai koneistetut) näkyvät "
-                   "listassa, mutta niitä ei hinnoitella.")
-        k = st.number_input(
-            "K-kerroin", min_value=0.0, max_value=1.0, step=0.01, format="%.2f",
-            value=float(st.session_state.get(K_FACTOR, step.DEFAULT_K_FACTOR)),
-            key="dxf_step_k_input",
-            help="Neutraaliakselin paikka taivutuksessa: avattu pituus = suorat osat + "
-                 "kulma × (sisäsäde + K × paksuus). Tyypillisesti 0,33–0,5.")
-        if abs(k - st.session_state.get(K_FACTOR, step.DEFAULT_K_FACTOR)) > 1e-9:
-            st.session_state[K_FACTOR] = k
-            refold(k)
+    return f"STEP-mallit ({len(all_models)}) · {n_parts} osaa"
+
+
+def render_bom(card_of: dict[str, str], on_change) -> None:
+    """The models' BOMs: every part's quantity, what it is (sheet:
+    thickness, bends, flat size; or why not) and the card it is on
+    (``card_of``: source id -> card label). ``on_change()`` runs after the
+    K factor or the models change."""
+    all_models = models()
+    k = st.number_input(
+        "K-kerroin", min_value=0.0, max_value=1.0, step=0.01, format="%.2f",
+        value=float(st.session_state.get(K_FACTOR, step.DEFAULT_K_FACTOR)),
+        key="dxf_step_k_input",
+        help="Neutraaliakselin paikka taivutuksessa: avattu pituus = suorat osat + "
+             "kulma × (sisäsäde + K × paksuus). Tyypillisesti 0,33–0,5.")
+    if abs(k - st.session_state.get(K_FACTOR, step.DEFAULT_K_FACTOR)) > 1e-9:
+        st.session_state[K_FACTOR] = k
+        refold(k)
+        on_change()
+        st.rerun()
+    for file_id, m in list(all_models.items()):
+        model = m["model"]
+        c1, c2 = st.columns([6, 1], vertical_alignment="center")
+        c1.markdown(f"🧊 **{m['name']}**")
+        if c2.button("Poista", key=f"dxf_step_del_{file_id}"):
+            remove_model(file_id)
             on_change()
             st.rerun()
-        for file_id, m in list(all_models.items()):
-            model = m["model"]
-            c1, c2 = st.columns([6, 1], vertical_alignment="center")
-            c1.markdown(f"🧊 **{m['name']}**")
-            if c2.button("Poista", key=f"dxf_step_del_{file_id}"):
-                remove_model(file_id)
-                on_change()
-                st.rerun()
-            for problem in model.problems:
-                st.warning(problem)
-            rows = []
-            for row in model.bom:
-                rows.append({"Nimike": "\u2003" * row.level + row.name,
-                             "Kpl / ylempi": row.qty, "Kpl yhteensä": row.total,
-                             **_part_columns(file_id, m, row, card_of)})
-            if rows:
-                st.dataframe(rows, hide_index=True, width="stretch")
-            sheets = [p for p in model.parts if m["flats"][p.key].is_sheet]
-            if model.parts:
-                _render_preview_picker(file_id, m, sheets or model.parts)
+        for problem in model.problems:
+            st.warning(problem)
+        rows = []
+        for row in model.bom:
+            rows.append({"Nimike": "\u2003" * row.level + row.name,
+                         "Kpl / ylempi": row.qty, "Kpl yhteensä": row.total,
+                         **_part_columns(file_id, m, row, card_of)})
+        if rows:
+            st.dataframe(rows, hide_index=True, width="stretch")
+        sheets = [p for p in model.parts if m["flats"][p.key].is_sheet]
+        if model.parts:
+            _render_preview_picker(file_id, m, sheets or model.parts)
 
 
 def _part_columns(file_id, m, row, card_of) -> dict:
@@ -199,10 +200,9 @@ def _part_columns(file_id, m, row, card_of) -> dict:
     flat = m["flats"].get(row.part_key)
     if flat is None or not flat.is_sheet:
         return {"Tyyppi": "ei levyosa", "Levy": flat.reason if flat else "", "Kortti": "—"}
-    xs = [p[0] for p in flat.outline]
-    ys = [p[1] for p in flat.outline]
+    w, h = flat.blank_mm or (0.0, 0.0)
     sheet = (f"t {flat.thickness_mm:g} mm · {len(flat.bends)} taiv. · "
-             f"aihio {max(xs) - min(xs):.0f} × {max(ys) - min(ys):.0f} mm")
+             f"aihio {w:.0f} × {h:.0f} mm")
     return {"Tyyppi": "levyosa", "Levy": sheet,
             "Kortti": card_of.get(card_id(file_id, row.part_key), "poistettu")}
 

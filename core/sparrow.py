@@ -332,11 +332,6 @@ class PackResult:
     def sheets_needed(self) -> int:
         return sum(s.count for s in self.sheets)
 
-    @property
-    def used_area(self) -> float:
-        """Real part area over every physical sheet."""
-        return sum(s.used_area * s.count for s in self.sheets)
-
 
 def greedy_fixed_sheets(
     parts: list[SparrowPart],
@@ -465,17 +460,13 @@ def _probe(parts, demand: dict[int, int], sheet_w: float, sheet_h: float,
         if local_id < 0 or local_id >= len(active):
             continue
         orig_i = active[local_id]
-        part = parts[orig_i]
-        trans = (trans[0] - pad, trans[1] - pad)
-        outer = rotate_translate(part.outer, rot, trans)
-        minx, miny, maxx, maxy = bbox(outer)
-        if minx < -_TOL or miny < -_TOL or maxx > sheet_w + _TOL or maxy > sheet_h + _TOL:
-            continue  # spills past this sheet
         if left[orig_i] <= 0:
             continue
-        kept.append(Placed(orig_i, part.part_id, rot, outer,
-                           [rotate_translate(h, rot, trans) for h in part.holes],
-                           [rotate_translate(c, rot, trans) for c in part.construction]))
+        placed = _placed(parts, orig_i, rot, (trans[0] - pad, trans[1] - pad))
+        minx, miny, maxx, maxy = bbox(placed.outer)
+        if minx < -_TOL or miny < -_TOL or maxx > sheet_w + _TOL or maxy > sheet_h + _TOL:
+            continue  # spills past this sheet
+        kept.append(placed)
         left[orig_i] -= 1
     return None, kept, res.strip_width - 2 * pad
 
@@ -684,22 +675,19 @@ def _plan_sheets(parts, plan, sheet_w, sheet_h, *, run_fn=None,
     return sheets
 
 
-def _fewest(parts, seeds: list[PackedSheet], sheet_w, sheet_h,
-            separation) -> list[PackedSheet] | None:
-    """The plan with the fewest sheets of this size (``core.cutting_stock``)."""
-    plan = fewest_sheets([p.quantity for p in parts],
-                         _candidates(parts, seeds, sheet_w, sheet_h, separation))
-    return plan and _plan_sheets(parts, plan, sheet_w, sheet_h)
-
-
 def _in_box(parts, box) -> Placed:
     """The real part placed in a box packer's box: turned a quarter more when
     the box is, its bounding box's corner on the box's."""
     part = parts[box.product_idx]
     rot = (part.orientations[0] + (90.0 if box.rotated else 0.0)) % 360.0
     minx, miny, _, _ = bbox(rotate_translate(part.outer, rot, (0.0, 0.0)))
-    t = (box.x - minx, box.y - miny)
-    return Placed(box.product_idx, part.part_id, rot, rotate_translate(part.outer, rot, t),
+    return _placed(parts, box.product_idx, rot, (box.x - minx, box.y - miny))
+
+
+def _placed(parts, index: int, rot: float, t: tuple[float, float]) -> Placed:
+    """Part ``index`` turned by ``rot`` degrees and moved by ``t``."""
+    part = parts[index]
+    return Placed(index, part.part_id, rot, rotate_translate(part.outer, rot, t),
                   [rotate_translate(h, rot, t) for h in part.holes],
                   [rotate_translate(c, rot, t) for c in part.construction])
 

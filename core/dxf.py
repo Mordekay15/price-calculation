@@ -170,6 +170,13 @@ class DxfReport:
         return len(self.dropped) + self.dropped_more
 
     @property
+    def net_area_mm2(self) -> float:
+        """The part's real area: the outline less its holes."""
+        if self.outline is None:
+            return 0.0
+        return self.outline.area_mm2 - sum(h.area_mm2 for h in self.holes)
+
+    @property
     def cut_length_mm(self) -> float:
         """What the laser cuts: the outline, every hole and any open cut."""
         if self.outline is None:

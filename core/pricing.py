@@ -62,8 +62,9 @@ def build_lookup(data: dict) -> dict:
 
 # ── Thickness ─────────────────────────────────────────────────────────────────
 
-def parse_thickness_mm(thickness_str: str) -> float | None:
-    """Convert a thickness label like '0,7/0,75' or '1,25' to mm as float."""
+def parse_thickness_mm(thickness_str: str | None) -> float | None:
+    """Convert a thickness label like '0,7/0,75' or '1,25' to mm as float;
+    None when there is none or it isn't a number."""
     try:
         return float(thickness_str.replace(",", ".").split("/")[0].split("x")[0])
     except (ValueError, IndexError, AttributeError):

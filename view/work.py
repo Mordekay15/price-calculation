@@ -2,14 +2,11 @@
 inputs on every part card (both tabs), and each product's work cost with the
 per-sheet cutting minimum applied by group (see ``core.work``)."""
 
-from core import calculators
-from core.calculators import CalculatorError, CalculatorSet
-from core.pricing import parse_thickness_mm, weight_kg
+from core.pricing import parse_thickness_mm
 from core.work import (
     LASER,
     PUNCH,
     LaserSpeed,
-    Operation,
     WorkCost,
     WorkInputs,
     WorkRates,
@@ -94,18 +91,14 @@ def _auto(col, label: str, key: str, auto: float | None, *, step: float,
 def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
                        qty: int, cut_length_m: float, bends: int = 0,
                        threads: int = 0, fasteners: int = 0,
-                       weight_kg: float | None = None,
-                       area_m2: float | None = None,
                        in_assembly: bool = False) -> WorkInputs:
     """The card's "Työvaiheet": cutting, bends, threads, fasteners,
-    welding, subcontracting, the shop's calculators and setup.
-    ``cut_length_m``, ``bends``, ``threads`` and ``fasteners`` are what the
-    drawing gives (the defaults, overwritable), ``weight_kg`` and ``area_m2``
-    one piece's weight and area (for the calculators); the laser speed comes
-    from the table. ``key`` makes the widget keys unique per card. A card
+    welding, subcontracting and setup. ``cut_length_m``, ``bends``,
+    ``threads`` and ``fasteners`` are what the drawing gives (the defaults,
+    overwritable); the laser speed comes from the table. ``key`` makes the widget keys unique per card. A card
     ``in_assembly`` has no fasteners or welding: the assembly prices them (its
     bought parts and welding), so they can't be counted twice."""
-    thickness_mm = parse_thickness_mm(thickness) if thickness else None
+    thickness_mm = parse_thickness_mm(thickness)
     table = laser_speed(material, thickness_mm) if material else None
     rates = current_rates()
 
@@ -183,14 +176,7 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
                             eur_per_fastener=eur_per_fastener,
                             eur_per_insert=eur_per_insert, weld_m=weld_m,
                             subcontract_eur=subcontract,
-                            programming_eur=programming,
-                            operations=_render_calculators(
-                                key, qty=qty, auto={
-                                    "weight_kg": weight_kg, "area_m2": area_m2,
-                                    "thickness_mm": thickness_mm,
-                                    "cut_length_m": cut_length_m,
-                                    "bends": n_bends, "threads": n_threads,
-                                    "fasteners": n_fasteners}))
+                            programming_eur=programming)
         setup = _auto(c[2], "Asetus (€/erä)", f"work_setup_{key}",
                       default_setup(inputs, rates), step=5.0, fmt="%.0f",
                       help="Oletus työvaiheiden määrän mukaan (sivupalkin Työn hinnat).")
@@ -206,110 +192,6 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
         st.caption(f":green[{_METHODS[method]} olisi halvempi: "
                    f"{saving:.2f} €/kpl vähemmän leikkausta.]")
     return inputs
-
-
-def piece_size(area_mm2: float, material: str | None, thickness: str | None) -> dict:
-    """``weight_kg`` and ``area_m2`` of one piece for ``render_work_inputs``
-    (no weight before the thickness is known)."""
-    thickness_mm = parse_thickness_mm(thickness) if thickness else None
-    return {"area_m2": area_mm2 / 1e6,
-            "weight_kg": None if thickness_mm is None else weight_kg(area_mm2, thickness_mm,
-                                                                    material)}
-
-
-# ── Card: the shop's calculators ──────────────────────────────────────────────
-
-_CALC_SET = "work_calculator_set"     # the parsed calculator file, per session
-
-
-def calculator_set() -> CalculatorSet:
-    """The calculators in use; an unreadable file gives none (the sidebar
-    editor says why)."""
-    if _CALC_SET not in st.session_state:
-        try:
-            st.session_state[_CALC_SET] = calculators.load()
-        except CalculatorError:
-            st.session_state[_CALC_SET] = CalculatorSet()
-    return st.session_state[_CALC_SET]
-
-
-def _apply_chain(key: str) -> None:
-    """The chain picker: put the chain's calculators in the multiselect."""
-    chain = st.session_state.get(f"work_chain_{key}")
-    if chain:
-        st.session_state[f"work_calcs_{key}"] = list(calculator_set().chains[chain])
-
-
-def _render_calculators(key: str, *, qty: int, auto: dict) -> tuple[Operation, ...]:
-    """The calculators picked on the card, their inputs (automatic ones from
-    the part, overwritable) and their times; returns their operations."""
-    cs = calculator_set()
-    if not cs.calculators:
-        return ()
-    st.markdown("**Laskurit**", help=(
-        "Työvaiheet, jotka lasketaan pajan omilla kaavoilla (sivupalkin Laskurit). "
-        "Asetusaika jaetaan erän kappaleille, ajoaika on kappaletta kohden."))
-    c1, c2 = st.columns([2, 3])
-    if cs.chains:
-        c1.selectbox("Työvaiheketju", [None, *cs.chains], key=f"work_chain_{key}",
-                     format_func=lambda v: "— valitse —" if v is None else v,
-                     on_change=_apply_chain, args=(key,))
-    chosen = c2.multiselect("Laskurit", list(cs.calculators), key=f"work_calcs_{key}",
-                            format_func=lambda cid: cs.calculators[cid].name)
-    from view.quote import current_sizes
-    sizes = sorted({*current_sizes(), qty})
-    ops = []
-    for cid in chosen:
-        calc = cs.calculators[cid]
-        values = {}
-        cols = st.columns(max(len(calc.inputs), 1))
-        for col, inp in zip(cols, calc.inputs):
-            if inp.auto:
-                value = _auto(col, inp.label, f"work_calc_{cid}_{inp.name}_{key}",
-                              auto.get(inp.auto), step=1.0, fmt="%.3f")
-            else:
-                value = col.number_input(inp.label, value=inp.default, step=1.0,
-                                         key=f"work_calc_{cid}_{inp.name}_{key}")
-            values[inp.name] = value or 0.0
-        try:
-            times = calc.times(values)
-        except CalculatorError as e:
-            st.error(str(e))
-            continue
-        ops.append(calc.operation(values))
-        row = {"Laskuri": calc.name, "Asetus (min/erä)": round(times.setup_min, 2),
-               "Ajo (min/kpl)": round(times.run_min, 2), "€/h": round(times.eur_per_h, 2)}
-        for q in sizes:
-            row[f"{q} kpl: min/kpl"] = round(times.minutes_per_piece(q), 2)
-        for q in sizes:
-            row[f"{q} kpl: €/kpl"] = round(times.eur_per_piece(q), 2)
-        st.dataframe([row], hide_index=True, width="stretch")
-        if calc.replaces == "bending":
-            st.caption("Korvaa taivutusten kappalehinnan (€ / taivutus).")
-    return tuple(ops)
-
-
-def render_calculator_editor() -> None:
-    """The calculator file, editable in the sidebar. Saved, it is used
-    instead of the default one (``calculators.local.yaml``)."""
-    with st.expander("Laskurit"):
-        st.caption("Pajan omat työvaihelaskurit ja -ketjut (YAML). Kaavoissa voi käyttää "
-                   "syötteitä, taulukoita, + - * / ja min, max, ceil, floor, round.")
-        text = st.text_area("Laskuritiedosto", value=calculators.load_text(), height=320,
-                            key="work_calc_editor", label_visibility="collapsed")
-        c1, c2 = st.columns(2)
-        if c1.button("Tallenna", key="work_calc_save", type="primary"):
-            try:
-                st.session_state[_CALC_SET] = calculators.save_local(text)
-                st.success("Tallennettu.")
-            except CalculatorError as e:
-                st.error(str(e))
-        if calculators.LOCAL_FILE.exists() and c2.button("Palauta oletus",
-                                                         key="work_calc_reset"):
-            calculators.reset_local()
-            st.session_state.pop(_CALC_SET, None)
-            st.session_state.pop("work_calc_editor", None)
-            st.rerun()
 
 
 def _speed_help(material: str | None) -> str:
@@ -333,7 +215,6 @@ def _card_summary(inp: WorkInputs, cost: WorkCost) -> str:
         bits.append("1 kiinnike" if inp.fasteners == 1 else f"{inp.fasteners} kiinnikettä")
     if inp.weld_m:
         bits.append(f"hitsaus {inp.weld_m:g} m")
-    bits += [op.name.split(" (")[0].lower() for op in inp.operations]
     bits.append(f"asetus {cost.setup:.0f} €/erä")
     if not cost.priced:
         return "Työ: " + " · ".join(bits) + " · laserin hinta puuttuu"

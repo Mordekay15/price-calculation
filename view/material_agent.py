@@ -17,13 +17,12 @@ from core.materials import (
     claude_available,
     extract_hints,
     load_aliases,
-    pdf_text,
     propose,
     save_aliases,
 )
+from view import attachments
 
 _RESULT = "dxf_material_proposals"   # list[Proposal] from the last search
-_PDF_TEXT = "dxf_doc_texts"          # {doc id: [(page, text)]}, as view.attachments.TEXTS
 _NOTE = "dxf_rfq_note"
 _AUTO = "dxf_material_auto"          # {card id: what it was filled from (see auto_fill)}
 _AUTO_NOTE = "dxf_material_auto_note"  # {card id: (material, thickness, sources)}
@@ -46,13 +45,12 @@ def render(parts: list[tuple[str, object]], doc_links: dict[str, list[str]],
         title += f" · {len(result)} osaa" + (f", {n_conflicts} tarkistettavaa"
                                                if n_conflicts else "")
     with st.expander(title, expanded=bool(n_conflicts)):
-        st.caption("Luetaan materiaali ja paksuus osien piirustuksista (DXF-tekstit ja "
-                   "linkitetyt PDF:t) ja tarjouspyynnöstä. Mitään ei muuteta ennen kuin "
-                   "valitset ehdotukset ja painat Käytä valitut.")
         st.text_area("Tarjouspyynnön teksti", key=_NOTE, height=90,
                      placeholder="Esim. \"DXF:t tulee S355 2 mm\"",
-                     help="Käytetään osille, joiden omista tiedostoista ei löydy materiaalia "
-                          "tai paksuutta.")
+                     help="Materiaali ja paksuus luetaan osien piirustuksista (DXF-tekstit "
+                          "ja linkitetyt PDF:t); tätä tekstiä käytetään osille, joiden omista "
+                          "tiedostoista niitä ei löydy. Mitään ei muuteta ennen kuin valitset "
+                          "ehdotukset ja painat Käytä valitut.")
         c1, c2, _ = st.columns([2, 2, 3])
         if c1.button("Etsi materiaalit", key="dxf_find_materials", type="primary"):
             st.session_state[_RESULT] = _search(parts, doc_links, docs, materials,
@@ -114,11 +112,10 @@ def auto_note(fid: str, material: str | None, thickness: str | None) -> str | No
     note = st.session_state.get(_AUTO_NOTE, {}).get(fid)
     if not note or (note[0], note[1]) != (material, thickness):
         return None
-    return f"Materiaali täytetty automaattisesti: {note[2]}"
+    return note[2]
 
 
 def _search(parts, doc_links, docs, materials, thicknesses_for) -> list[Proposal]:
-    texts = st.session_state.setdefault(_PDF_TEXT, {})
     by_part = {}
     for fid, dxf in parts:
         hints = extract_hints("\n".join(dxf.texts), f"{dxf.name} (DXF)")
@@ -130,9 +127,7 @@ def _search(parts, doc_links, docs, materials, thicknesses_for) -> list[Proposal
             doc = docs.get(d)
             if doc is None or doc["kind"] != "pdf":
                 continue
-            if d not in texts:
-                texts[d] = pdf_text(doc["load"]())
-            for page, text in texts[d]:
+            for page, text in attachments.pages(d, doc):
                 hints += extract_hints(text, f"{doc['name']}, s. {page}")
         by_part[fid] = (dxf.name, hints)
     note = extract_hints(st.session_state.get(_NOTE, ""), "Tarjouspyyntö")

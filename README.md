@@ -2,9 +2,15 @@
 
 A Streamlit app that prices sheet-metal parts from supplier price lists.
 
-- **Hintalaskuri** (manual tab): enter rectangular parts. Parts are nested with
+- **Peruslaskuri** (manual tab): enter rectangular parts. Parts are nested with
   a fast bounding-box packer.
-- **DXF/DWG-nestaus** (DXF tab): upload one DXF or DWG per part. The real shapes are
+- **Edistynyt** (the DXF tab): a menu of three screens, as in Offeri:
+  **BOM & Tiedostot**, **Nestaus** and **Hinnoittelu**: the files and the part cards (with each card's
+  work), then the nesting, then the prices: the batch totals, one breakdown
+  table switched by batch size, and the downloads. Only the open screen is drawn (the menu
+  reruns the page on a click), but each one runs every card, headless where
+  it isn't drawn (`view/ui.py`), so every screen prices every part and the
+  other screens' inputs are kept. Upload one DXF or DWG per part. The real shapes are
   nested with the [Sparrow](https://github.com/JeroenGar/sparrow) solver. Dropped
   files become part cards and the drop area empties; a card's **Poista**
   button removes the part, and **Poista kaikki** above the cards (asks to
@@ -25,8 +31,9 @@ for a plan production can repeat: one sheet program cut many times (see
 
 ## Work (Työvaiheet)
 
-Every part card on both tabs has a folded **Työvaiheet** section, and the page
-ends with **Kappalehinnat**: the price per piece, material plus work, as
+Every part card has a folded **Työvaiheet** section (on the DXF tab, on the
+BOM & Tiedostot screen). On the manual tab the prices end with
+**Kappalehinnat**: the price per piece, material plus work, as
 `c + F / kpl` (what each piece costs, plus the batch's fixed costs shared over
 the quantity). Work has no margin; its rates are selling prices.
 
@@ -89,27 +96,6 @@ shows **Laskenta-aika**, the time since the first part could be priced.
   on layer `CUT`. Bend lines and other markings can be added on `MARKING`.
   File names come from a template such as `{part}_{material}_{thickness}mm`.
 
-## Calculators (Laskurit)
-
-Extra work phases are priced by calculators defined in YAML
-(`calculators.yaml`). They are edited under **Laskurit** in the sidebar, and
-the edits are saved to `calculators.local.yaml`, which **Palauta oletus**
-removes. Each calculator has:
-
-- **Inputs.** `auto: weight_kg | area_m2 | thickness_mm | cut_length_m |
-  bends | threads | fasteners` is read from the part; anything else is typed
-  on the card (with a `default`).
-- **Step tables.** `rows: [[from, value], …]`; the value of the last row
-  whose `from` ≤ the input.
-- **Formulas.** `setup_min`, `run_min` and `eur_per_h` are arithmetic with
-  `min max ceil floor round abs` and `a if cond else b`. Price per piece =
-  (setup / q + run) / 60 × €/h.
-- `replaces: bending` drops the card's €/bend charge.
-
-**Chains** name a list of calculators, for example *Laser-Särmäys-Maalaus*.
-Picking a chain on a card's Työvaiheet sets its calculators. The card shows
-the minutes and € per piece at every batch size.
-
 ## One card per part (DXF tab)
 
 Drop every file you have for a part at once: the flat DXF, the drawing as DWG
@@ -145,8 +131,7 @@ and in the whole model. Each body is checked for sheet metal:
   at its neutral radius `inner radius + K × thickness` (the **K-kerroin**,
   default 0.44). The flat outline, holes and bend lines become a part card,
   with the model's total as its quantity. The card's bends come from the bend
-  lines (layers `BEND_UP` / `BEND_DOWN`), so the work cost and the
-  calculators' `bends` input use them. The thickness note (`t = 2 mm`) is read
+  lines (layers `BEND_UP` / `BEND_DOWN`), so the work cost uses them. The thickness note (`t = 2 mm`) is read
   by the material proposals.
 - The unfolded part is on the card of its part number with the part's DXF,
   if there is one; the card's shape is chosen as described in
@@ -174,11 +159,6 @@ its folder, and so does a PDF. A folder with several items keeps them
 apart, and files at the top of the ZIP are matched by name and text only.
 Each card shows its folder. Only the files the app uses are read, one at a
 time, with a progress bar.
-
-**A big RFQ** (Streamlit uploads stop at 200 MB, and a large upload can run
-the computer out of memory): open **Lue ZIP tai kansio koneelta**, paste the
-ZIP's or the folder's path (Explorer: Shift + right click → *Copy as path*)
-and press **Lue**. The app reads it straight from the disk it runs on.
 
 In a drop of more than 5 files, a STEP model over 5 MB (often a punched panel
 with thousands of faces, up to a minute to read) is not read on load. Its card
@@ -210,6 +190,16 @@ parts, work and contents.
   **Asennus (€/kpl)** for putting one in (0.20 € by default for fasteners and
   pins, e.g. pressing a PEM nut). Removing
   the STEP file removes its assembly.
+- **From an assembly drawing.** A DXF that is only a drawing sheet, with no
+  blank to cut (the biggest closed shape a line under 3 mm wide among other
+  views), gets a note on its card and is not priced. When its drawings call
+  out part numbers (a number alone on its line, as an item's leader label;
+  numbers among words such as `ASSEMBLY KIT: …` are the title block's), it
+  becomes an assembly of the cards with those numbers, 1 kpl each, with the
+  drawing shown in it instead of as a card in Osat. The ones neither dropped
+  yet nor added as bought parts are listed as awaited.
+- **Removing.** An assembly's **Poista** removes it with its parts' cards
+  (one also in another assembly stays), its drawing and its STEP file.
 - **Apart from the loose parts.** **Osat** lists only the parts in no
   assembly. Each assembly below it shows its own cards, paged the same way.
   Their **Määrä** is not typed: it is kpl / kokoonpano × the largest batch
@@ -339,14 +329,12 @@ also runs the real Sparrow executable and is skipped when it is not installed.
 
 ```
 app.py                  page setup: sidebar, the Tarjous header, then the two tabs
-calculators.yaml        the default calculators and chains
 
 core/                   pure logic, no Streamlit
   pricing.py            price lookup, materials, thickness, densities, weight_kg, copper
   sheet_cost.py         price every sheet size (SheetOption), grouping, per-piece cost
   work.py               work: laser table, cutting / bends / threads / welding / setup, sheet minimum
   batches.py            prices per batch size from one nesting
-  calculators.py        YAML calculators: inputs, step tables, safe formulas, chains
   quote.py              quote PDF, Excel export, clean DXFs and their ZIP
   assemblies.py         assemblies: parts × kpl/kokoonpano + bought parts + assembly work
   linking.py            part numbers from file names; files → parts by name or text
@@ -369,15 +357,17 @@ core/                   pure logic, no Streamlit
 view/                   Streamlit UI
   sidebar.py            price-list upload, supplier status, copper price
   calculator_tab.py     manual tab and its product cards
-  dxf_tab.py            DXF tab, its part cards and the Sparrow run
+  dxf_tab.py            DXF tab: the order of the page and the part cards
+  dxf_files.py          the DXF tab's dropped files, grouped into cards (ingest, sync, remove)
+  dxf_nesting.py        the DXF tab's run row, the Sparrow runs, cached results and prices
   common.py             inputs, the per-group loop, totals, pieces summary
   sheet_usage.py        the sheet-size table, metrics and price breakdown
-  work.py               the work rates (sidebar), Työvaiheet on the cards, calculators, work per product
+  work.py               the work rates (sidebar), Työvaiheet on the cards, work per product
   quote.py              the Tarjous header, prices per batch size and the downloads
   attachments.py        PDF/STEP files on the DXF tab, links, previews, Tarkastettu
   material_agent.py     the Materiaaliehdotukset panel
   bom.py                STEP-mallit: BOM, cards from unfolded parts, K factor, 3D view
-  assemblies.py         Kokoonpanot: from STEP assemblies, parts, bought parts, work
+  assemblies.py         Kokoonpanot: from STEP assemblies and assembly drawings, parts, bought parts, work
   drawing.py            every SVG: sheet layouts and the DXF part preview
   sparrow_progress.py   progress bar while Sparrow runs
 
@@ -557,7 +547,6 @@ ring-shaped part, so keep frames on their own layer.
 | Sparrow settings or the fixed-sheet search | `core/sparrow.py` |
 | Inputs shared by both tabs | `view/common.py` |
 | Colours and layout drawings | `view/drawing.py` |
-| Calculators and chains | `calculators.yaml` (or the sidebar's Laskurit) |
 | The quote PDF or Excel layout | `core/quote.py` |
 | Material grades that are recognised | `_GRADES` in `core/materials.py` |
 | How STEP bodies are unfolded, or the default K factor | `core/step.py` |

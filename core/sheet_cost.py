@@ -201,19 +201,12 @@ def compute_options(
     pieces_kg = weight_kg(part_area_mm2, thickness_mm, material)
 
     def priced(sw, sh, price_per_tonne, packing, area=part_area_mm2) -> SheetOption:
-        option = SheetOption(sw, sh, price_per_tonne,
-                             price_per_tonne * (1 + margin_pct / 100), packing,
+        option = SheetOption(sw, sh, price_per_tonne, 0.0, packing,
                              failed=packing.failed, reason=packing.reason)
         if option.ok:
-            option.sheet_weight_kg = weight_kg(sw * sh, thickness_mm, material)
             option.sheets_needed = packing.sheets_needed
             option.utilization = utilization(area, sw, sh, packing.sheets_needed)
-            option.total_eur = option.adjusted_ppt * (option.sheet_kg / 1000)
-            # Effective rate against piece weight, so the pieces summary adds
-            # up to the sheet total.
-            option.bill_rate_ppt = (option.adjusted_ppt * (option.sheet_kg / pieces_kg)
-                                    if pieces_kg else option.adjusted_ppt)
-        return option
+        return _price(option, price_per_tonne, margin_pct, thickness_mm, material, pieces_kg)
 
     options = []
     for index, (sw, sh, price_per_tonne) in enumerate(candidates):
@@ -243,11 +236,31 @@ def size_prices(lookup: dict, material: str, thickness: str) -> list[tuple[int, 
     return out
 
 
+def price_by_size(lookup: dict, material: str, thickness: str) -> dict[tuple[int, int], float]:
+    """``size_prices`` as ``{(w, h): €/tn}``."""
+    return {(w, h): p for w, h, p in size_prices(lookup, material, thickness)}
+
+
 def sheet_eur(sw: int, sh: int, price_per_tonne: float, thickness_mm: float,
               material: str, margin_pct: float) -> float:
     """What one sheet costs, the margin included."""
     return (weight_kg(sw * sh, thickness_mm, material) * price_per_tonne
             * (1 + margin_pct / 100) / 1000)
+
+
+def _price(option: SheetOption, base_ppt: float, margin_pct: float, thickness_mm: float,
+           material: str, pieces_kg: float) -> SheetOption:
+    """``option`` (its sheets already counted) priced at ``base_ppt`` €/tn
+    plus the margin. Its ``bill_rate_ppt`` is the rate against the piece
+    weight, so the pieces summary adds up to the sheet total."""
+    option.base_ppt = base_ppt
+    option.adjusted_ppt = base_ppt * (1 + margin_pct / 100)
+    if option.ok:
+        option.sheet_weight_kg = weight_kg(option.sw * option.sh, thickness_mm, material)
+        option.total_eur = option.adjusted_ppt * (option.sheet_kg / 1000)
+        option.bill_rate_ppt = (option.adjusted_ppt * (option.sheet_kg / pieces_kg)
+                                if pieces_kg else option.adjusted_ppt)
+    return option
 
 
 def scales_evenly(old: dict, new: dict) -> bool:
@@ -270,14 +283,8 @@ def reprice(result: GroupCost, *, material: str, thickness_mm: float,
     pieces_kg = weight_kg(result.part_area_mm2, thickness_mm, material)
 
     def priced(o: SheetOption) -> SheetOption:
-        base = base_ppt.get((o.sw, o.sh), o.base_ppt)
-        new = replace(o, base_ppt=base, adjusted_ppt=base * (1 + margin_pct / 100))
-        if new.ok:
-            new.sheet_weight_kg = weight_kg(o.sw * o.sh, thickness_mm, material)
-            new.total_eur = new.adjusted_ppt * (new.sheet_kg / 1000)
-            new.bill_rate_ppt = (new.adjusted_ppt * (new.sheet_kg / pieces_kg)
-                                 if pieces_kg else new.adjusted_ppt)
-        return new
+        return _price(replace(o), base_ppt.get((o.sw, o.sh), o.base_ppt), margin_pct,
+                      thickness_mm, material, pieces_kg)
 
     options = [_mixed([priced(m) for m in o.mix], result.part_area_mm2, pieces_kg)
                if o.mix else priced(o) for o in result.options]
@@ -382,7 +389,7 @@ def piece_costs(
     for i, prod in enumerate(products):
         if prod["width"] <= 0 or prod["height"] <= 0:
             continue
-        thickness_mm = parse_thickness_mm(prod["thickness"]) if prod["thickness"] else None
+        thickness_mm = parse_thickness_mm(prod["thickness"])
         if thickness_mm is None:
             continue
         area = areas_mm2.get(prod["id"], prod["width"] * prod["height"])
