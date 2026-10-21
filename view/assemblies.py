@@ -101,8 +101,10 @@ _WORK_DEFAULTS = {"fit_min": 0.0, "weld_m": 0.0, "setup_min": 0.0, "eur_per_h": 
                   "other_eur": 0.0}
 _WORK_LABELS = {
     "fit_min": ("Kokoonpanotyö (min/kok.)", 1.0, "Osien kokoaminen yhdeksi kokoonpanoksi."),
-    "weld_m": ("Hitsaus (m/kok.)", 0.1, "Hinnoitellaan sivupalkin hitsaushinnalla."),
-    "setup_min": ("Asetus (min/erä)", 5.0, "Kerran erää kohden, jaetaan erän kokoonpanoille."),
+    "weld_m": ("Hitsaus (m/kok.)", 0.1, "Osien hitsaus yhteen. Hinnoitellaan sivupalkin "
+                "hitsaushinnalla."),
+    "setup_min": ("Asetus (min/erä)", 5.0, "Kokoamisen asetus kerran erää kohden, jaetaan erän "
+                  "kokoonpanoille. Osien omat asetukset (laser, särmäys) ovat korteilla."),
     "eur_per_h": ("Työ (€/h)", 5.0, "Kokoonpanotyön ja asetuksen tuntihinta."),
     "other_eur": ("Muut (€/kok.)", 0.5, "Esim. pakkaus tai koko kokoonpanon maalaus."),
 }
@@ -142,7 +144,8 @@ def _render_one(aid: str, a: dict, card_of: dict[str, str],
         draw_cards(aid, list(_cards_of(a, card_of)))
 
         st.markdown("Ostetut osat", help="Valmiina ostettavat osat (ruuvit, tapit, "
-                    "koneistetut osat…): kappalehinta × kpl / kokoonpano.")
+                    "puristemutterit, koneistetut osat…): kappalehinta × kpl / kokoonpano. "
+                    "Osakortti laskee vain kiinnikkeiden asennuksen.")
         bought = st.data_editor(
             a.get("bought_seed", []), key=f"asm_bought_{aid}", num_rows="dynamic",
             hide_index=True, width="stretch",

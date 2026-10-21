@@ -298,6 +298,11 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
     assert any("Kaikki osat ovat kokoonpanoissa." in c.value for c in at.caption)
     assert [m.value.split(" · ")[1] for m in at.markdown if m.value.startswith("**#")] == [
         "Pohja.dxf", "Kulma.step"]
+    # The assembly prices fasteners and welding, so its cards don't.
+    keys = {n.key for n in at.number_input}
+    assert f"work_insert_eur_{cards['Kulma.step']}" in keys
+    assert not {f"work_weld_{cards['Kulma.step']}",
+                f"work_fastener_eur_{cards['Kulma.step']}"} & keys
 
 
 def test_a_kept_models_bodies_are_read_again_when_needed():

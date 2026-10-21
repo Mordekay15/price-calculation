@@ -95,13 +95,16 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
                        qty: int, cut_length_m: float, bends: int = 0,
                        threads: int = 0, fasteners: int = 0,
                        weight_kg: float | None = None,
-                       area_m2: float | None = None) -> WorkInputs:
+                       area_m2: float | None = None,
+                       in_assembly: bool = False) -> WorkInputs:
     """The card's "Työvaiheet": cutting, bends, threads, fasteners,
     welding, subcontracting, the shop's calculators and setup.
     ``cut_length_m``, ``bends``, ``threads`` and ``fasteners`` are what the
     drawing gives (the defaults, overwritable), ``weight_kg`` and ``area_m2``
     one piece's weight and area (for the calculators); the laser speed comes
-    from the table. ``key`` makes the widget keys unique per card."""
+    from the table. ``key`` makes the widget keys unique per card. A card
+    ``in_assembly`` has no fastener price or welding: the assembly prices them
+    (its bought parts and welding), so they can't be counted twice."""
     thickness_mm = parse_thickness_mm(thickness) if thickness else None
     table = laser_speed(material, thickness_mm) if material else None
     rates = current_rates()
@@ -154,15 +157,22 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
             step=1.0, fmt="%.0f",
             help="Puristemutterit, -ruuvit, pultit, niitit… Luetaan piirustuksen "
                  "teksteistä, esim. \"M5-PURISTEMUTTERIT X4KPL\"."))
-        eur_per_fastener = _auto(c[1], "Kiinnikkeen hinta (€/kpl)", f"work_fastener_eur_{key}",
-                                 fastener_price(material), step=0.05,
-                                 help="Yhden kiinnikkeen hinta ilman asennusta.")
+        if in_assembly:
+            eur_per_fastener, weld_m = 0.0, 0.0
+        else:
+            eur_per_fastener = _auto(c[1], "Kiinnikkeen hinta (€/kpl)",
+                                     f"work_fastener_eur_{key}", fastener_price(material),
+                                     step=0.05, help="Yhden kiinnikkeen hinta ilman asennusta.")
         eur_per_insert = c[2].number_input("Asennus (€/kiinnike)", min_value=0.0,
                                            value=FASTENER_INSERT_EUR, step=0.05,
                                            key=f"work_insert_eur_{key}",
                                            help="Yhden kiinnikkeen asennus (puristus).")
-        weld_m = c[3].number_input("Hitsaus (m/kpl)", min_value=0.0, value=0.0, step=0.1,
-                                   key=f"work_weld_{key}")
+        if not in_assembly:
+            weld_m = c[3].number_input("Hitsaus (m/kpl)", min_value=0.0, value=0.0, step=0.1,
+                                       key=f"work_weld_{key}")
+        else:
+            st.caption("Kiinnikkeiden hinta ja hitsaus lasketaan kokoonpanossa "
+                       "(ostetut osat ja hitsaus), ei tällä kortilla.")
 
         c = st.columns(4)
         subcontract = c[0].number_input("Alihankinta (€/kpl)", min_value=0.0, value=0.0,

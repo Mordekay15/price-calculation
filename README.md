@@ -202,6 +202,10 @@ parts, work and contents.
   the STEP file removes its assembly.
 - **Apart from the loose parts.** **Osat** lists only the parts in no
   assembly. Each assembly below it shows its own cards, paged the same way.
+- **No cost twice.** A card in an assembly has no fastener price or welding:
+  the assembly's bought parts (PEM nuts and studs too) and its welding price
+  them. The card keeps the part's own work, fastener pressing included, and
+  its setup (laser, bending); the assembly's setup is for assembling.
 - **Pricing.** A batch size counts assemblies. Each part is priced at
   `batch × kpl / kokoonpano` pieces, so its setup and sheets are shared over
   all of them. One assembly costs its parts' €/kpl × kpl/kokoonpano, plus the

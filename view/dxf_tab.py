@@ -1078,7 +1078,8 @@ def _render_part_config(
             st.caption("📁 " + " · ".join(folders))
         if item is not None and len(item.members) > 1:
             _render_item_files(fid, item)
-        for name, n in assemblies.membership(fid, _card_of()):
+        in_assembly = assemblies.membership(fid, _card_of())
+        for name, n in in_assembly:
             st.caption(f"🧩 Kokoonpanossa **{name}**: {n} kpl / kokoonpano")
 
         # Text found in the drawing (Mat=…, Thk=…) — shown to cross-check the
@@ -1109,6 +1110,7 @@ def _render_part_config(
                                       cut_length_m=report.cut_length_mm / 1000,
                                       bends=_bends(report, item), threads=report.threads,
                                       fasteners=_fasteners(dxf, item),
+                                      in_assembly=bool(in_assembly),
                                       **piece_size(report.outline.area_mm2 - sum(
                                           h.area_mm2 for h in report.holes),
                                           material, thickness))
