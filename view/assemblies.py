@@ -33,8 +33,7 @@ from view.ui import is_headless, st
 
 ASSEMBLIES = "dxf_assemblies"
 _SEEN = "dxf_assemblies_seen"      # STEP file ids already made into assemblies
-_REMOVED = "dxf_assemblies_removed"  # assemblies from drawings removed by hand
-KEYS = (ASSEMBLIES, _SEEN, _REMOVED)
+KEYS = (ASSEMBLIES, _SEEN)
 
 _NAME, _QTY, _EUR, _FIT = "Nimike", "Kpl / kokoonpano", "€/kpl", "Asennus (€/kpl)"
 # Bought parts pressed or fitted into a sheet part: their putting in is priced
@@ -79,7 +78,6 @@ def sync_from_drawings(items: dict, texts: Callable[[str], str]) -> None:
     are the cards (``core.items.Item`` by card id), ``texts(card id)`` the
     text of its drawings."""
     store = _store()
-    removed = st.session_state.setdefault(_REMOVED, set())
     keys = {cid: {base_key(n) for n in item.names.values()} for cid, item in items.items()}
     live = set()
     for cid, item in items.items():
@@ -88,7 +86,7 @@ def sync_from_drawings(items: dict, texts: Callable[[str], str]) -> None:
             continue
         expects = [k for k in callouts(texts(cid)) if k not in keys[cid]]
         aid = f"drawing:{cid}"
-        if not expects or aid in removed:
+        if not expects:
             continue
         live.add(aid)
         a = store.setdefault(aid, {"name": base_key(item.names[cid]).upper(), "members": {},
@@ -148,10 +146,12 @@ _WORK_LABELS = {
 }
 
 
-def render(card_of: dict[str, str], draw_cards: Callable[[str, dict[str, int]], None]) -> None:
+def render(card_of: dict[str, str], draw_cards: Callable[[str, dict[str, int]], None],
+           remove_card: Callable[[str], None]) -> None:
     """The assemblies, apart from the loose parts: each one's cards (drawn by
     ``draw_cards(assembly id, {card id: kpl / kokoonpano})``), bought parts and
-    assembly work."""
+    assembly work. Removing an assembly made from a drawing removes the
+    drawing (``remove_card``), which made it."""
     store = _store()
     if not store:
         return
@@ -162,7 +162,7 @@ def render(card_of: dict[str, str], draw_cards: Callable[[str, dict[str, int]], 
                      "hinnoitellaan määrällä eräkoko × kpl / kokoonpano. STEP-kokoonpano "
                      "tehdään tänne automaattisesti.")
     for aid in list(store):
-        _render_one(aid, store[aid], card_of, draw_cards)
+        _render_one(aid, store[aid], card_of, draw_cards, remove_card)
 
 
 _ORIGIN = {
@@ -173,22 +173,25 @@ _ORIGIN = {
 
 
 def _render_one(aid: str, a: dict, card_of: dict[str, str],
-                draw_cards: Callable[[str, dict[str, int]], None]) -> None:
+                draw_cards: Callable[[str, dict[str, int]], None],
+                remove_card: Callable[[str], None]) -> None:
     with st.container(border=True):
         c1, c2 = st.columns([6, 1], vertical_alignment="bottom")
         a["name"] = c1.text_input("Kokoonpano", value=a["name"], key=f"asm_name_{aid}",
                                   help=_ORIGIN.get(next((k for k in _ORIGIN if a.get(k)), "")))
-        if c2.button("Poista", key=f"asm_del_{aid}"):
-            _store().pop(aid, None)
-            if a.get("drawing"):
-                st.session_state.setdefault(_REMOVED, set()).add(aid)
-            st.rerun()
+        c2.button("Poista", key=f"asm_del_{aid}", on_click=_remove, args=(aid, remove_card))
         if a.get("awaited"):
             st.warning("Piirustuksessa on osia, joita ei ole ladattu: "
                        + ", ".join(a["awaited"]) + ". Lataa niiden DXF- tai STEP-tiedostot, "
                        "tai lisää ne alle ostettuina osina.")
         draw_cards(aid, _cards_of(a, card_of))
         _render_work(aid, a)
+
+
+def _remove(aid: str, remove_card: Callable[[str], None]) -> None:
+    a = _store().pop(aid, {})
+    if a.get("drawing"):
+        remove_card(a["drawing"])
 
 
 def _render_work(aid: str, a: dict) -> None:

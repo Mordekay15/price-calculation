@@ -188,7 +188,7 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
             st.caption(f"#{i + 1} · {parts[i][1].name}: kortti on toisessa kokoonpanossa.")
         draw([i for i in mine if i not in products], f"{_PAGE}_{aid}")
 
-    assemblies.render(card_of, draw_assembly)
+    assemblies.render(card_of, draw_assembly, evict)
     return [products[i] for i in sorted(products) if products[i] is not None]
 
 
