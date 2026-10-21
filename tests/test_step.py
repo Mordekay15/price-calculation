@@ -171,7 +171,7 @@ def test_a_parts_flat_drawing_model_and_pdf_make_one_card():
     at = AppTest.from_function(page, default_timeout=60).run()
     assert not at.exception
     assert at.session_state["cards"] == [("a", "ITM-072558_A.dxf")]
-    files = next(c.value for c in at.caption if c.value.startswith("Tiedostot:"))
+    files = " ".join(m.proto.help for m in at.markdown if m.value.startswith("**#1**"))
     assert "✓ ITM-072558_A.dxf (vastaa STEP-mallin aihiota)" in files
     assert "DRW-023179_A.dxf (piirustuksen kehys" in files
     assert any("DRW-023179_A.pdf" in e.label for e in at.expander)
@@ -227,7 +227,7 @@ def test_a_card_takes_its_bends_from_the_model_and_its_material_from_the_pdf():
     svg = next(m.value for m in at.markdown if m.value.startswith("<svg"))
     assert "#16a34a" in svg or "#ea580c" in svg          # the model's bend line
     assert any(c.value.startswith("Taivutuslinjat STEP-mallista") for c in at.caption)
-    assert any(c.value.startswith("Materiaali täytetty automaattisesti:") and "STEP" in c.value
+    assert any(c.value.startswith("Materiaali täytetty automaattisesti") and "STEP" in c.proto.help
                for c in at.caption)
 
 

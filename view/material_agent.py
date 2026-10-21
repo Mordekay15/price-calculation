@@ -112,7 +112,7 @@ def auto_note(fid: str, material: str | None, thickness: str | None) -> str | No
     note = st.session_state.get(_AUTO_NOTE, {}).get(fid)
     if not note or (note[0], note[1]) != (material, thickness):
         return None
-    return f"Materiaali täytetty automaattisesti: {note[2]}"
+    return note[2]
 
 
 def _search(parts, doc_links, docs, materials, thicknesses_for) -> list[Proposal]:

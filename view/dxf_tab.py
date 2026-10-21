@@ -200,15 +200,15 @@ def _render_page_picker(n: int, key: str = _PAGE) -> range:
              f"{n} osaa hinnoitellaan silti, myös piilossa olevat.")
 
 
+def _file_lines(item: Item) -> list[str]:
+    """The card's files: which one is priced (✓) and why."""
+    return [f"{'✓ ' if sid == item.chosen else ''}{item.names[sid]} ({item.scores[sid].note})"
+            for sid in item.members]
+
+
 def _render_item_files(fid: str, item: Item) -> None:
-    """The card's files, which one is priced and why, and a choice to price
-    another."""
+    """A choice to price another of the card's files, when it has several."""
     valid = [sid for sid in item.members if item.scores[sid].valid]
-    lines = []
-    for sid in item.members:
-        mark = "✓ " if sid == item.chosen else ""
-        lines.append(f"{mark}{item.names[sid]} ({item.scores[sid].note})")
-    st.caption("Tiedostot: " + " · ".join(lines))
     if len(valid) < 2:
         return
     cfg = st.session_state.setdefault(CONFIG, {}).setdefault(
@@ -217,10 +217,9 @@ def _render_item_files(fid: str, item: Item) -> None:
     current = cfg.get("source") if cfg.get("source") in valid else ""
     choice = st.selectbox(
         "Muoto tiedostosta", options, index=options.index(current), key=f"dxf_src_{fid}",
-        format_func=lambda sid: (f"Automaattinen ({item.names[item.chosen]})" if not sid
-                                 else item.names[sid]),
-        help="Hinnoiteltava muoto valitaan automaattisesti: puhdas tasoaihio ennen "
-             "piirustusta, ja STEP-mallin kanssa samankokoinen DXF ennen muita.")
+        label_visibility="collapsed",
+        format_func=lambda sid: "Muoto: " + (f"automaattinen ({item.names[item.chosen]})"
+                                             if not sid else item.names[sid]))
     if (choice or None) != cfg.get("source"):
         cfg["source"] = choice or None
         st.session_state.get(REPORTS, {}).pop(fid, None)
@@ -250,25 +249,29 @@ def _render_part_config(
     in_assembly = per_assembly > 0
     with headless(screen != BOM), st.container(border=True):
         hdr = st.columns([5, 2, 2, 1], vertical_alignment="center")
-        hdr[0].markdown(f"**#{idx + 1}** · {dxf.name}")
-        hdr[2].checkbox("Tarkastettu", key=attachments.CHECKED.format(fid))
-        hdr[3].button("Poista", key=f"dxf_del_{fid}", on_click=evict, args=(fid,))
         item = st.session_state.get(ITEMS, {}).get(fid)
         folders = sorted({f for f in map(folder_of, item.members if item else [fid]) if f})
-        if folders:
-            st.caption("📁 " + " · ".join(folders))
+        # Where it came from, and the text in the drawing (Mat=…, Thk=…) to
+        # cross-check the material: behind the name's tooltip.
+        about = (["📁 " + " · ".join(folders)] if folders else []) + (
+            ["Tiedostot (hinnoiteltava muoto valitaan automaattisesti: puhdas tasoaihio "
+             "ennen piirustusta, ja STEP-mallin kanssa samankokoinen DXF ennen muita):",
+             *_file_lines(item)] if item is not None and len(item.members) > 1 else []) + (
+            ["Piirustuksen tekstit: " + " · ".join(dxf.texts)] if dxf.texts else [])
+        hdr[0].markdown(f"**#{idx + 1}** · {dxf.name}", help="  \n".join(about) or None)
+        hdr[2].checkbox("Tarkastettu", key=attachments.CHECKED.format(fid))
+        hdr[3].button("Poista", key=f"dxf_del_{fid}", on_click=evict, args=(fid,))
+        src_col, docs_col, model_col = st.columns(3)
         if item is not None and len(item.members) > 1:
-            _render_item_files(fid, item)
-
-        # Text found in the drawing (Mat=…, Thk=…) — shown to cross-check the
-        # material choice, never nested.
-        if dxf.texts:
-            st.caption("Piirustuksen tekstit: " + " · ".join(dxf.texts))
+            with src_col:
+                _render_item_files(fid, item)
         if not is_headless():   # only drawn: nothing here changes the price
-            attachments.render_card_docs(fid, list(doc_ids))
-            render_waiting(list(doc_ids))
+            with docs_col:
+                attachments.render_card_docs(fid, list(doc_ids))
             if item is not None:
-                bom.render_card_model(fid, [s for s in item.members if bom.is_source(s)])
+                with model_col:
+                    bom.render_card_model(fid, [s for s in item.members if bom.is_source(s)])
+            render_waiting(list(doc_ids))
 
         preview_col, input_col = st.columns([1, 3])
         report = card_report(fid, dxf)
@@ -402,7 +405,7 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict,
     cfg["thickness"] = thickness
     note = material_agent.auto_note(fid, material, thickness)
     if note:
-        st.caption(note)
+        st.caption("Materiaali täytetty automaattisesti", help=note)
     batch = max(current_sizes())
     qty = max(per_assembly, 1) * batch
     st.markdown(f"Määrä: **{qty} kpl**",

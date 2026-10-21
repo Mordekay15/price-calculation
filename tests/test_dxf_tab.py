@@ -456,7 +456,7 @@ def test_a_parts_numbered_files_and_drawing_make_one_card():
     assert not at.exception
     assert list(at.session_state["dxf_store"]) == ["f1"]
     assert sum("3AUA0000098622.pdf" in e.label for e in at.expander) == 1
-    files = next(c.value for c in at.caption if c.value.startswith("Tiedostot:"))
+    files = " ".join(m.proto.help for m in at.markdown if m.value.startswith("**#1**"))
     assert "✓ 3aua0000098622_1.dxf" in files and "3aua0000098622_2.dxf" in files
 
 
