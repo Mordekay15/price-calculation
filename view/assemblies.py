@@ -92,12 +92,6 @@ def current(card_of: dict[str, str]) -> list[Assembly]:
     return out
 
 
-def membership(cid: str, card_of: dict[str, str]) -> list[tuple[str, int]]:
-    """``[(assembly name, kpl / kokoonpano)]`` of a card."""
-    return [(a["name"], n) for a in _store().values()
-            for c, n in _cards_of(a, card_of).items() if c == cid]
-
-
 def clear() -> None:
     for key in KEYS:
         st.session_state.pop(key, None)

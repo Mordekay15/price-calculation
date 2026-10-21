@@ -362,12 +362,14 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
                 fill.slot = st.empty()  # above the card: where the question goes if it asks
                 products[idx] = _render_part_config(fid, part, idx, materials, lookup,
                                                     per_part_angles, fill,
-                                                    doc_links.get(fid, []))
+                                                    doc_links.get(fid, []),
+                                                    fid in in_assembly)
             else:
                 with headless():    # priced as drawn, not drawn
                     products[idx] = _render_part_config(fid, part, idx, materials, lookup,
                                                         per_part_angles, None,
-                                                        doc_links.get(fid, []))
+                                                        doc_links.get(fid, []),
+                                                        fid in in_assembly)
 
     loose = [idx for idx, (fid, _) in enumerate(parts) if fid not in in_assembly]
     if not loose:
@@ -1063,12 +1065,14 @@ def _render_part_config(
     per_part_angles: bool = False,
     fill: "_FillOffer | None" = None,
     doc_ids: list[str] = (),
+    in_assembly: bool = False,
 ) -> dict | None:
     """Draw one part's card, preview left and inputs right; return its product
     dict, or None if not priceable. Its ``angles`` are None (set later from the
     run row) unless ``per_part_angles``. ``fill`` carries the "same material?"
     question from card to card (see ``_offer_same_material``). ``doc_ids``
-    are the supporting files linked to it (see ``view.attachments``)."""
+    are the supporting files linked to it (see ``view.attachments``). A card
+    ``in_assembly`` leaves its fasteners and welding to the assembly."""
     with st.container(border=True):
         hdr = st.columns([5, 2, 2, 1], vertical_alignment="center")
         hdr[0].markdown(f"**#{idx + 1}** · {dxf.name}")
@@ -1080,7 +1084,6 @@ def _render_part_config(
             st.caption("📁 " + " · ".join(folders))
         if item is not None and len(item.members) > 1:
             _render_item_files(fid, item)
-        in_assembly = bool(assemblies.membership(fid, _card_of()))
 
         # Text found in the drawing (Mat=…, Thk=…) — shown to cross-check the
         # material choice, never nested.
@@ -1109,7 +1112,7 @@ def _render_part_config(
             work = render_work_inputs(fid, material=material, thickness=thickness, qty=qty,
                                       cut_length_m=report.cut_length_mm / 1000,
                                       bends=_bends(report, item), threads=report.threads,
-                                      fasteners=_fasteners(dxf, item),
+                                      fasteners=0 if in_assembly else _fasteners(dxf, item),
                                       in_assembly=in_assembly,
                                       **piece_size(report.outline.area_mm2 - sum(
                                           h.area_mm2 for h in report.holes),
