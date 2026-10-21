@@ -83,7 +83,7 @@ def render_drop_area() -> list[tuple[str, DxfFile]]:
     if ingest(list(uploaded or [])):
         st.rerun()  # redraw with the drop area empty
     parts = sync()
-    assemblies.sync_from_models()
+    sync_assemblies()
     skipped = st.session_state.get(_SKIPPED)
     if skipped:
         more = len(skipped) - _SKIPPED_SHOWN
@@ -348,6 +348,17 @@ def resync() -> None:
     st.session_state.get(_SRC_REPORTS, {}).clear()
     st.session_state.get(REPORTS, {}).clear()
     sync()
+
+
+def sync_assemblies() -> None:
+    """The assemblies made from the dropped STEP models and assembly drawings."""
+    assemblies.sync_from_models()
+    links, store = card_docs(), st.session_state.get(STORE, {})
+
+    def texts(cid: str) -> str:
+        return "\n".join([*(attachments.text(d) for d in links.get(cid, [])),
+                          *(store[cid].texts if cid in store else [])])
+    assemblies.sync_from_drawings(st.session_state.get(ITEMS, {}), texts)
 
 
 def source_cards() -> dict[str, str]:

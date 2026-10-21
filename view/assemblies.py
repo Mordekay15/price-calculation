@@ -5,6 +5,10 @@ one quote line.
   assembly: its sheet parts are the cards they are on, with the model's
   quantities, and its other bodies (pins, screws, machined parts) are bought
   parts to give a price.
+- **From an assembly drawing.** A card that is only a drawing (no blank to
+  cut, see ``core.items``) whose drawing calls out other part numbers
+  becomes an assembly of the cards with those numbers, 1 kpl each; the ones
+  neither dropped yet nor added as bought parts are listed as awaited.
 
 Its cards are drawn inside it, apart from the loose parts.
 
@@ -20,13 +24,16 @@ from dataclasses import fields
 from collections.abc import Callable
 
 from core.assemblies import Assembly, AssemblyWork, BoughtPart
+from core.items import NO_BLANK
+from core.linking import base_key, callouts
 from core.work import FASTENER_INSERT_EUR
 from view import bom
 from view.ui import is_headless, st
 
 ASSEMBLIES = "dxf_assemblies"
 _SEEN = "dxf_assemblies_seen"      # STEP file ids already made into assemblies
-KEYS = (ASSEMBLIES, _SEEN)
+_REMOVED = "dxf_assemblies_removed"  # assemblies from drawings removed by hand
+KEYS = (ASSEMBLIES, _SEEN, _REMOVED)
 
 _NAME, _QTY, _EUR, _FIT = "Nimike", "Kpl / kokoonpano", "€/kpl", "Asennus (€/kpl)"
 # Bought parts pressed or fitted into a sheet part: their putting in is priced
@@ -64,6 +71,34 @@ def sync_from_models() -> None:
                                _FIT: FASTENER_INSERT_EUR if _FASTENER.search(p.name) else 0.0})
         store[f"step:{file_id}"] = {"name": m["name"].rsplit(".", 1)[0], "members": members,
                                     "bought": bought, "bought_seed": bought, "auto": file_id}
+
+
+def sync_from_drawings(items: dict, texts: Callable[[str], str]) -> None:
+    """Make an assembly of every assembly drawing among the cards: ``items``
+    are the cards (``core.items.Item`` by card id), ``texts(card id)`` the
+    text of its drawings."""
+    store = _store()
+    removed = st.session_state.setdefault(_REMOVED, set())
+    keys = {cid: {base_key(n) for n in item.names.values()} for cid, item in items.items()}
+    live = set()
+    for cid, item in items.items():
+        scores = item.scores.values()
+        if any(c.valid for c in scores) or not any(c.note == NO_BLANK for c in scores):
+            continue
+        expects = [k for k in callouts(texts(cid)) if k not in keys[cid]]
+        aid = f"drawing:{cid}"
+        if not expects or aid in removed:
+            continue
+        live.add(aid)
+        a = store.setdefault(aid, {"name": base_key(item.names[cid]).upper(), "members": {},
+                                   "bought": [], "bought_seed": [], "drawing": cid})
+        a["expects"] = expects
+        found = {k: other for k in expects for other, ks in keys.items() if k in ks}
+        a["members"] = {m: a["members"].get(m, 1) for m in found.values()}
+        bought = {base_key(str(r.get(_NAME) or "")) for r in a.get("bought", [])}
+        a["awaited"] = [k.upper() for k in expects if k not in found and k not in bought]
+    for aid in [aid for aid, a in store.items() if a.get("drawing") and aid not in live]:
+        store.pop(aid)
 
 
 def _cards_of(a: dict, card_of: dict[str, str]) -> dict[str, int]:
@@ -123,16 +158,28 @@ def render(card_of: dict[str, str], draw_cards: Callable[[str, dict[str, int]], 
         _render_one(aid, store[aid], card_of, draw_cards)
 
 
+_ORIGIN = {
+    "auto": "Tehty STEP-mallista: osat ja määrät mallin rakenteesta.",
+    "drawing": "Tehty kokoonpanopiirustuksesta: osat ovat piirustuksessa mainitut "
+               "osanumerot, 1 kpl / kokoonpano kukin. Tarkista määrät piirustuksesta.",
+}
+
+
 def _render_one(aid: str, a: dict, card_of: dict[str, str],
                 draw_cards: Callable[[str, dict[str, int]], None]) -> None:
     with st.container(border=True):
         c1, c2 = st.columns([6, 1], vertical_alignment="bottom")
         a["name"] = c1.text_input("Kokoonpano", value=a["name"], key=f"asm_name_{aid}",
-                                  help="Tehty STEP-mallista: osat ja määrät mallin "
-                                       "rakenteesta." if a.get("auto") else None)
+                                  help=_ORIGIN.get(next((k for k in _ORIGIN if a.get(k)), "")))
         if c2.button("Poista", key=f"asm_del_{aid}"):
             _store().pop(aid, None)
+            if a.get("drawing"):
+                st.session_state.setdefault(_REMOVED, set()).add(aid)
             st.rerun()
+        if a.get("awaited"):
+            st.warning("Piirustuksessa on osia, joita ei ole ladattu: "
+                       + ", ".join(a["awaited"]) + ". Lataa niiden DXF- tai STEP-tiedostot, "
+                       "tai lisää ne alle ostettuina osina.")
         draw_cards(aid, _cards_of(a, card_of))
         _render_work(aid, a)
 

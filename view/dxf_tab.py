@@ -50,6 +50,7 @@ from view.dxf_files import (
     render_waiting,
     source_cards,
     sync,
+    sync_assemblies,
 )
 from view.dxf_nesting import ANGLE_MODE, PER_PART, render_nesting, render_nesting_angles
 from view.quote import current_sizes
@@ -100,7 +101,7 @@ def render(data: dict, screen: str | None) -> None:
         parts = render_drop_area()
     else:
         parts = sync()
-        assemblies.sync_from_models()
+        sync_assemblies()
     _keep_closed(screen, [fid for fid, _ in parts])
     if not parts:
         st.info("Lataa vähintään yksi DXF- tai DWG-tiedosto aloittaaksesi"
@@ -275,7 +276,8 @@ def _render_part_config(
                 c.note == NO_BLANK for c in item.scores.values()):
             input_col.warning(
                 "Piirustus ilman osan aihiota (esim. kokoonpanopiirustus): ei hinnoitella. "
-                "Lataa sen osien omat DXF- tai STEP-tiedostot, niin niistä tulee kortit.")
+                "Jos siinä on osanumeroita, niistä tehdään kokoonpano (Kokoonpanot); "
+                "lataa osien omat DXF- tai STEP-tiedostot, niin niistä tulee kortit.")
             if not is_headless():
                 with preview_col:
                     _render_preview(report)

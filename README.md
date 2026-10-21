@@ -190,6 +190,13 @@ parts, work and contents.
   **Asennus (€/kpl)** for putting one in (0.20 € by default for fasteners and
   pins, e.g. pressing a PEM nut). Removing
   the STEP file removes its assembly.
+- **From an assembly drawing.** A DXF that is only a drawing sheet, with no
+  blank to cut (the biggest closed shape a line under 3 mm wide among other
+  views), gets a note on its card and is not priced. When its drawings call
+  out part numbers (a number alone on its line, as an item's leader label;
+  numbers among words such as `ASSEMBLY KIT: …` are the title block's), it
+  becomes an assembly of the cards with those numbers, 1 kpl each. The ones
+  neither dropped yet nor added as bought parts are listed as awaited.
 - **Apart from the loose parts.** **Osat** lists only the parts in no
   assembly. Each assembly below it shows its own cards, paged the same way.
   Their **Määrä** is not typed: it is kpl / kokoonpano × the largest batch
@@ -357,7 +364,7 @@ view/                   Streamlit UI
   attachments.py        PDF/STEP files on the DXF tab, links, previews, Tarkastettu
   material_agent.py     the Materiaaliehdotukset panel
   bom.py                STEP-mallit: BOM, cards from unfolded parts, K factor, 3D view
-  assemblies.py         Kokoonpanot: from STEP assemblies, parts, bought parts, work
+  assemblies.py         Kokoonpanot: from STEP assemblies and assembly drawings, parts, bought parts, work
   drawing.py            every SVG: sheet layouts and the DXF part preview
   sparrow_progress.py   progress bar while Sparrow runs
 
