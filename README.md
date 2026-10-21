@@ -68,14 +68,14 @@ shows **Laskenta-aika**, the time since the first part could be priced.
   An assembly's `└` rows are what each part, bought part and the assembly
   work adds to one assembly (kpl / kokoonpano × €/kpl), so they add up to the
   assembly's €/kpl; their Määrä is kpl / kokoonpano × the batch size.
-- Parts are nested once, at the quantities on their cards. For another batch
-  size `q`, a group needs `ceil(sheets × kg(q) / kg)` whole sheets (at least
-  one), each costing as much as in the nesting. The material is shared by piece
-  weight, as in the summary. At the nested quantity this is the exact nested
-  price; at other quantities it is an estimate that keeps the nesting's scrap
-  rate.
+- Parts are nested once, at the quantities on their cards. Material is
+  priced by the kilo at every batch size: a piece's weight × the nesting's
+  € per kg of pieces, its scrap included. A small batch doesn't pay for whole
+  sheets (the rest of a started sheet goes to other work). At the nested
+  quantity this is the exact nested price.
 - Work is `work_cost` at `q`, so the batch costs are shared over `q`. The
-  sheet minimum is applied over that batch size's sheets.
+  sheet minimum is applied over that batch size's `ceil(sheets × kg(q) / kg)`
+  whole sheets (at least one).
 - **Lataa tarjous-PDF** makes the customer quote (reportlab). The material
   column can be hidden. **Excel-vienti** writes a sheet `Tarjous` (one row
   per part and batch size) and a sheet `Erittely` (material and each work

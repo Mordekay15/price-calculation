@@ -3,14 +3,15 @@
 The parts are nested once, at the quantities on their cards. Each batch size
 ``q`` (every part ordered ``q`` times) is then priced from that nesting:
 
-- **Material.** A group needs ``sheets(q) = ceil(sheets × kg(q) / kg)`` whole
-  sheets (at least one), where ``kg`` is the weight of the nested pieces and
-  ``kg(q)`` that of ``q`` of each part. The group's sheets cost as much each as
-  in the nesting, and the cost is shared by piece weight, as the summary does.
-  At the nested quantities this gives exactly the nested price; at others it is
-  an estimate with the nesting's scrap rate.
+- **Material.** By the kilo: a piece costs its weight × the nesting's
+  material € per kg of pieces (its scrap included), at every batch size. A
+  small batch doesn't pay for whole sheets: the rest of a started sheet is
+  used for other work. At the nested quantities this is the nested price.
 - **Work.** ``core.work.work_cost`` at ``q`` (the batch costs shared over
-  ``q``), the cutting raised to the per-sheet minimum over ``sheets(q)``.
+  ``q``), the cutting raised to the per-sheet minimum over the
+  ``sheets(q) = ceil(sheets × kg(q) / kg)`` whole sheets (at least one) the
+  batch is cut from, ``kg`` being the weight of the nested pieces and
+  ``kg(q)`` that of ``q`` of each part.
 """
 
 from __future__ import annotations
@@ -45,11 +46,10 @@ class GroupSheets:
             return 0
         return max(1, math.ceil(self.sheets * pieces_kg / self.pieces_kg - 1e-9))
 
-    def eur_for(self, pieces_kg: float) -> float:
-        """Material € for ``pieces_kg`` of pieces."""
-        if self.sheets <= 0:
-            return 0.0
-        return self.total_eur * self.sheets_for(pieces_kg) / self.sheets
+    @property
+    def eur_per_kg(self) -> float | None:
+        """Material € per kg of pieces, the nesting's scrap included."""
+        return self.total_eur / self.pieces_kg if self.pieces_kg > 0 else None
 
 
 @dataclass(frozen=True)
@@ -104,7 +104,7 @@ def batch_prices(parts: list[BatchPart], groups: dict[tuple, GroupSheets],
             group = groups.get(key)
             kg = sum(p.kg * p.per_unit for p in members) * q
             sheets = group.sheets_for(kg) if group else 0
-            rate = group.eur_for(kg) / kg if group and kg > 0 else None
+            rate = group.eur_per_kg if group else None
             works = [work_cost(p.work, q * p.per_unit, rates)
                      for p in members if p.work is not None]
             if group and works:
