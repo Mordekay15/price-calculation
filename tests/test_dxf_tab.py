@@ -615,41 +615,6 @@ def test_a_zip_of_item_folders_becomes_one_card_per_folder():
     assert sorted(at.session_state["skipped"]) == ["100325.dxf.bak", "ITM-072558.prt.1"]
 
 
-def test_a_zip_on_this_computer_is_read_by_its_path(tmp_path):
-    import io
-    import zipfile
-
-    import ezdxf
-    from streamlit.testing.v1 import AppTest
-
-    from tests.conftest import dxf_bytes
-
-    doc = ezdxf.new()
-    doc.header["$INSUNITS"] = 4
-    doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 50), (0, 50)], close=True)
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("RFQ/100325/100325.dxf", dxf_bytes(doc))
-        zf.writestr("RFQ/100325/100325.prt.1", b"creo")
-        zf.writestr("RFQ/200400/200400.dxf", dxf_bytes(doc))
-    path = tmp_path / "RFQ 580.zip"
-    path.write_bytes(buf.getvalue())
-
-    def page():
-        import streamlit as st
-
-        from view.dxf_files import render_drop_area
-
-        st.session_state["cards"] = [d.name for _, d in render_drop_area()]
-
-    at = AppTest.from_function(page, default_timeout=30).run()
-    at.text_input(key="dxf_path").set_value(f'"{path}"').run()
-    at.button(key="dxf_path_read").click().run()
-    assert not at.exception
-    assert at.session_state["cards"] == ["100325.dxf", "200400.dxf"]
-    assert any("100325.prt.1" in c.value for c in at.caption)
-
-
 def test_a_big_step_model_of_a_large_drop_is_read_when_asked(tmp_path):
     import io
     import zipfile
@@ -674,19 +639,24 @@ def test_a_big_step_model_of_a_large_drop_is_read_when_asked(tmp_path):
     path = tmp_path / "RFQ.zip"
     path.write_bytes(buf.getvalue())
 
-    def page():
+    def page(path):
+        from types import SimpleNamespace
+        from unittest import mock
+
         import streamlit as st
 
         import view.dxf_files as files
         from view import bom
 
         files._BIG_STEP_BYTES = 1000     # the test model counts as big
-        files.render_drop_area()
+        drop = [SimpleNamespace(file_id="z", name="RFQ.zip", getvalue=path.read_bytes)]
+        with mock.patch.object(st, "file_uploader",
+                               return_value=drop if "dropped" not in st.session_state else []):
+            st.session_state["dropped"] = True
+            files.render_drop_area()
         st.session_state["models"] = sorted(bom.models())
 
-    at = AppTest.from_function(page, default_timeout=60).run()
-    at.text_input(key="dxf_path").set_value(str(path)).run()
-    at.button(key="dxf_path_read").click().run()
+    at = AppTest.from_function(page, default_timeout=60, args=(path,)).run()
     assert not at.exception
     assert at.session_state["models"] == []                 # waits
     at.button(key="dxf_read_waiting").click().run()

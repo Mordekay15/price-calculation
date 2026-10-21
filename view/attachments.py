@@ -122,41 +122,47 @@ def _text(doc_id: str, doc: dict) -> str:
 _ROWS = 30   # files listed at once: a big RFQ has hundreds, each with a part picker
 
 
+def doc_list_title(parts: dict[str, str]) -> tuple[str, int] | None:
+    """The supporting files' tab label and how many are on no part; None
+    when there are none."""
+    all_docs = _linkable()
+    if not all_docs:
+        return None
+    linked = {d for ids in links(parts).values() for d in ids}
+    n_unlinked = sum(1 for d in all_docs if d not in linked)
+    return f"Liitetiedostot ({len(all_docs)})", n_unlinked
+
+
 def render_doc_list(parts: dict[str, str], labels: dict[str, str]) -> None:
-    """The supporting files, folded under the drop area: which part each is
-    linked to, changeable by hand, and a remove button."""
+    """The supporting files: which part each is linked to, changeable by
+    hand, and a remove button."""
     all_docs = _linkable()
     if not all_docs:
         return
     linked = {d: pid for pid, ids in links(parts).items() for d in ids}
-    n_unlinked = sum(1 for d in all_docs if d not in linked)
-    title = f"Liitetiedostot ({len(all_docs)})"
-    if n_unlinked:
-        title += f" · {n_unlinked} ilman osaa"
-    with st.expander(title, expanded=bool(n_unlinked)):
-        options = ["", *parts]
-        manual = st.session_state.setdefault(_MANUAL, {})
-        shown = [d for d in all_docs if d not in linked]
-        n_linked = len(all_docs) - len(shown)
-        if n_linked and st.toggle(f"Näytä myös osiin linkitetyt ({n_linked})",
-                                  value=len(all_docs) <= _ROWS, key="dxf_doc_show_linked"):
-            shown = list(all_docs)
-        rows = render_page_picker(len(shown), _ROWS, key="dxf_doc_page",
-                                  label="Näytettävät tiedostot", suffix=f" / {len(shown)}")
-        shown = shown[rows.start:rows.stop]
-        for d in shown:
-            doc = all_docs[d]
-            c1, c2, c3 = st.columns([3, 4, 1], vertical_alignment="center")
-            c1.markdown(f"{'📄' if doc['kind'] == 'pdf' else '🧊'} {doc['name']}")
-            current = linked.get(d, "")
-            choice = c2.selectbox(
-                "Osa", options, index=options.index(current) if current in options else 0,
-                key=f"dxf_doc_link_{d}_{current}", label_visibility="collapsed",
-                format_func=lambda pid: "— ei osaa —" if not pid else labels.get(pid, pid))
-            if choice != current:
-                manual[d] = choice
-                st.rerun()
-            c3.button("Poista", key=f"dxf_doc_del_{d}", on_click=remove_doc, args=(d,))
+    options = ["", *parts]
+    manual = st.session_state.setdefault(_MANUAL, {})
+    shown = [d for d in all_docs if d not in linked]
+    n_linked = len(all_docs) - len(shown)
+    if n_linked and st.toggle(f"Näytä myös osiin linkitetyt ({n_linked})",
+                              value=len(all_docs) <= _ROWS, key="dxf_doc_show_linked"):
+        shown = list(all_docs)
+    rows = render_page_picker(len(shown), _ROWS, key="dxf_doc_page",
+                              label="Näytettävät tiedostot", suffix=f" / {len(shown)}")
+    shown = shown[rows.start:rows.stop]
+    for d in shown:
+        doc = all_docs[d]
+        c1, c2, c3 = st.columns([3, 4, 1], vertical_alignment="center")
+        c1.markdown(f"{'📄' if doc['kind'] == 'pdf' else '🧊'} {doc['name']}")
+        current = linked.get(d, "")
+        choice = c2.selectbox(
+            "Osa", options, index=options.index(current) if current in options else 0,
+            key=f"dxf_doc_link_{d}_{current}", label_visibility="collapsed",
+            format_func=lambda pid: "— ei osaa —" if not pid else labels.get(pid, pid))
+        if choice != current:
+            manual[d] = choice
+            st.rerun()
+        c3.button("Poista", key=f"dxf_doc_del_{d}", on_click=remove_doc, args=(d,))
 
 
 def render_card_docs(card_id: str, doc_ids: list[str]) -> None:

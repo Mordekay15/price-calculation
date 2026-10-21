@@ -63,7 +63,7 @@ MENU = "dxf_menu"   # the screens' menu, under "Edistynyt"
 # The keys of the widgets each screen draws, besides the cards', which draw
 # their material on BOM and their work on PRICING.
 _DRAWN_ON = [(re.compile(p), on) for p, on in (
-    (r"dxf_(path|doc_show_linked|doc_page|doc_link_.*|step_k_input|step_3d_.*|step_pick_.*"
+    (r"dxf_(doc_show_linked|doc_page|doc_link_.*|step_k_input|step_3d_.*|step_pick_.*"
      r"|rfq_note|material_remember)", {BOM}),
     (r"dxf_card_page.*|asm_name_.*", {BOM, PRICING}),
     (r"dxf_(margin_pct|nest_mode|rankavali_mm|edge_.*|sparrow_t|angle_(0|90)|angle_mode"

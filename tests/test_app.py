@@ -9,8 +9,8 @@ def test_app_renders_the_menu_and_each_screen():
     assert [t.label for t in at.tabs] == ["Peruslaskuri", "Edistynyt"]
     at.session_state["menu"] = "Edistynyt"
     at.run()
-    assert [t.label for t in at.tabs] == ["Peruslaskuri", "Edistynyt", "BOM & Tiedostot",
-                                          "Nestaus", "Hinnoittelu"]
+    assert [t.label for t in at.tabs] == [
+        "Peruslaskuri", "Edistynyt", "BOM & Tiedostot", "Nestaus", "Hinnoittelu"]
     for screen in ("Nestaus", "Hinnoittelu", "BOM & Tiedostot"):
         at.session_state["dxf_menu"] = screen
         at.run()

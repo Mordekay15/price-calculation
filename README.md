@@ -180,11 +180,6 @@ apart, and files at the top of the ZIP are matched by name and text only.
 Each card shows its folder. Only the files the app uses are read, one at a
 time, with a progress bar.
 
-**A big RFQ** (Streamlit uploads stop at 200 MB, and a large upload can run
-the computer out of memory): open **Lue ZIP tai kansio koneelta**, paste the
-ZIP's or the folder's path (Explorer: Shift + right click → *Copy as path*)
-and press **Lue**. The app reads it straight from the disk it runs on.
-
 In a drop of more than 5 files, a STEP model over 5 MB (often a punched panel
 with thousands of faces, up to a minute to read) is not read on load. Its card
 has a **Lue 3D-malli** button, and the drop area one for all of them; once
