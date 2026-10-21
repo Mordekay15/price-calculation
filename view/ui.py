@@ -113,7 +113,6 @@ class _WIDGETS:
     def segmented_control(label, options, *args, default=None, key=None, **kwargs):
         return _state(key, default)
 
-    pills = segmented_control
 
     @staticmethod
     def data_editor(data, *args, **kwargs):

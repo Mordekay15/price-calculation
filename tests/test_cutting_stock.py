@@ -7,11 +7,19 @@ from collections import Counter
 
 import pytest
 
-from core.cutting_stock import _trim, best_plan, cutting_stock_plan
+from core.cutting_stock import _trim, best_plan, candidate_sheets
 from core.programs import sheets_used
 from core.rect_nesting import box_candidates, fewest_sheets, rect_options
 from core.sheet_cost import cheapest_index
-from core.sparrow import PackedSheet, Placed, SparrowPart, _fewest, sparrow_options
+from core.sparrow import (PackedSheet, Placed, SparrowPart, _candidates, _plan_sheets,
+                          sparrow_options)
+
+
+def _fewest(parts, seeds, sheet_w, sheet_h, separation):
+    """The fewest-sheets plan of one size from the box candidates, as sheets."""
+    plan = fewest_sheets([p.quantity for p in parts],
+                         _candidates(parts, seeds, sheet_w, sheet_h, separation))
+    return plan and _plan_sheets(parts, plan, sheet_w, sheet_h)
 
 # Square plates like a real order: 10 of each, as a sheet-size table row.
 PLATES = [524, 704, 1194, 524, 794, 974, 634]
@@ -97,7 +105,7 @@ def test_surplus_pieces_come_off_single_copies():
 
 
 def test_nothing_to_plan():
-    assert cutting_stock_plan([0, 0], [(1, 1), (1, 1)], lambda counts: None) is None
+    assert candidate_sheets([0, 0], [(1, 1), (1, 1)], lambda counts: None) is None
 
 
 def square(s):
@@ -183,7 +191,6 @@ def test_sparrow_mixes_sizes_too():
 def test_a_sheet_with_pieces_taken_off_is_nested_again_tight():
     # The plan needs 2 of a 3-square layout: taking the middle one off would
     # leave a hole, so the 2 are nested again (squares left to right).
-    from core.sparrow import _plan_sheets
     from tests.test_sparrow import fake_solver
 
     parts = [SparrowPart("S", 2, square(100), width_mm=100, height_mm=100)]

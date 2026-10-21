@@ -116,12 +116,3 @@ def batch_prices(parts: list[BatchPart], groups: dict[tuple, GroupSheets],
                                             sheets))
     return out
 
-
-def batch_totals(prices: dict[str, list[BatchPrice]], sizes: list[int]) -> list[float | None]:
-    """The quote's total (€, VAT 0 %) at each batch size; None when any part
-    is unpriced at it."""
-    totals: list[float | None] = []
-    for i, _ in enumerate(sizes):
-        row = [p[i].total for p in prices.values()]
-        totals.append(None if not row or any(t is None for t in row) else sum(row))
-    return totals

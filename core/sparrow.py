@@ -332,11 +332,6 @@ class PackResult:
     def sheets_needed(self) -> int:
         return sum(s.count for s in self.sheets)
 
-    @property
-    def used_area(self) -> float:
-        """Real part area over every physical sheet."""
-        return sum(s.used_area * s.count for s in self.sheets)
-
 
 def greedy_fixed_sheets(
     parts: list[SparrowPart],
@@ -682,14 +677,6 @@ def _plan_sheets(parts, plan, sheet_w, sheet_h, *, run_fn=None,
                 kept = tight
         sheets.append(_sheet(kept, sheet_w, sheet_h, repeats))
     return sheets
-
-
-def _fewest(parts, seeds: list[PackedSheet], sheet_w, sheet_h,
-            separation) -> list[PackedSheet] | None:
-    """The plan with the fewest sheets of this size (``core.cutting_stock``)."""
-    plan = fewest_sheets([p.quantity for p in parts],
-                         _candidates(parts, seeds, sheet_w, sheet_h, separation))
-    return plan and _plan_sheets(parts, plan, sheet_w, sheet_h)
 
 
 def _in_box(parts, box) -> Placed:

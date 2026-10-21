@@ -10,7 +10,7 @@ from datetime import date
 
 import streamlit as st
 
-from core.assemblies import Assembly, assembly_prices, per_unit
+from core.assemblies import Assembly, assembly_prices, fit_eur, per_unit
 from core.batches import (
     DEFAULT_BATCH_SIZES,
     BatchPart,
@@ -26,6 +26,7 @@ from core.quote import (
     clean_dxf_zip,
     fmt_eur,
     quote_pdf,
+    quote_totals,
     quote_xlsx,
 )
 from core.sheet_cost import piece_costs
@@ -155,9 +156,7 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
                 "units": [b.unit * b.qty] * len(sizes)} for b in a.bought]
             + ([{"name": "\u2003└ Kokoonpanotyö", "per": None,
                  "units": [p.work for p in prices]}] if any(p.work for p in prices) else []))
-    quote_totals = [None if any(line.prices[i].total is None for line in lines)
-                    else sum(line.prices[i].total for line in lines)
-                    for i in range(len(sizes))]
+    line_totals = quote_totals(lines, len(sizes))
 
     st.divider()
     st.markdown("**Eräkohtaiset hinnat**", help=(
@@ -166,7 +165,7 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
         "määrillä; muilla eräkoilla tarvittavat kokonaiset levyt arvioidaan samalla "
         "hukalla. Eräkoot muutetaan sivun yläosan Tarjous-kohdasta."))
     cols = st.columns(len(sizes) + 1)
-    for col, q, t in zip(cols, sizes, quote_totals):
+    for col, q, t in zip(cols, sizes, line_totals):
         col.metric(f"Yhteensä, {q} kpl/nimike", fmt_eur(t) or "–",
                    help=None if t is not None else "Osalta puuttuu hinta.")
     started = st.session_state.get(_STARTED)
@@ -201,7 +200,7 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
     c1, c2, c3 = st.columns([2, 2, 3])
     show_material = c3.checkbox("Näytä materiaali PDF:ssä", value=True,
                                 key=f"quote_pdf_mat_{key}")
-    pdf = _file(lambda: quote_pdf(info, lines, sizes, quote_totals,
+    pdf = _file(lambda: quote_pdf(info, lines, sizes, line_totals,
                                   show_material=show_material), "reportlab", c1)
     if pdf is not None:
         c1.download_button("Lataa tarjous-PDF", type="primary", key=f"quote_pdf_{key}",
@@ -270,11 +269,7 @@ def _render_breakdown(costs, names: dict[str, str], by_part: dict[str, list],
                    "Materiaali": None if bp.material is None else round(bp.material, 2)}
             if w is not None:
                 row.update({
-                    "Leikkaus": round(w.cutting + w.cut_minimum, 2),
-                    "Taivutus": round(w.bending, 2), "Kierteet": round(w.threads, 2),
-                    "Kiinnikkeet": round(w.fasteners, 2), "Hitsaus": round(w.welding, 2),
-                    "Alihankinta": round(w.subcontract, 2),
-                    "Laskurit": round(w.operations, 2),
+                    **{phase: round(eur, 2) for phase, eur in w.breakdown().items()},
                     "Erän kulut €": round(w.batch_fixed, 2),
                     "Erän kulut / kpl": round(w.batch_fixed / w.qty, 2)})
             row["Kpl-hinta €"] = None if bp.unit is None else round(bp.unit, 2)
@@ -289,18 +284,15 @@ def _render_breakdown(costs, names: dict[str, str], by_part: dict[str, list],
                 for pid, n in a.members) or "—"
             bought = " + ".join(f"{b.name} {b.qty} × ({b.eur:,.2f} + {b.fit_eur:,.2f})"
                                 for b in a.bought) or "—"
-            weld = (w.weld_m / rates.weld_m_per_h * rates.weld_eur_per_h
-                    if rates.weld_m_per_h else 0.0)
-            fit = (w.setup_min / q + w.fit_min) / 60 * w.eur_per_h
             steps = [
                 ("1. Osat (kpl / kok. × €/kpl)", parts, _eur(p.parts)),
                 ("2. Ostetut osat (kpl × (€/kpl + asennus))", bought, _eur(p.bought)),
                 ("3. Kokoonpanotyö",
                  f"({w.setup_min:g} min / {q} + {w.fit_min:g} min) / 60 × {w.eur_per_h:g} €/h",
-                 _eur(fit)),
+                 _eur(fit_eur(w, q))),
                 ("4. Hitsaus",
                  f"{w.weld_m:g} m / {rates.weld_m_per_h:g} m/h × {rates.weld_eur_per_h:g} €/h",
-                 _eur(weld)),
+                 _eur(rates.weld_eur(w.weld_m))),
                 ("5. Muut", "per kokoonpano", _eur(w.other_eur)),
                 ("6. Kokoonpanon kpl-hinta", "1 + 2 + 3 + 4 + 5", _eur(p.unit)),
                 ("7. Yhteensä", f"{_eur(p.unit)} × {q} kok.", _eur(p.total)),

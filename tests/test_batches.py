@@ -7,9 +7,9 @@ from core.batches import (
     BatchPart,
     GroupSheets,
     batch_prices,
-    batch_totals,
     parse_batch_sizes,
 )
+from core.quote import QuoteLine, quote_totals
 from core.work import LaserSpeed, WorkInputs, WorkRates
 
 RATES = WorkRates()
@@ -48,7 +48,8 @@ def test_each_batch_size_shares_whole_sheets_and_setup():
     assert ten.unit == pytest.approx(2.0 + 0.5 + 0.2 + 4.0)
     # The part without work has no price, so the quote's total is open.
     assert prices["b"][0].unit is None
-    assert batch_totals(prices, [1, 10]) == [None, None]
+    lines = [QuoteLine(pid, prices=tuple(p)) for pid, p in prices.items()]
+    assert quote_totals(lines, 2) == [None, None]
 
 
 def test_a_group_not_nested_yet_has_no_material_price():
@@ -63,5 +64,5 @@ def test_totals_add_every_part_at_each_size():
              BatchPart("b", ("S235", "2"), kg=1.0, work=work)]
     groups = {("S235", "2"): GroupSheets(total_eur=50.0, sheets=1, pieces_kg=10.0)}
     prices = batch_prices(parts, groups, [5], RATES)
-    total = batch_totals(prices, [5])[0]
+    total = quote_totals([QuoteLine(pid, prices=tuple(p)) for pid, p in prices.items()], 1)[0]
     assert total == pytest.approx(sum(p[0].unit * 5 for p in prices.values()))

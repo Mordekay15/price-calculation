@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 from core.batches import BatchPrice
+from core.work import BREAKDOWN
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,13 @@ class QuoteLine:
     @property
     def is_assembly(self) -> bool:
         return bool(self.parts)
+
+
+def quote_totals(lines: list[QuoteLine], n_sizes: int) -> list[float | None]:
+    """The quote's total (€, VAT 0 %) at each of ``n_sizes`` batch sizes; None
+    where any line is unpriced."""
+    totals = [[line.prices[i].total for line in lines] for i in range(n_sizes)]
+    return [None if any(t is None for t in row) else sum(row) for row in totals]
 
 
 def fmt_eur(value: float | None) -> str:
@@ -191,24 +199,22 @@ def quote_xlsx(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int]) -> byt
                        _round(p.unit), _round(p.total)])
 
     ws2 = wb.create_sheet("Erittely")
-    ws2.append(["Nimike", "Eräkoko (kpl)", "Materiaali €/kpl", "Leikkaus €/kpl",
-                "Taivutus €/kpl", "Kierteet €/kpl", "Kiinnikkeet €/kpl", "Hitsaus €/kpl",
-                "Alihankinta €/kpl", "Laskurit €/kpl", "Asetus ym. €/kpl", "Levyjä (ryhmä)",
-                "Kpl-hinta €"])
+    ws2.append(["Nimike", "Eräkoko (kpl)", "Materiaali €/kpl",
+                *(f"{phase} €/kpl" for phase in BREAKDOWN), "Asetus ym. €/kpl",
+                "Levyjä (ryhmä)", "Kpl-hinta €"])
     for cell in ws2[1]:
         cell.font = Font(bold=True)
     for line in lines:
         for p in line.prices:
+            blank = ("",) * (len(BREAKDOWN) + 1)
             if line.is_assembly:
-                ws2.append([line.name, p.qty, *("",) * 10, _round(p.unit)])
+                ws2.append([line.name, p.qty, "", *blank, "", _round(p.unit)])
                 continue
             w = p.work
             ws2.append([
                 line.name, p.qty, _round(p.material),
-                *((_round(w.cutting + w.cut_minimum), _round(w.bending), _round(w.threads),
-                   _round(w.fasteners), _round(w.welding), _round(w.subcontract),
-                   _round(w.operations), _round(w.batch_fixed / w.qty))
-                  if w is not None else ("",) * 8),
+                *((*map(_round, w.breakdown().values()), _round(w.batch_fixed / w.qty))
+                  if w is not None else blank),
                 p.sheets, _round(p.unit),
             ])
     sheets = [ws, ws2]

@@ -53,13 +53,14 @@ class Assembly:
     work: AssemblyWork = AssemblyWork()
 
 
+def fit_eur(work: AssemblyWork, q: int) -> float:
+    """Fitting one assembly, its batch's setup shared over ``q`` assemblies."""
+    return (work.setup_min / max(int(q), 1) + work.fit_min) / 60 * work.eur_per_h
+
+
 def work_eur(work: AssemblyWork, q: int, rates: WorkRates) -> float:
     """One assembly's work at a batch of ``q`` assemblies."""
-    q = max(int(q), 1)
-    minutes = work.setup_min / q + work.fit_min
-    welding = (work.weld_m / rates.weld_m_per_h * rates.weld_eur_per_h
-               if rates.weld_m_per_h else 0.0)
-    return minutes / 60 * work.eur_per_h + welding + work.other_eur
+    return fit_eur(work, q) + rates.weld_eur(work.weld_m) + work.other_eur
 
 
 @dataclass(frozen=True)

@@ -101,6 +101,10 @@ class WorkRates:
     # Setup per batch by the number of work phases: 1, 2, 3 or more.
     setup_eur: tuple[float, float, float] = (40.0, 60.0, 80.0)
 
+    def weld_eur(self, metres: float) -> float:
+        """Welding ``metres`` at the shop's speed and hourly rate."""
+        return metres / self.weld_m_per_h * self.weld_eur_per_h if self.weld_m_per_h else 0.0
+
 
 @dataclass(frozen=True)
 class Operation:
@@ -191,6 +195,18 @@ class WorkCost:
     def batch(self) -> float:
         return self.per_piece * self.qty
 
+    def breakdown(self) -> dict[str, float]:
+        """The work per piece by phase (``BREAKDOWN`` names them), the batch
+        costs left out; the cutting includes the per-sheet minimum."""
+        return dict(zip(BREAKDOWN, (
+            self.cutting + self.cut_minimum, self.bending, self.threads, self.fasteners,
+            self.welding, self.subcontract, self.operations)))
+
+
+# The phases of ``WorkCost.breakdown``, as the tables and exports name them.
+BREAKDOWN = ("Leikkaus", "Taivutus", "Kierteet", "Kiinnikkeet", "Hitsaus", "Alihankinta",
+             "Laskurit")
+
 
 def work_cost(inp: WorkInputs, qty: int, rates: WorkRates) -> WorkCost:
     """What ``qty`` pieces' work costs, before the per-sheet cutting minimum."""
@@ -202,7 +218,6 @@ def work_cost(inp: WorkInputs, qty: int, rates: WorkRates) -> WorkCost:
     else:
         seconds = inp.cut_length_m * inp.laser.s_per_m
         cutting, priced = seconds * inp.laser.eur_per_s, True
-    welding = inp.weld_m / rates.weld_m_per_h * rates.weld_eur_per_h if rates.weld_m_per_h else 0.0
     setup = default_setup(inp, rates) if inp.setup_eur is None else inp.setup_eur
     replaced = {op.replaces for op in inp.operations}
     return WorkCost(
@@ -211,7 +226,7 @@ def work_cost(inp: WorkInputs, qty: int, rates: WorkRates) -> WorkCost:
         bending=0.0 if "bending" in replaced else inp.bends * inp.eur_per_bend,
         threads=inp.threads * inp.eur_per_thread,
         fasteners=inp.fasteners * (inp.eur_per_fastener + inp.eur_per_insert),
-        welding=welding,
+        welding=rates.weld_eur(inp.weld_m),
         subcontract=inp.subcontract_eur,
         setup=setup,
         programming=inp.programming_eur,

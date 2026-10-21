@@ -79,7 +79,7 @@ def test_greedy_fills_a_sheet_then_repeats_the_layout():
     assert pack.ok
     assert [(len(s.placements), s.count) for s in pack.sheets] == [(4, 2), (2, 1)]
     assert pack.sheets_needed == 3
-    assert math.isclose(pack.used_area, 10 * 100 * 100)
+    assert math.isclose(sum(s.used_area * s.count for s in pack.sheets), 10 * 100 * 100)
 
 
 def made(packing):

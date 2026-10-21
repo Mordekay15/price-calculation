@@ -21,13 +21,6 @@ def part_key(file_name: str) -> str:
     return stripped or stem
 
 
-def revision(file_name: str) -> str:
-    """The revision suffix of a file name (``revA``, ``A``), "" when none."""
-    stem = PurePath(file_name).stem.strip()
-    m = _REVISION.search(stem)
-    return re.sub(r"^[\s_\-.]+", "", m.group(0)) if m and _REVISION.sub("", stem) else ""
-
-
 def link_files(part_names: dict[str, str], file_names: dict[str, str]) -> dict[str, list[str]]:
     """Which files belong to which part. ``part_names`` and ``file_names``
     map an id to a file name; returns ``{part id: [file id, …]}`` for the
@@ -90,8 +83,3 @@ def link_by_text(part_names: dict[str, str], texts: dict[str, str],
 def _stem(file_name: str) -> str:
     return PurePath(file_name).stem.strip().lower()
 
-
-def unlinked(links: dict[str, list[str]], file_names: dict[str, str]) -> list[str]:
-    """The file ids no part got."""
-    linked = {f for files in links.values() for f in files}
-    return [f for f in file_names if f not in linked]

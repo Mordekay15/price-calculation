@@ -92,11 +92,6 @@ def current(card_of: dict[str, str]) -> list[Assembly]:
     return out
 
 
-def clear() -> None:
-    for key in KEYS:
-        st.session_state.pop(key, None)
-
-
 # ── The panel ─────────────────────────────────────────────────────────────────
 
 _WORK_DEFAULTS = {"fit_min": 0.0, "weld_m": 0.0, "setup_min": 0.0, "eur_per_h": 0.0,
