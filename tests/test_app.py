@@ -1,5 +1,6 @@
 """Smoke test: the whole page renders without an exception."""
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
 
@@ -82,6 +83,13 @@ def test_each_screen_keeps_the_others_inputs_and_prices_on_hinnoittelu(tmp_path,
     # Only the batch-size switchable breakdown is left here.
     [table] = [d.value for d in at.dataframe]
     assert len(table) == 1 and table["Taivutus"].iloc[0] > 0     # the card's 3 bends
+    # Switched to the order's quantities: the part at its Määrä, all the sheets its.
+    at.session_state["quote_mode_dxf"] = "Tilausmäärät"
+    at.run()
+    [table] = [d.value for d in at.dataframe]
+    assert table["Määrä"].iloc[0] == 10 and table["Osuus levyistä"].iloc[0] == "100.0 %"
+    assert table["Yhteensä €"].iloc[0] == pytest.approx(table["Kpl-hinta €"].iloc[0] * 10,
+                                                        abs=0.05)
     at.session_state["dxf_menu"] = "BOM & Tiedostot"
     at.run()
     assert at.number_input(key="work_bends_f0").value == 3.0

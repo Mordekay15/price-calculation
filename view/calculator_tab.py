@@ -53,6 +53,8 @@ def render(data: dict) -> None:
             material, thickness, thickness_mm, result, margin_pct=margin_pct,
             key=f"sheet_select::{material}::{thickness}::{ids}",
             draw_layout=lambda option: draw_rect_layout(option, prods, sheet.rankavali_mm),
+            shares=[(str(p.get("name") or ""), int(p["qty"]), p["width"] * p["height"])
+                    for p in prods],
         )
 
     groups = group_products(products, nest_mode)

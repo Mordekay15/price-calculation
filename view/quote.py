@@ -17,6 +17,7 @@ from core.batches import (
     BatchPart,
     GroupSheets,
     batch_prices,
+    order_prices,
     parse_batch_sizes,
 )
 from core.quote import (
@@ -35,6 +36,7 @@ from view.work import current_rates
 
 _SIZES_KEY = "quote_batch_sizes"
 _STARTED = "quote_started"            # when the first part could be priced
+_BATCHES, _ORDER = "Eräkoot", "Tilausmäärät"   # the prices' two views
 _FIELDS = {                           # QuoteInfo field -> widget key
     "number": "quote_number", "customer": "quote_customer",
     "customer_address": "quote_customer_address", "contact": "quote_contact",
@@ -105,7 +107,8 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
                         assemblies: list[Assembly] | None = None,
                         table: bool = True) -> None:
     """The price of every part at every batch size, the quote's total at each,
-    and the downloads. ``clean_parts`` (DXF tab) adds the clean-DXF ZIP.
+    and the downloads; or, switched to "Tilausmäärät", every part at its own
+    quantity (see ``_render_order``). ``clean_parts`` (DXF tab) adds the clean-DXF ZIP.
     Without ``table``, the breakdown at one batch size replaces the table of
     every size, open.
     A part in one of the ``assemblies`` is priced inside it: the assembly is
@@ -117,7 +120,6 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
         return
     st.session_state.setdefault(_STARTED, time.time())
 
-    sizes = current_sizes()
     group_sheets = {}
     for k, prods in groups.items():
         if k in totals and k in sheets:
@@ -130,23 +132,74 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
                        pc.product.get("work"), in_assembly.get(pc.product["id"], 1))
              for pc in costs]
     rates = current_rates()
+    names = {pc.product["id"]: str(pc.product.get("name", pc.index + 1)) for pc in costs}
+
+    if table:
+        st.divider()
+    mode = st.segmented_control(
+        "Hinnoittele", (_BATCHES, _ORDER), default=_BATCHES, key=f"quote_mode_{key}",
+        help="Eräkoot: jokainen nimike sivun yläosan eräkoilla (1, 5, 10 …). "
+             "Tilausmäärät: jokainen osa omalla määrällään (osakortin Määrä: BOM:sta "
+             "tai itse kirjoitettu), juuri niin kuin levyt nestattiin.") or _BATCHES
+    if mode == _ORDER:
+        lines, totals, labels = _render_order(costs, names, parts, group_sheets,
+                                              assemblies, rates)
+    else:
+        lines, totals, labels = _render_batches(costs, names, parts, group_sheets,
+                                                assemblies, rates, lead=lead, key=key,
+                                                table=table)
+
+    info = current_info()
+    stem = f"tarjous_{info.number or 'uusi'}".replace(" ", "_")
+    qty_label = "Määrä" if mode == _ORDER else "Eräkoko"
+    c1, c2, c3 = st.columns([2, 2, 3])
+    show_material = c3.checkbox("Näytä materiaali PDF:ssä", value=True,
+                                key=f"quote_pdf_mat_{key}")
+    pdf = _file(lambda: quote_pdf(info, lines, labels, totals, show_material=show_material,
+                                  qty_label=qty_label), "reportlab", c1)
+    if pdf is not None:
+        c1.download_button("Lataa tarjous-PDF", type="primary", key=f"quote_pdf_{key}",
+                           data=pdf, file_name=f"{stem}.pdf", mime="application/pdf")
+    xlsx = _file(lambda: quote_xlsx(info, lines, qty_label=qty_label), "openpyxl", c2)
+    if xlsx is not None:
+        c2.download_button("Excel-vienti", key=f"quote_xlsx_{key}",
+                           data=xlsx, file_name=f"{stem}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument."
+                                "spreadsheetml.sheet")
+    if clean_parts:
+        _render_clean_dxfs(clean_parts, key)
+
+
+def _contents(a: Assembly, names: dict[str, str]) -> tuple[str, ...]:
+    """What goes into an assembly, for its quote line: "Pohja × 1", …"""
+    return tuple([f"{names.get(pid, '?')} × {n}" for pid, n in a.members]
+                 + [f"{b.name} × {b.qty}" for b in a.bought]) or ("—",)
+
+
+def _render_started(col) -> None:
+    started = st.session_state.get(_STARTED)
+    if started:
+        col.metric("Laskenta-aika", f"{(time.time() - started) / 60:.0f} min",
+                   help="Aika siitä, kun ensimmäinen osa oli hinnoiteltavissa.")
+
+
+def _render_batches(costs, names: dict[str, str], parts: list[BatchPart],
+                    group_sheets: dict[tuple, GroupSheets], assemblies: list[Assembly],
+                    rates, *, lead: str, key: str, table: bool):
+    """Every quote line at every batch size. Returns what the downloads take:
+    the lines, the quote's total at each size and their labels."""
+    sizes = current_sizes()
     by_part = batch_prices(parts, group_sheets, sizes, rates)
-
-    def name(pc) -> str:
-        return str(pc.product.get("name", pc.index + 1))
-
-    lines = [QuoteLine(name(pc), pc.product["material"] or "", pc.product["thickness"] or "",
-                       tuple(by_part[pc.product["id"]]))
+    in_assembly = per_unit(assemblies)
+    lines = [QuoteLine(names[pc.product["id"]], pc.product["material"] or "",
+                       pc.product["thickness"] or "", tuple(by_part[pc.product["id"]]))
              for pc in costs if pc.product["id"] not in in_assembly]
-    names = {pc.product["id"]: name(pc) for pc in costs}
     members: list[list[dict]] = []      # each assembly's rows in the table
     priced: list[tuple[Assembly, dict, tuple]] = []     # for the breakdown
     for a in assemblies:
         units = {pid: [p.unit for p in by_part[pid]] for pid, _ in a.members if pid in by_part}
-        contents = tuple([f"{names.get(pid, '?')} × {n}" for pid, n in a.members]
-                         + [f"{b.name} × {b.qty}" for b in a.bought])
         lines.append(QuoteLine(a.name, prices=tuple(assembly_prices(a, units, sizes, rates)),
-                               parts=contents or ("—",)))
+                               parts=_contents(a, names)))
         prices = lines[-1].prices
         priced.append((a, units, prices))
         # Each row is what it adds to one assembly (kpl/kok. × €/kpl), so the
@@ -162,8 +215,6 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
                  "units": [p.work for p in prices]}] if any(p.work for p in prices) else []))
     line_totals = quote_totals(lines, len(sizes))
 
-    if table:
-        st.divider()
     st.markdown("**Eräkohtaiset hinnat**", help=(
         "Kpl-hinta jokaisella eräkoolla: materiaali + työ + erän kiinteät kulut "
         "jaettuna eräkoolla. Materiaali: ryhmän levyt nestattuna osakorttien "
@@ -176,32 +227,80 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
     for col, q, t in zip(cols, sizes, line_totals):
         col.metric(f"Yhteensä, {q} kpl/nimike", fmt_eur(t) or "–",
                    help=None if t is not None else "Osalta puuttuu hinta.")
-    started = st.session_state.get(_STARTED)
-    if started:
-        cols[-1].metric("Laskenta-aika", f"{(time.time() - started) / 60:.0f} min",
-                        help="Aika siitä, kun ensimmäinen osa oli hinnoiteltavissa.")
+    _render_started(cols[-1])
     if table:
         _render_table(lines, members, sizes, lead)
     _render_breakdown(costs, names, by_part, priced, sizes, rates, key, folded=table)
+    return lines, line_totals, [f"{q} kpl / nimike" for q in sizes]
 
-    info = current_info()
-    stem = f"tarjous_{info.number or 'uusi'}".replace(" ", "_")
-    c1, c2, c3 = st.columns([2, 2, 3])
-    show_material = c3.checkbox("Näytä materiaali PDF:ssä", value=True,
-                                key=f"quote_pdf_mat_{key}")
-    pdf = _file(lambda: quote_pdf(info, lines, sizes, line_totals,
-                                  show_material=show_material), "reportlab", c1)
-    if pdf is not None:
-        c1.download_button("Lataa tarjous-PDF", type="primary", key=f"quote_pdf_{key}",
-                           data=pdf, file_name=f"{stem}.pdf", mime="application/pdf")
-    xlsx = _file(lambda: quote_xlsx(info, lines, sizes), "openpyxl", c2)
-    if xlsx is not None:
-        c2.download_button("Excel-vienti", key=f"quote_xlsx_{key}",
-                           data=xlsx, file_name=f"{stem}.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument."
-                                "spreadsheetml.sheet")
-    if clean_parts:
-        _render_clean_dxfs(clean_parts, key)
+
+def _assemblies_ordered(a: Assembly, qtys: dict[str, int]) -> int:
+    """How many of an assembly its parts' quantities make (the fewest any
+    part allows); one with no parts of its own counts the largest batch size."""
+    counts = [qtys[pid] // int(n) for pid, n in a.members if pid in qtys and int(n) > 0]
+    return max(min(counts), 1) if counts else max(current_sizes())
+
+
+def _render_order(costs, names: dict[str, str], parts: list[BatchPart],
+                  group_sheets: dict[tuple, GroupSheets], assemblies: list[Assembly],
+                  rates):
+    """Every part at its own quantity (``core.batches.order_prices``) and each
+    assembly at as many as its parts make. Returns what the downloads take:
+    the lines, the quote's total and its label."""
+    qtys = {pc.product["id"]: max(int(pc.product["qty"]), 1) for pc in costs}
+    by_id = order_prices(parts, group_sheets, qtys, rates)
+    in_assembly = per_unit(assemblies)
+    lines = [QuoteLine(names[pc.product["id"]], pc.product["material"] or "",
+                       pc.product["thickness"] or "", (by_id[pc.product["id"]],))
+             for pc in costs if pc.product["id"] not in in_assembly]
+    priced: list[tuple[Assembly, dict, tuple]] = []
+    for a in assemblies:
+        units = {pid: [by_id[pid].unit] for pid, _ in a.members if pid in by_id}
+        prices = tuple(assembly_prices(a, units, [_assemblies_ordered(a, qtys)], rates))
+        lines.append(QuoteLine(a.name, prices=prices, parts=_contents(a, names)))
+        priced.append((a, units, prices))
+    total = quote_totals(lines, 1)[0]
+    bps = [by_id[pc.product["id"]] for pc in costs]
+    material = (None if any(bp.material is None for bp in bps)
+                else sum(bp.material * bp.qty for bp in bps))
+
+    st.markdown("**Hinnat tilausmäärillä**", help=(
+        "Jokainen osa omalla määrällään (osakortin Määrä: BOM:sta tai itse "
+        "kirjoitettu), samoilla määrillä kuin levyt nestattiin. Ryhmän levyjen "
+        "hinta hukkineen jaetaan osille sen mukaan, kuinka paljon kukin osa vie "
+        "levyistä (kappaleiden paino eli saman materiaalin ja paksuuden ryhmässä "
+        "pinta-ala, reiät pois). Osien materiaali on siksi yhteensä ryhmän "
+        "levyjen hinta. Kokoonpanoja on niin monta kuin sen osien määrät riittävät."))
+    cols = st.columns(3)
+    cols[0].metric("Yhteensä", fmt_eur(total) or "–",
+                   help=None if total is not None else "Osalta puuttuu hinta.")
+    cols[1].metric("Josta materiaali", fmt_eur(material) or "–",
+                   help="Kaikkien ryhmien levyt hukkineen, kate mukana.")
+    _render_started(cols[2])
+
+    rows = []
+    for pc, bp in zip(costs, bps):
+        part = next(p for p in parts if p.id == pc.product["id"])
+        group = group_sheets.get(part.group)
+        w = bp.work
+        row = {"Osa": names[pc.product["id"]], "Määrä": bp.qty, "Levyjä (ryhmä)": bp.sheets,
+               "Osuus levyistä": None if not group or not group.pieces_kg else
+               f"{part.kg * bp.qty / group.pieces_kg * 100:.1f} %",
+               "Materiaali €/kpl": None if bp.material is None else round(bp.material, 2),
+               "Materiaali yht. €": None if bp.material is None
+               else round(bp.material * bp.qty, 2)}
+        if w is not None:
+            row.update({
+                **{phase: round(eur, 2) for phase, eur in w.breakdown().items()},
+                "Erän kulut €": round(w.batch_fixed, 2),
+                "Erän kulut / kpl": round(w.batch_fixed / w.qty, 2)})
+        row["Kpl-hinta €"] = None if bp.unit is None else round(bp.unit, 2)
+        row["Yhteensä €"] = None if bp.total is None else round(bp.total, 2)
+        rows.append(row)
+    st.dataframe(rows, width="stretch", hide_index=True)
+    for a, units, prices in priced:
+        _render_assembly_steps(a, units, prices[0], 0, names, rates)
+    return lines, [total], ["Tilausmäärillä"]
 
 
 def _file(make, package: str, slot) -> bytes | None:
@@ -290,26 +389,33 @@ def _render_breakdown(costs, names: dict[str, str], by_part: dict[str, list],
         st.dataframe(rows, width="stretch", hide_index=True)
 
         for a, units, prices in priced:
-            p = prices[i]
-            w = a.work
-            parts = " + ".join(
-                f"{names.get(pid, '?')} {n} × {_eur(units[pid][i] if pid in units else None)}"
-                for pid, n in a.members) or "—"
-            bought = " + ".join(f"{b.name} {b.qty} × ({b.eur:,.2f} + {b.fit_eur:,.2f})"
-                                for b in a.bought) or "—"
-            steps = [
-                ("1. Osat (kpl / kok. × €/kpl)", parts, _eur(p.parts)),
-                ("2. Ostetut osat (kpl × (€/kpl + asennus))", bought, _eur(p.bought)),
-                ("3. Kokoonpanotyö",
-                 f"({w.setup_min:g} min / {q} + {w.fit_min:g} min) / 60 × {w.eur_per_h:g} €/h",
-                 _eur(fit_eur(w, q))),
-                ("4. Hitsaus",
-                 f"{w.weld_m:g} m / {rates.weld_m_per_h:g} m/h × {rates.weld_eur_per_h:g} €/h",
-                 _eur(rates.weld_eur(w.weld_m))),
-                ("5. Muut", "per kokoonpano", _eur(w.other_eur)),
-                ("6. Kokoonpanon kpl-hinta", "1 + 2 + 3 + 4 + 5", _eur(p.unit)),
-                ("7. Yhteensä", f"{_eur(p.unit)} × {q} kok.", _eur(p.total)),
-            ]
-            st.markdown(f"**🧩 {a.name}, eräkoko {q}**")
-            st.dataframe([{"Vaihe": v, "Laskenta": c, "Arvo €": val} for v, c, val in steps],
-                         width="stretch", hide_index=True)
+            _render_assembly_steps(a, units, prices[i], i, names, rates)
+
+
+def _render_assembly_steps(a: Assembly, units: dict, p, i: int, names: dict[str, str],
+                           rates) -> None:
+    """How an assembly's price ``p`` (at ``p.qty`` assemblies) adds up; its
+    parts' €/kpl are ``units[pid][i]``."""
+    q = p.qty
+    w = a.work
+    parts = " + ".join(
+        f"{names.get(pid, '?')} {n} × {_eur(units[pid][i] if pid in units else None)}"
+        for pid, n in a.members) or "—"
+    bought = " + ".join(f"{b.name} {b.qty} × ({b.eur:,.2f} + {b.fit_eur:,.2f})"
+                        for b in a.bought) or "—"
+    steps = [
+        ("1. Osat (kpl / kok. × €/kpl)", parts, _eur(p.parts)),
+        ("2. Ostetut osat (kpl × (€/kpl + asennus))", bought, _eur(p.bought)),
+        ("3. Kokoonpanotyö",
+         f"({w.setup_min:g} min / {q} + {w.fit_min:g} min) / 60 × {w.eur_per_h:g} €/h",
+         _eur(fit_eur(w, q))),
+        ("4. Hitsaus",
+         f"{w.weld_m:g} m / {rates.weld_m_per_h:g} m/h × {rates.weld_eur_per_h:g} €/h",
+         _eur(rates.weld_eur(w.weld_m))),
+        ("5. Muut", "per kokoonpano", _eur(w.other_eur)),
+        ("6. Kokoonpanon kpl-hinta", "1 + 2 + 3 + 4 + 5", _eur(p.unit)),
+        ("7. Yhteensä", f"{_eur(p.unit)} × {q} kok.", _eur(p.total)),
+    ]
+    st.markdown(f"**🧩 {a.name}, {q} kpl**")
+    st.dataframe([{"Vaihe": v, "Laskenta": c, "Arvo €": val} for v, c, val in steps],
+                 width="stretch", hide_index=True)

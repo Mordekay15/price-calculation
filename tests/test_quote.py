@@ -61,6 +61,13 @@ def test_quote_pdf_is_a_pdf():
                      show_material=False).startswith(b"%PDF")
 
 
+def test_the_quote_can_be_made_with_the_order_quantities():
+    assert quote_pdf(_info(), _lines(), ["Tilausmäärillä"], [30.0],
+                     qty_label="Määrä").startswith(b"%PDF")
+    wb = openpyxl.load_workbook(io.BytesIO(quote_xlsx(_info(), _lines(), qty_label="Määrä")))
+    assert "Määrä (kpl)" in [c.value for c in wb["Erittely"][1]]
+
+
 def test_quote_xlsx_opens_with_both_sheets():
     wb = openpyxl.load_workbook(io.BytesIO(quote_xlsx(_info(), _lines(), [1, 10])))
     assert wb.sheetnames == ["Tarjous", "Erittely"]
