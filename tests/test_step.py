@@ -396,3 +396,25 @@ def test_a_part_that_comes_in_as_a_shell_is_still_a_part():
     assert not model.problems
     assert [(p.name, p.qty) for p in model.parts] == [("ITM-064555", 1)]
     assert _size(unfold(model.parts[0].shape)) in {(519.75, 400.0), (400.0, 519.75)}
+
+
+def _cut(solid, x, y, z):
+    """``solid`` without the box ``x``, ``y``, ``z`` (each a (from, to))."""
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
+
+    box = BRepPrimAPI_MakeBox(gp_Pnt(x[0], y[0], z[0]), gp_Pnt(x[1], y[1], z[1])).Shape()
+    return BRepAlgoAPI_Cut(solid, box).Shape()
+
+
+def test_tabs_notched_apart_bend_on_their_own_a_slot_across_a_bend_does_not_split_it():
+    # ITM-082584: an angle whose flange is notched into 3 tabs, the notches
+    # cutting through the bend: 3 bends, not 1.
+    tabs = l_bracket(w=100.0, hole=False)
+    for y in ((30, 40), (60, 70)):
+        tabs = _cut(tabs, (-1, 51), y, (-1, 4.0))
+    assert [round(b.angle_deg) for b in unfold(tabs).bends] == [90, 90, 90]
+    # A slot across the bend: both flanges still go across, it's one bend.
+    slot = _cut(l_bracket(w=100.0, hole=False), (-1, 12), (45, 55), (-1, 12))
+    assert [round(b.angle_deg) for b in unfold(slot).bends] == [90]

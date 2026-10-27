@@ -483,7 +483,9 @@ def _lay_flat(faces: list, base, t: float, flat: FlatPart, k: float) -> None:
     from core.geometry import area
     loops.sort(key=lambda lp: abs(area(lp)), reverse=True)
     flat.outline, flat.holes = loops[0], loops[1:]
-    flat.bends = _bends(faces, bend_faces, t)
+    flat.bends = _bends(faces, bend_faces, t, lambda j: {
+        i for edge in _edges(faces[j].face) for i in edge_faces.get(hash(edge), ())
+        if i != j and i in skin})
     flat.is_sheet = True
 
     # The flat area times the thickness should give the volume (exactly at
@@ -551,25 +553,36 @@ def _side2(e2, e3, w3, normal):
     return (-e2[1] * hand, e2[0] * hand)
 
 
-def _bends(faces, bend_faces, t) -> list[Bend]:
-    """One bend per axis (a bend split into several faces counts once): its
-    angle, inner radius and centre line on the flat."""
+def _bends(faces, bend_faces, t, neighbours) -> list[Bend]:
+    """One bend per axis and pair of flanges: its angle, inner radius and
+    centre line on the flat. A bend split into faces by a hole across it
+    counts once (its pieces join the same two flanges); tabs along one edge,
+    notched apart, each bend on their own (they share only the web).
+    ``neighbours(face)`` are the skin faces next to a bend face."""
     out: list[Bend] = []
-    seen: dict[tuple, Bend] = {}
-    for j, info in bend_faces:
+    seen: dict[tuple, list[set]] = {}     # axis key: each bend's neighbour faces
+    near = {j: neighbours(j) for j, _ in bend_faces}
+    # A piece left of a bend where a notch cuts into it touches one flange
+    # only: it is part of the bend on its axis, so the whole pieces go first.
+    for j, info in sorted(bend_faces, key=lambda b: len(near[b[0]]) < 2):
         f = faces[j]
+        key = (tuple(round(c, 1) for c in f.axis_point), round(f.radius, 2))
+        key = (*key, tuple(round(abs(c), 3) for c in f.axis))
+        bends = seen.get(key, [])
+        if len(near[j]) < 2 and bends:
+            continue
+        same = next((n for n in bends if len(n & near[j]) >= 2), None)
+        if same is not None:
+            same |= near[j]
+            continue
+        seen.setdefault(key, []).append(near[j])
         zs = [_dot(_sub(p, info["a3"]), info["e3"]) for e in _edges(f.face) for p in _sample(e)]
         s_mid = f.u_span / 2 * info["neutral"]
         a2, e2, w2 = info["a2"], info["e2"], info["w2"]
         ends = tuple((a2[0] + z * e2[0] + s_mid * w2[0], a2[1] + z * e2[1] + s_mid * w2[1])
                      for z in (min(zs), max(zs)))
-        key = (tuple(round(c, 1) for c in f.axis_point), round(f.radius, 2))
-        key = (*key, tuple(round(abs(c), 3) for c in f.axis))
-        if key in seen:
-            continue
-        bend = Bend(math.degrees(f.u_span), round(info["inner"], 3), up=f.concave, line=ends)
-        seen[key] = bend
-        out.append(bend)
+        out.append(Bend(math.degrees(f.u_span), round(info["inner"], 3), up=f.concave,
+                        line=ends))
     return out
 
 
