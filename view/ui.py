@@ -112,6 +112,8 @@ class _WIDGETS:
 
     text_area = text_input
 
+    pills = multiselect   # as used: selection_mode="multi"
+
     @staticmethod
     def segmented_control(label, options, *args, default=None, key=None, **kwargs):
         return _state(key, default)

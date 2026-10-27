@@ -59,7 +59,6 @@ from view.dxf_files import (
 )
 from view.dxf_nesting import (
     ANGLE_MODE,
-    PER_PART,
     NestState,
     render_nesting,
     render_nesting_angles,
@@ -128,7 +127,7 @@ def render(data: dict, screen: str | None):
     if screen == BOM:
         auto_fill_materials(parts, materials, lookup)
     # Per-part angles are chosen on the Nestaus step, by its switch.
-    per_part = len(parts) > 1 and st.session_state.get(ANGLE_MODE) == PER_PART
+    per_part = len(parts) > 1 and bool(st.session_state.get(ANGLE_MODE))
     with headless(screen != BOM):
         products = _render_part_cards(parts, materials, lookup, per_part)
     with headless(screen != NESTING):

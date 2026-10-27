@@ -180,20 +180,22 @@ def dxf_page(n):
 
 def test_one_part_takes_its_nesting_angle_from_the_run_row():
     at = dxf_page(1)
-    assert [r.key for r in at.radio if r.key.startswith("dxf_turn")] == ["dxf_turn"]   # none on the card
-    assert at.session_state["angles"] == [(0, 90)]   # free by default
-    at.radio(key="dxf_turn").set_value("↔").run()
+    assert [p.key for p in at.pills if p.key.startswith("dxf_turn")] == ["dxf_turn"]   # none on the card
+    assert at.session_state["angles"] == [(0, 90)]   # both: free, by default
+    at.pills(key="dxf_turn").set_value([0]).run()
     assert at.session_state["angles"] == [(0,)]
+    at.pills(key="dxf_turn").set_value([]).run()
+    assert at.session_state["angles"] == [()] and at.warning
 
 
 def test_several_parts_share_one_angle_or_choose_per_part():
     at = dxf_page(2)
-    assert at.radio(key="dxf_angle_mode").value == "Sama kaikille"
-    at.radio(key="dxf_turn").set_value("↕").run()
+    assert not at.toggle(key="dxf_angle_per_part").value
+    at.pills(key="dxf_turn").set_value([90]).run()
     assert at.session_state["angles"] == [(90,), (90,)]
-    at.radio(key="dxf_angle_mode").set_value("Osakohtainen").run()
-    assert {r.key for r in at.radio if r.key.startswith("dxf_turn_")} == {"dxf_turn_f0", "dxf_turn_f1"}
-    at.radio(key="dxf_turn_f1").set_value("↔").run()
+    at.toggle(key="dxf_angle_per_part").set_value(True).run()
+    assert {p.key for p in at.pills if p.key.startswith("dxf_turn_")} == {"dxf_turn_f0", "dxf_turn_f1"}
+    at.pills(key="dxf_turn_f1").set_value([0]).run()
     assert at.session_state["angles"] == [(0, 90), (0,)]
 
 
