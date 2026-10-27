@@ -145,7 +145,19 @@ def render(data: dict, screen: str | None):
         st.info(f"Valitse materiaali ja paksuus vähintään yhdelle osalle ({BOM}).")
     with strip:
         _render_status(screen, nest, totals is not None)
+    _render_next(screen)
     return totals
+
+
+def _render_next(screen: str) -> None:
+    """The next step's button, at the end of the step: where the work on it
+    ends."""
+    nxt = SCREENS.index(screen) + 1
+    if nxt < len(SCREENS):
+        st.divider()
+        _, col = st.columns([3, 1])
+        col.button(f"Seuraava: {SCREENS[nxt]} →", key="ui_go_next", type="primary",
+                   on_click=_go, args=(SCREENS[nxt],), width="stretch")
 
 
 def _go(screen: str, only_open: bool = False) -> None:
@@ -184,8 +196,8 @@ _OPEN = "⚠"
 
 def _render_status(screen: str, nest: NestState, priced: bool) -> None:
     """The strip above the step: what was read, the three steps with their
-    state, what is still missing (with a button to those cards) and the next
-    step."""
+    state and what is still missing (with a button to those cards). The next
+    step's button is at the end of the step (``_render_next``)."""
     ss = st.session_state
     rows = ss.get(_ROWS, {})
     issues = ss.get(_ISSUES, {})
@@ -224,11 +236,6 @@ def _render_status(screen: str, nest: NestState, priced: bool) -> None:
         if issues and not (screen == BOM and ss.get(_ONLY_OPEN)):
             action.button(f"Näytä keskeneräiset ({len(issues)})", key="ui_go_open",
                           on_click=_go, args=(BOM, True), width="stretch")
-        nxt = SCREENS.index(screen) + 1
-        if nxt < len(SCREENS):
-            action.button(f"Seuraava: {SCREENS[nxt]} →", key="ui_go_next",
-                          type="primary" if not issues else "secondary",
-                          on_click=_go, args=(SCREENS[nxt],), width="stretch")
 
 
 def _render_part_cards(parts, materials: list[str], lookup: dict,
