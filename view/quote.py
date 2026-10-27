@@ -1,13 +1,13 @@
 """The quote in the UI: the bar above the tabs (the quote's name, the batch
 sizes, the quote's details behind a button, and the live total at each batch
-size with what it is made of), and under each tab's results the price per
+size), and under each tab's results the price per
 batch size with the downloads: the quote PDF, the Excel export and, on the
 DXF tab, the clean DXFs for production (see ``core.batches``, ``core.quote``)."""
 
 from __future__ import annotations
 
 from contextlib import nullcontext
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 
 from core.assemblies import Assembly, assembly_prices, fit_eur, per_unit
@@ -30,7 +30,6 @@ from core.quote import (
     quote_xlsx,
 )
 from core.sheet_cost import piece_costs
-from core.work import BREAKDOWN
 from view.ui import is_headless, st
 from view.work import current_rates
 
@@ -49,12 +48,10 @@ _FIELDS = {                           # QuoteInfo field -> widget key
 @dataclass
 class Totals:
     """A tab's quote at each batch size, for the bar: the total (None where a
-    line is unpriced) and what it is made of (``parts``: label -> €, one dict
-    per size). ``missing``: some groups aren't nested yet."""
+    line is unpriced). ``missing``: some groups aren't nested yet."""
 
     sizes: list[int]
     totals: list[float | None]
-    parts: list[dict[str, float]] = field(default_factory=list)
     missing: bool = False
     margin_pct: float | None = None
 
@@ -98,36 +95,21 @@ def render_header():
 
 
 def render_totals(slot, totals: Totals | None) -> None:
-    """The bar's totals: the quote at each batch size, each with "Miksi tämä
-    hinta?" (what it is made of)."""
+    """The bar's totals: the quote at each batch size."""
     with slot:
         if totals is None or not totals.totals:
             st.caption("Ei vielä hintaa")
             return
         cols = st.columns([2] * len(totals.sizes) + [3], vertical_alignment="center")
-        for i, (col, q, t) in enumerate(zip(cols, totals.sizes, totals.totals)):
+        for col, q, t in zip(cols, totals.sizes, totals.totals):
             col.metric(f"{q} kpl / nimike", fmt_eur(t) or "–",
                        help=None if t is not None else "Osalta puuttuu hinta.")
-            if t is not None and i < len(totals.parts):
-                with col.popover("Miksi tämä hinta?"):
-                    _render_why(q, t, totals.parts[i], totals.margin_pct)
         notes = []
         if totals.missing:
             notes.append(":orange[Arvio: kaikkia ryhmiä ei ole vielä nestattu.]")
         if totals.margin_pct is not None:
             notes.append(f"Materiaalin kate {totals.margin_pct:g} %")
         cols[-1].caption("  \n".join(notes) or "ALV 0 %")
-
-
-def _render_why(q: int, total: float, parts: dict[str, float],
-                margin_pct: float | None) -> None:
-    """One batch size's total, by what it is made of."""
-    st.markdown(f"**Eräkoko {q}: {fmt_eur(total)}**")
-    rows = [{"Mistä": k, "€": round(v, 2), "Osuus": f"{v / total * 100:.0f} %" if total else ""}
-            for k, v in parts.items() if abs(v) >= 0.005]
-    st.dataframe(rows, hide_index=True, width="stretch")
-    st.caption("Materiaali sis. katteen" + (f" {margin_pct:g} %" if margin_pct is not None else "")
-               + ". Osittain: 3 · Hinnoittelu.")
 
 
 def current_sizes() -> list[int]:
@@ -215,8 +197,7 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
             + ([{"name": "\u2003└ Kokoonpanotyö", "per": None,
                  "units": [p.work for p in prices]}] if any(p.work for p in prices) else []))
     line_totals = quote_totals(lines, len(sizes))
-    result = Totals(sizes, line_totals, [_made_of(by_part, i, t) for i, t in
-                                         enumerate(line_totals)], missing, margin_pct)
+    result = Totals(sizes, line_totals, missing, margin_pct)
     if is_headless():
         return result
 
@@ -254,27 +235,6 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
     if clean_parts:
         _render_clean_dxfs(clean_parts, key)
     return result
-
-
-def _made_of(by_part: dict[str, list], i: int, total: float | None) -> dict[str, float]:
-    """What the quote's total at the ``i``-th batch size is made of: the
-    material, each work phase, the batch setup and the assemblies' own work
-    and bought parts (the rest)."""
-    out = {"Materiaali": 0.0, **{phase: 0.0 for phase in BREAKDOWN}, "Asetus (erä)": 0.0}
-    priced = 0.0
-    for prices in by_part.values():
-        bp = prices[i]
-        if bp.material is not None:
-            out["Materiaali"] += bp.material * bp.qty
-        if bp.work is not None:
-            for phase, eur in bp.work.breakdown().items():
-                out[phase] += eur * bp.qty
-            out["Asetus (erä)"] += bp.work.batch_fixed
-        if bp.unit is not None:
-            priced += bp.unit * bp.qty
-    if total is not None and total - priced > 0.005:
-        out["Kokoonpanot (työ, ostetut osat)"] = total - priced
-    return out
 
 
 def _render_customer_view(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int],
