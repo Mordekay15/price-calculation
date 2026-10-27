@@ -22,7 +22,6 @@ def render_group(
     key: str,
     draw_layout,
     note=None,
-    shares: list[tuple[str, int, float]] | None = None,
 ) -> tuple[float | None, float | None, int]:
     """Render one group's sheet-usage table. Returns ``(total_eur, bill_rate_ppt,
     sheets)`` of the chosen sheet size.
@@ -30,8 +29,6 @@ def render_group(
     ``draw_layout(option)`` draws the chosen sheet size's layout; ``note()``,
     if given, draws extra notes first. Returns ``(None, None)`` when no priced
     sheet size can fulfil the order.
-    ``shares`` are the group's parts as ``(name, qty, area mm² per piece)``,
-    in the layout's order: how the chosen size's price splits between them.
     """
     if note is not None:
         note()
@@ -64,8 +61,6 @@ def render_group(
         if not is_headless():
             draw_layout(active)
         _render_summary(active, result.n_pieces)
-        if shares:
-            _render_shares(active.total_eur, shares)
 
     _render_breakdown(material, thickness, thickness_mm, margin_pct, result, active)
     return active.total_eur, active.bill_rate_ppt, active.sheets_needed
@@ -113,27 +108,6 @@ def _render_summary(active: SheetOption, n_pieces: int) -> None:
     m[2].metric("Levyjä", str(active.sheets_needed))
     m[3].metric("Ohjelmia", str(active.programs), help=_PROGRAMS_HELP)
     m[4].metric("Käyttöaste", f"{active.utilization * 100:.1f} %")
-
-
-def _render_shares(total_eur: float, shares: list[tuple[str, int, float]]) -> None:
-    """The sheets' price, scrap included, split between the parts by the area
-    their pieces take (one material and thickness: the same as by weight),
-    so each part's share adds up to the total."""
-    used = sum(qty * area for _, qty, area in shares)
-    if used <= 0:
-        return
-    rows = []
-    for i, (name, qty, area) in enumerate(shares):
-        share = qty * area / used
-        rows.append({"Osa": f"#{i + 1} {name}", "Kpl": qty,
-                     "Pinta-ala (m²/kpl)": round(area / 1e6, 4),
-                     "Osuus levyistä": f"{share * 100:.1f} %",
-                     "Materiaali €/kpl": round(total_eur * share / qty, 2) if qty else None,
-                     "Yhteensä €": round(total_eur * share, 2)})
-    st.markdown("**Levyjen hinta osille**", help=(
-        "Levyjen hinta hukkineen jaetaan osille sen mukaan, kuinka paljon pinta-alaa "
-        "(reiät pois) kunkin osan kappaleet vievät. Osien summa on levyjen hinta."))
-    st.dataframe(rows, width="stretch", hide_index=True)
 
 
 _PROGRAMS_HELP = (

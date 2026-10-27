@@ -7,7 +7,6 @@ from core.batches import (
     BatchPart,
     GroupSheets,
     batch_prices,
-    order_prices,
     parse_batch_sizes,
 )
 from core.quote import QuoteLine, quote_totals
@@ -67,25 +66,3 @@ def test_totals_add_every_part_at_each_size():
     prices = batch_prices(parts, groups, [5], RATES)
     total = quote_totals([QuoteLine(pid, prices=tuple(p)) for pid, p in prices.items()], 1)[0]
     assert total == pytest.approx(sum(p[0].unit * 5 for p in prices.values()))
-
-
-def test_the_order_prices_each_part_at_its_own_quantity_and_shares_the_sheets():
-    # 3 of a 1 kg part and 2 of a 3 kg part nested on 2 sheets for 90 €: the
-    # sheets go 3 kg to 6 kg, so a's pieces carry 30 € and b's 60 €.
-    work = WorkInputs(method="punch", hits=100)          # 0.80 €/kpl
-    parts = [BatchPart("a", ("S235", "2"), kg=1.0, work=work),
-             BatchPart("b", ("S235", "2"), kg=3.0, work=work)]
-    groups = {("S235", "2"): GroupSheets(total_eur=90.0, sheets=2, pieces_kg=9.0)}
-    prices = order_prices(parts, groups, {"a": 3, "b": 2}, RATES)
-    a, b = prices["a"], prices["b"]
-    assert (a.qty, b.qty) == (3, 2) and a.sheets == b.sheets == 2
-    assert a.material * 3 == pytest.approx(30.0) and b.material * 2 == pytest.approx(60.0)
-    # The setup is over each part's own quantity.
-    assert a.work.qty == 3 and b.work.qty == 2
-    assert a.unit == pytest.approx(a.material + a.work.per_piece)
-
-
-def test_the_order_has_no_material_price_for_a_group_not_nested():
-    parts = [BatchPart("a", ("S235", "3"), kg=1.0, work=WorkInputs())]
-    price = order_prices(parts, {}, {"a": 4}, RATES)["a"]
-    assert price.qty == 4 and price.material is None and price.unit is None

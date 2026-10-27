@@ -86,15 +86,6 @@ shows **Laskenta-aika**, the time since the first part could be priced.
   rate.
 - Work is `work_cost` at `q`, so the batch costs are shared over `q`. The
   sheet minimum is applied over that batch size's sheets.
-- **Hinnoittele: Tilausmäärät** prices instead every part at its own
-  quantity: the card's **Määrä** (from a BOM, or typed). These are the
-  quantities the sheets were nested at, so nothing is estimated. Each group's
-  sheets, scrap included, are shared by the area each part's pieces take
-  (holes removed; for one material and thickness the same as by weight), so
-  the parts' material adds up to the sheets' price. The table shows each
-  part's share of the sheets, material €/kpl and in total, the work, €/kpl
-  and the line total. An assembly counts as many as its parts' quantities
-  make. The PDF and Excel then have one row per part at its quantity.
 - **Lataa tarjous-PDF** makes the customer quote (reportlab). The material
   column can be hidden. **Excel-vienti** writes a sheet `Tarjous` (one row
   per part and batch size) and a sheet `Erittely` (material and each work
@@ -345,7 +336,7 @@ core/                   pure logic, no Streamlit
   pricing.py            price lookup, materials, thickness, densities, weight_kg, copper
   sheet_cost.py         price every sheet size (SheetOption), grouping, per-piece cost
   work.py               work: laser table, cutting / bends / threads / welding / setup, sheet minimum
-  batches.py            prices per batch size, or at the order's quantities, from one nesting
+  batches.py            prices per batch size from one nesting
   quote.py              quote PDF, Excel export, clean DXFs and their ZIP
   assemblies.py         assemblies: parts × kpl/kokoonpano + bought parts + assembly work
   linking.py            part numbers from file names; files → parts by name or text
@@ -405,10 +396,7 @@ For each group of parts that share a material and thickness,
 3. Charge whole sheets: sheets × sheet weight × price per tonne × (1 + margin).
    The cheapest row is chosen; at the same price, the one with fewer programs.
 4. Spread that cost over the parts by their real weight, which is the
-   per-part summary at the bottom. Under the chosen size's metrics, **Levyjen
-   hinta osille** shows that split: each part's share of the sheets (its
-   pieces' area), its material €/kpl and its total; the shares add up to the
-   sheets' price. **Materiaalikulu €/kpl (ka.)** is the average over all pieces.
+   per-part summary at the bottom.
 
 **Käyttöaste** (utilisation) is the real part area divided by the area of the
 sheets paid for. The real part area excludes the gap and, for DXF parts, has

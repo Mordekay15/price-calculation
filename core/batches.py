@@ -11,9 +11,6 @@ The parts are nested once, at the quantities on their cards. Each batch size
   an estimate with the nesting's scrap rate.
 - **Work.** ``core.work.work_cost`` at ``q`` (the batch costs shared over
   ``q``), the cutting raised to the per-sheet minimum over ``sheets(q)``.
-
-``order_prices`` prices instead every part at its own quantity (a BOM's, or
-one typed on its card): exactly the nesting, nothing estimated.
 """
 
 from __future__ import annotations
@@ -119,31 +116,3 @@ def batch_prices(parts: list[BatchPart], groups: dict[tuple, GroupSheets],
                                             sheets))
     return out
 
-
-
-def order_prices(parts: list[BatchPart], groups: dict[tuple, GroupSheets],
-                 qtys: dict[str, int], rates: WorkRates) -> dict[str, BatchPrice]:
-    """Every part's price at its own quantity ``qtys[id]`` (its card's Määrä:
-    from a BOM, or typed), the quantities the groups were nested at. A group's
-    sheets, scrap included, are shared by the weight each part puts on them
-    (for one material and thickness, its area), so the parts' material adds
-    up to the group's price. A part whose group was not nested gets no
-    material price."""
-    out: dict[str, BatchPrice] = {}
-    by_group: dict[tuple, list[BatchPart]] = {}
-    for p in parts:
-        by_group.setdefault(p.group, []).append(p)
-    for key, members in by_group.items():
-        group = groups.get(key)
-        rate = (group.total_eur / group.pieces_kg
-                if group and group.sheets > 0 and group.pieces_kg > 0 else None)
-        sheets = group.sheets if rate is not None else 0
-        worked = [p for p in members if p.work is not None]
-        works = [work_cost(p.work, qtys[p.id], rates) for p in worked]
-        if rate is not None and works:
-            works = apply_sheet_minimum(works, sheets, rates)
-        work_of = dict(zip([p.id for p in worked], works))
-        for p in members:
-            out[p.id] = BatchPrice(qtys[p.id], None if rate is None else p.kg * rate,
-                                   work_of.get(p.id), sheets)
-    return out

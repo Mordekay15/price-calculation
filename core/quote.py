@@ -73,13 +73,10 @@ def _fmt_date(d: date) -> str:
 
 # ── PDF ───────────────────────────────────────────────────────────────────────
 
-def quote_pdf(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int | str],
-              totals: list[float | None], *, show_material: bool = True,
-              qty_label: str = "Eräkoko") -> bytes:
+def quote_pdf(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int],
+              totals: list[float | None], *, show_material: bool = True) -> bytes:
     """The quote as a PDF: the header, one block of rows per part (a row per
-    batch size: quantity, unit price, sum) and the totals per batch size.
-    ``sizes`` labels the totals: a batch size, or a label as it is (the
-    order's quantities: ``qty_label`` "Määrä", one row and total per part)."""
+    batch size: quantity, unit price, sum) and the totals per batch size."""
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet
@@ -121,7 +118,7 @@ def quote_pdf(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int | str],
     story += [facts_table, Spacer(1, 6 * mm),
               Paragraph("<b>Tarjotut nimikkeet</b>", styles["Heading3"])]
 
-    rows = [["Nimike", qty_label, "Yksikköhinta", "Summa (ALV 0 %)"]]
+    rows = [["Nimike", "Eräkoko", "Yksikköhinta", "Summa (ALV 0 %)"]]
     spans = []
     for line in lines:
         first = len(rows)
@@ -150,9 +147,8 @@ def quote_pdf(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int | str],
     ]))
     story += [table, Spacer(1, 6 * mm)]
 
-    total_rows = [["Yhteensä", "Summa (ALV 0 %)"]]
-    total_rows += [[f"{q} kpl / nimike" if isinstance(q, int) else q,
-                    fmt_eur(t) or "osa hinnoista puuttuu"]
+    total_rows = [["Yhteensä eräkoolla", "Summa (ALV 0 %)"]]
+    total_rows += [[f"{q} kpl / nimike", fmt_eur(t) or "osa hinnoista puuttuu"]
                    for q, t in zip(sizes, totals)]
     tt = Table(total_rows, colWidths=[60 * mm, 50 * mm], hAlign="RIGHT")
     tt.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 9),
@@ -176,11 +172,9 @@ def _esc(text: str | None, br: bool = False) -> str:
 
 # ── Excel ─────────────────────────────────────────────────────────────────────
 
-def quote_xlsx(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int] | None = None,
-               *, qty_label: str = "Eräkoko") -> bytes:
+def quote_xlsx(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int]) -> bytes:
     """The quote as an Excel workbook: "Tarjous" (a row per part and batch
-    size, or with ``qty_label`` "Määrä" its ordered quantity) and "Erittely"
-    (the cost breakdown per piece)."""
+    size) and "Erittely" (the cost breakdown per piece)."""
     from openpyxl import Workbook
     from openpyxl.styles import Font
 
@@ -194,7 +188,7 @@ def quote_xlsx(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int] | None 
                  ("Myyjä", info.seller)):
         ws.append([k, v])
     ws.append([])
-    header = ["Nimike", "Materiaali", "Paksuus (mm)", f"{qty_label} (kpl)",
+    header = ["Nimike", "Materiaali", "Paksuus (mm)", "Eräkoko (kpl)",
               "Yksikköhinta (€)", "Summa (€, ALV 0 %)"]
     ws.append(header)
     for cell in ws[ws.max_row]:
@@ -205,7 +199,7 @@ def quote_xlsx(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int] | None 
                        _round(p.unit), _round(p.total)])
 
     ws2 = wb.create_sheet("Erittely")
-    ws2.append(["Nimike", f"{qty_label} (kpl)", "Materiaali €/kpl",
+    ws2.append(["Nimike", "Eräkoko (kpl)", "Materiaali €/kpl",
                 *(f"{phase} €/kpl" for phase in BREAKDOWN), "Asetus ym. €/kpl",
                 "Levyjä (ryhmä)", "Kpl-hinta €"])
     for cell in ws2[1]:
@@ -228,7 +222,7 @@ def quote_xlsx(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int] | None 
     if assemblies:
         ws3 = wb.create_sheet("Kokoonpanot")
         sheets.append(ws3)
-        ws3.append(["Kokoonpano", f"{qty_label} (kpl)", "Osat €/kok.", "Ostetut osat €/kok.",
+        ws3.append(["Kokoonpano", "Eräkoko (kpl)", "Osat €/kok.", "Ostetut osat €/kok.",
                     "Kokoonpanotyö €/kok.", "Yhteensä €/kok.", "Sisältö"])
         for cell in ws3[1]:
             cell.font = Font(bold=True)
