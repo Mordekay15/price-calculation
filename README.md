@@ -55,8 +55,7 @@ the quantity). Work has no margin; its rates are selling prices.
   (one fastener's price + putting one in). By default 0.80 + 0.20 € in RST/HST
   and 0.05 + 0.20 € otherwise. The DXF gives the count from notes like
   "M5-PURISTEMUTTERIT X4KPL".
-- **Welding**: metres ÷ m/h × €/h. **Subcontracting** €/kpl. **Programming**
-  € per batch.
+- **Welding**: metres ÷ m/h × €/h. **Subcontracting** €/kpl.
 - **Setup** per batch by the number of work phases: 40 / 60 / 80 €.
 
 An input starts with its automatic value; typing replaces it, clearing the

@@ -177,17 +177,13 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
         subcontract = c[0].number_input("Alihankinta (€/kpl)", min_value=0.0, value=0.0,
                                         step=0.5, key=f"work_sub_{key}",
                                         help="Esim. anodisointi tai sinkitys.")
-        programming = c[1].number_input("Ohjelmointi (€/erä)", min_value=0.0, value=0.0,
-                                        step=10.0, key=f"work_prog_{key}",
-                                        help="Esim. uusi tuote.")
         inputs = WorkInputs(method=method, cut_length_m=cut_length_m, laser=laser, hits=hits,
                             bends=n_bends, eur_per_bend=eur_per_bend, threads=n_threads,
                             eur_per_thread=eur_per_thread, fasteners=n_fasteners,
                             eur_per_fastener=eur_per_fastener,
                             eur_per_insert=eur_per_insert, weld_m=weld_m,
-                            subcontract_eur=subcontract,
-                            programming_eur=programming)
-        setup = auto_input(c[2], "Asetus (€/erä)", f"work_setup_{key}",
+                            subcontract_eur=subcontract)
+        setup = auto_input(c[1], "Asetus (€/erä)", f"work_setup_{key}",
                       default_setup(inputs, rates), step=5.0, fmt="%.0f",
                       help="Oletus työvaiheiden määrän mukaan (sivupalkin Työn hinnat).")
         inputs = WorkInputs(**{**inputs.__dict__, "setup_eur": setup})

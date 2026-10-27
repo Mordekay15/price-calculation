@@ -370,7 +370,7 @@ def _render_breakdown(costs, names: dict[str, str], by_part: dict[str, list],
         i = sizes.index(q)
         st.markdown(f"**Työt ja materiaali, eräkoko {q}**", help=(
             "€/kpl kullekin osalle. Kappaleet erässä = eräkoko × kpl / kokoonpano. "
-            "Leikkaus sisältää levyn minimiveloituksen. Asetus, ohjelmointi ja "
+            "Leikkaus sisältää levyn minimiveloituksen. Asetus ja "
             "laskurien asetus ovat €/erä, ja ne jaetaan erän kappaleille."))
         rows = []
         for pc in costs:
