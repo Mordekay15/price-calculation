@@ -190,9 +190,10 @@ def test_sparrow_options_prices_with_the_given_solver():
     result = sparrow_options(lookup, "S235", "2", 2.0, [square(quantity=10)], run_fn=fake_solver,
                              on_progress=lambda kind, **kw: events.append(kind))
     option = result.options[0]
-    assert option.sheets_needed == 1
-    assert math.isclose(option.utilization, 0.05)        # 10 × 0.01 m² of 2 m²
-    assert math.isclose(option.total_eur, 28.8)          # 32 kg × 900 €/tn
+    assert option.sheets_needed == 1 and option.last_share < 1
+    # 10 × 0.01 m² of the 2 m² sheet, of which the share charged
+    assert math.isclose(option.utilization, 0.05 / option.last_share)
+    assert math.isclose(option.total_eur, 28.8 * option.last_share)    # 32 kg × 900 €/tn
     assert events[0] == "size" and "sheet" in events
 
 

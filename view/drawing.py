@@ -46,34 +46,63 @@ def _render_sheet_grid(cards: list[tuple[str, str]]) -> None:
                 st.markdown(svg, unsafe_allow_html=True)
 
 
-def _render_layouts(packing, used_area, sheet_svg, start=(1, 1), scale=None) -> tuple[int, int]:
+def _render_layouts(packing, used_area, sheet_svg, start=(1, 1), scale=None,
+                    option: SheetOption | None = None) -> tuple[int, int]:
     """One card per distinct sheet layout (a program); identical sheets are
     drawn once with a "×N" count and a sheet-number range (e.g. "Ohjelma 1 ·
     Levy 1–4 · ×4").
 
     ``used_area(sheet)`` is the real part area on one sheet and
-    ``sheet_svg(sheet, scale)`` draws it. Numbering starts at ``start``
+    ``sheet_svg(sheet, scale)`` draws it. The ``option``'s last sheet, if
+    charged only in part, shows the cut and the remnant. Numbering starts at ``start``
     (program, sheet); returns where the next size's numbering goes on.
     """
     sw, sh = packing.draw_w, packing.draw_h
     scale = scale or _TARGET_PX / max(sw, sh)
     cards = []
     n, first = start[0] - 1, start[1]
-    for n, sheet in enumerate(packing.sheets, start=start[0]):
+    for i, (n, sheet) in enumerate(enumerate(packing.sheets, start=start[0])):
         last = first + sheet.count - 1
         sheets = f"Levy {first}" if sheet.count == 1 else f"Levy {first}–{last} · ×{sheet.count}"
         label = f"Ohjelma {n} · {sheets}"
         first = last + 1
+        svg = sheet_svg(sheet, scale)
+        share = 1.0
+        if option is not None and option.partial_index == i and option.last_share < 1:
+            share = option.last_share
+            svg = svg[:-len("</svg>")] + _remnant(packing, share) + "</svg>"
+            label += f" · veloitetaan {share * 100:.0f} %"
         cards.append((
-            f"**{label}** · käyttöaste {utilization(used_area(sheet), sw, sh) * 100:.1f} %",
-            sheet_svg(sheet, scale),
+            f"**{label}** · käyttöaste "
+            f"{utilization(used_area(sheet), sw * share, sh) * 100:.1f} %",
+            svg,
         ))
     _render_sheet_grid(cards)
     return n + 1, first
 
 
+def _remnant(packing, share: float) -> str:
+    """The part of a sheet not charged: hatched, behind a dashed cut line at
+    ``share`` of its length, labelled as the remnant."""
+    w, h = packing.draw_w, packing.draw_h
+    cut = w * share
+    sw = max(w, h) / 300.0
+    return (
+        f'<defs><pattern id="remnant" width="{sw * 12:.1f}" height="{sw * 12:.1f}" '
+        f'patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'
+        f'<line x1="0" y1="0" x2="0" y2="{sw * 12:.1f}" stroke="#64748b" '
+        f'stroke-width="{sw * 2:.1f}" stroke-opacity="0.35"/></pattern></defs>'
+        f'<rect x="{cut:.1f}" y="0" width="{w - cut:.1f}" height="{h}" fill="url(#remnant)"/>'
+        f'<line x1="{cut:.1f}" y1="0" x2="{cut:.1f}" y2="{h}" stroke="#dc2626" '
+        f'stroke-width="{sw * 2:.1f}" stroke-dasharray="{sw * 8:.1f} {sw * 5:.1f}"/>'
+        f'<text x="{(cut + w) / 2:.1f}" y="{h / 2:.1f}" text-anchor="middle" '
+        f'dominant-baseline="central" font-family="sans-serif" font-size="{max(w, h) / 30:.0f}" '
+        f'fill="#475569">jäännöslevy {100 - share * 100:.0f} %</text>'
+    )
+
+
 def _render_each_size(option: SheetOption, render) -> None:
-    """The chosen option's layouts: ``render(packing, scale, start)`` for its
+    """The chosen option's layouts: ``render(sized, scale, start)`` for its
     size, or for each size of a plan cut from several, under the size's name,
     drawn to one scale and numbered on."""
     parts = option.mix or [option]
@@ -83,7 +112,7 @@ def _render_each_size(option: SheetOption, render) -> None:
         if option.mix:
             st.markdown(f"**{fmt_m(o.sw)} × {fmt_m(o.sh)} m** · "
                         f"{o.sheets_needed} levyä")
-        start = render(o.packing, scale, start)
+        start = render(o, scale, start)
 
 
 def _svg_open(vb_w: float, vb_h: float, scale: float) -> str:
@@ -169,10 +198,10 @@ def draw_rect_layout(option: SheetOption, products: list[dict], rankavali_mm: in
         return sum(products[p.product_idx]["width"] * products[p.product_idx]["height"]
                    for p in sheet.placements)
 
-    _render_each_size(option, lambda packing, scale, start: _render_layouts(
-        packing, used_area,
-        lambda sheet, sc: _rect_sheet_svg(sheet, packing, sc, products, rankavali_mm),
-        start, scale))
+    _render_each_size(option, lambda o, scale, start: _render_layouts(
+        o.packing, used_area,
+        lambda sheet, sc: _rect_sheet_svg(sheet, o.packing, sc, products, rankavali_mm),
+        start, scale, o))
 
 
 def _rect_sheet_svg(sheet, packing, scale, products, rankavali_mm) -> str:
@@ -221,9 +250,9 @@ def draw_sparrow_layout(option: SheetOption, parts: list) -> None:
     if any(not parts[i].turns for i in used if i < len(parts)):
         st.caption("Valssaussuunta → levyn pitkä sivu (kuvissa vaakasuunta)")
 
-    _render_each_size(option, lambda packing, scale, start: _render_layouts(
-        packing, lambda sheet: sheet.used_area,
-        lambda sheet, sc: _shape_sheet_svg(sheet, packing, sc), start, scale))
+    _render_each_size(option, lambda o, scale, start: _render_layouts(
+        o.packing, lambda sheet: sheet.used_area,
+        lambda sheet, sc: _shape_sheet_svg(sheet, o.packing, sc), start, scale, o))
 
 
 def _shape_sheet_svg(sheet, packing, scale) -> str:

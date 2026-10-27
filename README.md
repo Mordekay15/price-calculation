@@ -392,13 +392,21 @@ For each group of parts that share a material and thickness,
    programs is left out. A size the
    parts don't fit says which part is too big, e.g. *ITM-072558 (3059 mm) ei
    mahdu*.
-3. Charge whole sheets: sheets × sheet weight × price per tonne × (1 + margin).
+3. Charge the sheets: sheets × sheet weight × price per tonne × (1 + margin).
+   The last sheet is charged only in part: the packers fill it from one end,
+   and the share of its length the parts reach is rounded up to the next
+   25 % (**Viimeinen levy** in the table). The rest is a remnant that goes
+   back to stock, hatched behind a dashed cut line on the layout. **Viimeisestä
+   levystä veloitetaan (%)** under the layout overrides it for the group (never
+   below what the parts need); clearing it goes back to the quarter. Only one
+   sheet per plan is partial: the last layout cut once whose parts reach least
+   far. A plan cut from several sizes is charged in whole sheets.
    The cheapest row is chosen; at the same price, the one with fewer programs.
 4. Spread that cost over the parts by their real weight, which is the
    per-part summary at the bottom.
 
 **Käyttöaste** (utilisation) is the real part area divided by the area of the
-sheets paid for. The real part area excludes the gap and, for DXF parts, has
+sheets paid for (the last one's charged share only). The real part area excludes the gap and, for DXF parts, has
 the holes removed.
 
 ## Fewest sheets: the cutting-stock plan

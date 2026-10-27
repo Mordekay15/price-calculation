@@ -8,8 +8,16 @@ last row may cut the parts from several sizes (``SheetOption.mix``)."""
 import pandas as pd
 
 from core.pricing import COPPER_MATERIAL, density_for_material
-from core.sheet_cost import GroupCost, SheetOption, cheapest_index, fmt_m
+from core.sheet_cost import (
+    GroupCost,
+    SheetOption,
+    cheapest_index,
+    fmt_m,
+    step_share,
+    with_last_share,
+)
 from view.ui import is_headless, st
+from view.work import AUTO_SHOWN, auto_input
 
 
 def render_group(
@@ -37,7 +45,14 @@ def render_group(
         _render_unpriced(material)
         return None, None, 0
 
-    options = result.options
+    # The last sheet's share, if one was typed (last run's input): every
+    # size charged so, never less than its parts need.
+    share_key = f"{key}::last_pct"
+    typed = st.session_state.get(share_key)
+    if typed is None or typed == st.session_state.get(AUTO_SHOWN, {}).get(share_key):
+        options = result.options
+    else:
+        options = [with_last_share(o, typed / 100) for o in result.options]
     cheapest_idx = cheapest_index(options)
 
     # The layout and metrics go above the table but depend on the row picked
@@ -61,6 +76,7 @@ def render_group(
         if not is_headless():
             draw_layout(active)
         _render_summary(active, result.n_pieces)
+        _render_last_share(active, share_key)
 
     _render_breakdown(material, thickness, thickness_mm, margin_pct, result, active)
     return active.total_eur, active.bill_rate_ppt, active.sheets_needed
@@ -110,6 +126,28 @@ def _render_summary(active: SheetOption, n_pieces: int) -> None:
     m[4].metric("Käyttöaste", f"{active.utilization * 100:.1f} %")
 
 
+def _render_last_share(active: SheetOption, key: str) -> None:
+    """What the last sheet is charged: the next quarter up from what its
+    parts need, or a share typed over it."""
+    if active.mix or active.partial_index is None:
+        return
+    col, note = st.columns([1, 2])
+    auto_input(col, "Viimeisestä levystä veloitetaan (%)", key,
+               step_share(active.min_share) * 100, step=5.0, fmt="%.0f",
+               help="Osat sijoitellaan levyn toiseen päähän, ja loppu jää jäännöslevyksi "
+                    "varastoon. Automaattinen arvo on osien tarvitsema osuus pyöristettynä "
+                    "ylös seuraavaan 25 %:iin.")
+    need = active.min_share * 100
+    typed = st.session_state.get(key)
+    if typed is not None and typed < need - 1e-6:
+        note.warning(f"Osat tarvitsevat vähintään {need:.0f} % levystä: "
+                     f"veloitetaan {active.last_share * 100:.0f} %.")
+    else:
+        note.caption(f"Osat vievät {need:.0f} % viimeisen levyn pituudesta. "
+                     "Kuvassa veloitettu osa on rajattu katkoviivalla, jäännöslevy "
+                     "on viivoitettu.")
+
+
 _PROGRAMS_HELP = (
     "Erilaisten levyjen määrä eli leikkausohjelmat, jotka suunnittelija tekee. "
     "Tuotanto ajaa saman ohjelman niin monta kertaa kuin levyjä tarvitaan."
@@ -140,6 +178,7 @@ def _table_rows(options: list[SheetOption], n_pieces: int, cheapest_idx: int | N
             # None, not "": a number column with a text cell can't be sent
             # to the browser as Arrow and Streamlit logs a traceback.
             "Tarvittavat levyt": None,
+            "Viimeinen levy":    "",
             "Ohjelmia":          None,
             "Käyttöaste":        "",
             "Levyn kg":          None,
@@ -150,6 +189,7 @@ def _table_rows(options: list[SheetOption], n_pieces: int, cheapest_idx: int | N
         if o.ok:
             row.update({
                 "Tarvittavat levyt": o.sheets_needed,
+                "Viimeinen levy":    f"{o.last_share * 100:.0f} %",
                 "Ohjelmia":          o.programs,
                 "Käyttöaste":        f"{o.utilization * 100:.1f} %",
                 "Levyn kg":          round(o.sheet_kg, 2),
@@ -222,7 +262,9 @@ def _render_breakdown(
          f"{o.programs} ohjelmalla",
          f"{o.sheets_needed}"),
         ("6. Levyjen kokonaispaino",
-         f"{o.sheet_weight_kg:,.2f} × {o.sheets_needed}",
+         f"{o.sheet_weight_kg:,.2f} × {o.sheets_needed}" if o.last_share == 1 else
+         f"{o.sheet_weight_kg:,.2f} × ({o.sheets_needed - 1} + {o.last_share:.2f} "
+         f"viimeisestä)",
          f"{o.sheet_kg:,.2f} kg"),
         ("7. Kappaleiden kokonaispaino",
          "Σ (pinta-ala × p × tiheys × määrä)",

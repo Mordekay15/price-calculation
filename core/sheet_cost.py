@@ -6,6 +6,7 @@ pass ``mix``: a plan cut from several sheet sizes (see ``compute_options``)."""
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, replace
 
 from core.pricing import get_sizes_for_material, parse_thickness_mm, weight_kg
@@ -74,6 +75,12 @@ class SheetOption:
     # this option holds their totals (``sw``, ``sh`` and ``packing`` are the
     # first size's).
     mix: list[SheetOption] = field(default_factory=list)
+    # The last sheet, charged only in part (see ``last_sheet``): the layout
+    # in ``packing.sheets`` it is, the share of it the parts need and the
+    # share charged (1.0: the whole sheet).
+    partial_index: int | None = None
+    min_share: float = 1.0
+    last_share: float = 1.0
 
     @property
     def ok(self) -> bool:
@@ -83,7 +90,14 @@ class SheetOption:
     def sheet_kg(self) -> float:
         if self.mix:
             return sum(o.sheet_kg for o in self.mix)
-        return self.sheet_weight_kg * self.sheets_needed
+        return self.sheet_weight_kg * self.sheets_charged
+
+    @property
+    def sheets_charged(self) -> float:
+        """Sheets paid for: the last one only in its ``last_share``."""
+        if self.mix:
+            return sum(o.sheets_charged for o in self.mix)
+        return self.sheets_needed - 1 + self.last_share if self.sheets_needed else 0.0
 
     @property
     def programs(self) -> int:
@@ -159,6 +173,53 @@ def too_big(parts, sheet_w: float, sheet_h: float, tol: float = 0.0) -> str:
     return ", ".join(out) + " ei mahdu" if out else ""
 
 
+SHARE_STEP = 0.25   # the last sheet is charged in quarters
+
+
+def sheet_extent(sheet, packing: Packing) -> float:
+    """How far one sheet's parts reach along its long side, in mm from its
+    edge: Sparrow's shapes (``outer``) or the rectangle packer's boxes."""
+    ends = [max(x for x, _ in pl.outer) if hasattr(pl, "outer") else pl.x + pl.w
+            for pl in sheet.placements]
+    return packing.x0 + max(ends) if ends else 0.0
+
+
+def last_sheet(packing: Packing) -> tuple[int, float] | None:
+    """The sheet that can be charged only in part, and the share of it its
+    parts need: of the layouts cut once, the one whose parts reach least far
+    along the sheet (the packers fill a sheet from one end, so the rest is a
+    remnant that goes back to stock). None when every layout is cut more
+    than once."""
+    once = [(sheet_extent(s, packing) / packing.draw_w, i)
+            for i, s in enumerate(packing.sheets) if s.count == 1 and s.placements]
+    if not once or packing.draw_w <= 0:
+        return None
+    share, i = min(once)
+    return i, min(share, 1.0)
+
+
+def step_share(share: float) -> float:
+    """``share`` rounded up to the next ``SHARE_STEP``."""
+    return min(1.0, math.ceil(share / SHARE_STEP - 1e-9) * SHARE_STEP) or SHARE_STEP
+
+
+def with_last_share(option: SheetOption, share: float | None) -> SheetOption:
+    """``option`` with its last sheet charged at ``share`` (None: the next
+    step up from what its parts need), never less than they need. The total,
+    the rate against the pieces and the utilisation follow."""
+    if not option.ok or option.mix or option.partial_index is None:
+        return option
+    share = min(1.0, max(option.min_share, step_share(option.min_share)
+                         if share is None else share))
+    new = replace(option, last_share=share)
+    if option.sheet_kg > 0:
+        factor = new.sheet_kg / option.sheet_kg
+        new.total_eur = option.total_eur * factor
+        new.bill_rate_ppt = option.bill_rate_ppt * factor
+        new.utilization = option.utilization / factor
+    return new
+
+
 def fmt_m(mm: int) -> str:
     """Format a mm value as metres: 1000 -> '1.0', 1250 -> '1.25', 1500 -> '1.5'."""
     s = f"{mm / 1000:.2f}".rstrip("0")
@@ -200,13 +261,18 @@ def compute_options(
 
     pieces_kg = weight_kg(part_area_mm2, thickness_mm, material)
 
-    def priced(sw, sh, price_per_tonne, packing, area=part_area_mm2) -> SheetOption:
+    def priced(sw, sh, price_per_tonne, packing, area=part_area_mm2,
+               partial=True) -> SheetOption:
         option = SheetOption(sw, sh, price_per_tonne, 0.0, packing,
                              failed=packing.failed, reason=packing.reason)
         if option.ok:
             option.sheets_needed = packing.sheets_needed
             option.utilization = utilization(area, sw, sh, packing.sheets_needed)
-        return _price(option, price_per_tonne, margin_pct, thickness_mm, material, pieces_kg)
+            last = last_sheet(packing) if partial else None
+            if last is not None:
+                option.partial_index, option.min_share = last
+        option = _price(option, price_per_tonne, margin_pct, thickness_mm, material, pieces_kg)
+        return with_last_share(option, None)
 
     options = []
     for index, (sw, sh, price_per_tonne) in enumerate(candidates):
@@ -219,7 +285,9 @@ def compute_options(
         plan = mix([sheet_eur(sw, sh, ppt, thickness_mm, material, margin_pct)
                     for sw, sh, ppt in candidates])
         if plan:
-            parts = [priced(*candidates[i], packing, area) for i, packing, area in plan]
+            # Whole sheets only: a plan of several sizes would leave a remnant of each.
+            parts = [priced(*candidates[i], packing, area, partial=False)
+                     for i, packing, area in plan]
             options.append(_mixed(parts, part_area_mm2, pieces_kg))
     return GroupCost(options, n_pieces, pieces_kg, part_area_mm2)
 
@@ -305,7 +373,7 @@ def _mixed(parts: list[SheetOption], part_area_mm2: float, pieces_kg: float) -> 
     )
     option.sheets_needed = sum(o.sheets_needed for o in parts)
     option.total_eur = total
-    area = sum(o.sw * o.sh * o.sheets_needed for o in parts)
+    area = sum(o.sw * o.sh * o.sheets_charged for o in parts)
     option.utilization = part_area_mm2 / area if area else 0.0
     option.bill_rate_ppt = total * 1000 / pieces_kg if pieces_kg else option.adjusted_ppt
     return option

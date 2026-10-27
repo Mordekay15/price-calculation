@@ -13,6 +13,7 @@ from core.sheet_cost import (
     too_big,
     usable_area,
     utilization,
+    with_last_share,
 )
 
 LOOKUP = {
@@ -49,12 +50,17 @@ def test_rect_options_prices_every_sheet_size():
                           edges=EdgeGaps(bottom=40), rankavali_mm=5)
     small = result.options[0]
     assert (small.sw, small.sh) == (1000, 2000)
-    # 3 sheets of 1000 × 2000 × 2 mm steel = 96 kg at 900 €/tn
+    # 3 sheets of 1000 × 2000 × 2 mm steel, 32 kg each at 900 €/tn; the
+    # parts reach 50.5 % along the last one, so it is charged 75 %.
     assert small.sheets_needed == 3
-    assert math.isclose(small.sheet_kg, 96.0)
-    assert math.isclose(small.total_eur, 86.4)
+    assert (small.min_share, small.last_share) == (0.505, 0.75)
+    assert math.isclose(small.sheet_kg, 88.0)
+    assert math.isclose(small.total_eur, 79.2)
+    whole = with_last_share(small, 1.0)
+    assert math.isclose(whole.sheet_kg, 96.0) and math.isclose(whole.total_eur, 86.4)
     # utilisation = real piece area (no gap) / sheets bought
-    assert math.isclose(small.utilization, 0.655)
+    assert math.isclose(whole.utilization, 0.655)
+    assert math.isclose(small.utilization, 0.655 * 3 / 2.75)
     assert result.n_pieces == 20
     assert math.isclose(result.pieces_kg, (400 * 300 * 17 + 900 * 700 * 3) * 2 * 8e-6)
     # of the single sizes, the small one is cheapest; one small sheet and one
@@ -69,7 +75,19 @@ def test_margin_raises_the_price_per_tonne():
     products = [{"id": "a", "width": 400, "height": 300, "qty": 1, "_global_idx": 0}]
     option = rect_options(LOOKUP, "S235", "2", 2.0, products, margin_pct=10).options[0]
     assert math.isclose(option.adjusted_ppt, 990.0)
-    assert math.isclose(option.total_eur, 990.0 * 32 / 1000)
+    assert math.isclose(option.total_eur, 990.0 * 32 / 1000 * 0.25)     # a quarter sheet
+
+
+def test_the_last_sheet_is_charged_in_quarters_or_as_typed():
+    # One 400 × 300 part lies 300 mm along a 2000 mm sheet: 15 %, a quarter charged.
+    products = [{"id": "a", "width": 400, "height": 300, "qty": 1, "_global_idx": 0}]
+    option = rect_options(LOOKUP, "S235", "2", 2.0, products).options[0]
+    assert (option.partial_index, option.min_share, option.last_share) == (0, 0.15, 0.25)
+    assert math.isclose(option.total_eur, 28.8 / 4)
+    # Typed: 60 % charges 60 %; less than the parts need charges what they need.
+    assert math.isclose(with_last_share(option, 0.6).total_eur, 28.8 * 0.6)
+    assert with_last_share(option, 0.1).last_share == 0.15
+    assert math.isclose(with_last_share(option, 1.0).utilization, 0.06)
 
 
 def test_a_sheet_the_parts_do_not_fit_is_never_cheapest():
