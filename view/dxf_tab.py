@@ -435,8 +435,8 @@ def _render_part_config(
 ) -> dict | None:
     """Draw one part's card, preview left and inputs right; return its product
     dict, or None if not priceable. Its ``angles`` are None (set later from the
-    run row) unless ``per_part_angles`` (then its own, chosen on the run row,
-    () when none is). ``fill`` carries the "same material?"
+    run row) unless ``per_part_angles`` (then its own, chosen on the run
+    row). ``fill`` carries the "same material?"
     question from card to card (see ``_offer_same_material``). ``doc_ids``
     are the supporting files linked to it (see ``view.attachments``). A card in
     an assembly (``per_assembly`` kpl in one) takes its quantity from the batch
