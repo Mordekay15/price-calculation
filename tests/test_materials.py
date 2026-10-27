@@ -86,3 +86,11 @@ def test_hot_dip_galvanised_with_its_coating():
         p = propose({"p": ("x.dxf", hints)}, [], materials, lambda m: ["1", "1.5"])[0]
         assert "Z275" in p.material and p.thickness == "1.5" and p.confidence == HIGH
         assert not p.conflict
+
+
+def test_a_title_block_read_without_spaces_still_gives_the_material():
+    # DRW-021780_A.pdf: pdfplumber runs the title block's words together.
+    hints = extract_hints("Material: Dimensions: Weight(kg):\nS355MCEN10149-2 PL3x520x400 NA", "PDF")
+    assert [(h.family, h.grade, h.thickness_mm) for h in hints] == [("S", "S355", 3.0)]
+    p = _one(hints)
+    assert (p.material, p.thickness, p.conflict) == ("S355MC", "3", "")

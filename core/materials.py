@@ -43,7 +43,9 @@ _GRADES: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r"\b(?:alumiini\w*|alumin(?:i)?um|alu)\b", re.I), "ALUMIINI", ""),
     (re.compile(r"\b(?:kupari|copper|cu-?etp)\b", re.I), "KUPARI", ""),
     (re.compile(r"\b(?:messinki|brass)\b", re.I), "MESSINKI", ""),
-    (re.compile(r"\bs\s?(235|275|355|420|460|500|650|700)\s?(mc|jr|j0|j2|j2\+n|ml|n)?\b", re.I),
+    # The grade may run into the standard, "S355MCEN10149-2", when a PDF's
+    # text comes out without spaces.
+    (re.compile(r"\bs\s?(235|275|355|420|460|500|650|700)\s?(mc|jr|j0|j2|j2\+n|ml|n)?(?!\d)", re.I),
      "S", r"S\1"),
     # Hot-dip galvanised: DX51D+Z275, HDG, kuumasinkitty, KU-SI. The grade is
     # the zinc coating (Z275) when one is given.
@@ -106,9 +108,10 @@ def extract_hints(text: str, source: str) -> list[Hint]:
 
 
 def _thickness(line: str) -> float | None:
+    """The first sheet-thickness-sized value after a keyword (or before
+    "mm"): ``S355MC PL3x520x400`` is 3, not the 355 of "S355"."""
     for pattern in _THICKNESS:
-        m = pattern.search(line)
-        if m:
+        for m in pattern.finditer(line):
             value = float(m.group(1).replace(",", "."))
             if 0.3 <= value <= 60:
                 return value
