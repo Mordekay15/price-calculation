@@ -76,29 +76,25 @@ _METHODS = {LASER: "Laser", PUNCH: "Levari"}
 _AUTO_HELP = ("Kentän arvo on laskettu automaattisesti. Kirjoita oma arvo "
               "korvataksesi sen; tyhjennä kenttä palataksesi automaattiseen.")
 
-# The value an empty auto input uses is its placeholder: shown in the text
-# colour, not Streamlit's grey, so it reads as the number in use. (The copper
-# price's placeholder is a range, not a value: it stays grey.)
-AUTO_VALUE_CSS = """
-<style>
-.stElementContainer:not(.st-key-copper_price_kg) [data-testid="stNumberInput"] input::placeholder {
-    color: inherit !important;
-    -webkit-text-fill-color: currentColor !important;
-    opacity: 1 !important;
-}
-</style>
-"""
+
+AUTO_SHOWN = "auto_inputs_shown"   # widget key -> the automatic value it last held
 
 
 def auto_input(col, label: str, key: str, auto: float | None, *, step: float,
           fmt: str = "%.2f", help: str | None = None) -> float | None:
-    """A number input that is empty by default and then uses ``auto``; the
-    placeholder shows that value (in the text colour, see ``AUTO_VALUE_CSS``).
-    Clearing it goes back to ``auto``."""
-    shown = "ei tiedossa" if auto is None else f"{auto:.{fmt[2]}f}"
+    """A number input that holds ``auto`` until a number is typed over it;
+    clearing it brings ``auto`` back. While it still holds the last ``auto``
+    it was given (see ``AUTO_SHOWN``), it follows ``auto`` when that changes;
+    a typed number stays."""
+    ss = st.session_state
+    shown = ss.setdefault(AUTO_SHOWN, {})
+    auto = None if auto is None else float(auto)
+    if ss.get(key) is None or ss.get(key) == shown.get(key):
+        ss[key] = auto
+    shown[key] = auto
     help = " ".join(filter(None, (help, _AUTO_HELP)))
     value = col.number_input(label, min_value=0.0, value=None, step=step, format=fmt,
-                             placeholder=shown, key=key, help=help)
+                             placeholder="ei tiedossa", key=key, help=help)
     return auto if value is None else value
 
 
@@ -181,17 +177,13 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
         subcontract = c[0].number_input("Alihankinta (€/kpl)", min_value=0.0, value=0.0,
                                         step=0.5, key=f"work_sub_{key}",
                                         help="Esim. anodisointi tai sinkitys.")
-        programming = c[1].number_input("Ohjelmointi (€/erä)", min_value=0.0, value=0.0,
-                                        step=10.0, key=f"work_prog_{key}",
-                                        help="Esim. uusi tuote.")
         inputs = WorkInputs(method=method, cut_length_m=cut_length_m, laser=laser, hits=hits,
                             bends=n_bends, eur_per_bend=eur_per_bend, threads=n_threads,
                             eur_per_thread=eur_per_thread, fasteners=n_fasteners,
                             eur_per_fastener=eur_per_fastener,
                             eur_per_insert=eur_per_insert, weld_m=weld_m,
-                            subcontract_eur=subcontract,
-                            programming_eur=programming)
-        setup = auto_input(c[2], "Asetus (€/erä)", f"work_setup_{key}",
+                            subcontract_eur=subcontract)
+        setup = auto_input(c[1], "Asetus (€/erä)", f"work_setup_{key}",
                       default_setup(inputs, rates), step=5.0, fmt="%.0f",
                       help="Oletus työvaiheiden määrän mukaan (sivupalkin Työn hinnat).")
         inputs = WorkInputs(**{**inputs.__dict__, "setup_eur": setup})

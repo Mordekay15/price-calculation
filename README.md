@@ -55,11 +55,10 @@ the quantity). Work has no margin; its rates are selling prices.
   (one fastener's price + putting one in). By default 0.80 + 0.20 € in RST/HST
   and 0.05 + 0.20 € otherwise. The DXF gives the count from notes like
   "M5-PURISTEMUTTERIT X4KPL".
-- **Welding**: metres ÷ m/h × €/h. **Subcontracting** €/kpl. **Programming**
-  € per batch.
+- **Welding**: metres ÷ m/h × €/h. **Subcontracting** €/kpl.
 - **Setup** per batch by the number of work phases: 40 / 60 / 80 €.
 
-A value in an input that you haven't typed is the automatic one; typing replaces it, clearing the
+An input starts with its automatic value; typing replaces it, clearing the
 input goes back to it. The rates are under **Työn hinnat** in the sidebar.
 
 ## Quote (Tarjous) and batch sizes
@@ -87,6 +86,15 @@ shows **Laskenta-aika**, the time since the first part could be priced.
   rate.
 - Work is `work_cost` at `q`, so the batch costs are shared over `q`. The
   sheet minimum is applied over that batch size's sheets.
+- **Hinnoittele: Tilausmäärät** prices instead every part at its own
+  quantity: the card's **Määrä** (from a BOM, or typed). These are the
+  quantities the sheets were nested at, so nothing is estimated. Each group's
+  sheets, scrap included, are shared by the area each part's pieces take
+  (holes removed; for one material and thickness the same as by weight), so
+  the parts' material adds up to the sheets' price. The table shows each
+  part's share of the sheets, material €/kpl and in total, the work, €/kpl
+  and the line total. An assembly counts as many as its parts' quantities
+  make. The PDF and Excel then have one row per part at its quantity.
 - **Lataa tarjous-PDF** makes the customer quote (reportlab). The material
   column can be hidden. **Excel-vienti** writes a sheet `Tarjous` (one row
   per part and batch size) and a sheet `Erittely` (material and each work
@@ -212,7 +220,7 @@ parts, work and contents.
 - **Apart from the loose parts.** **Osat** lists only the parts in no
   assembly. Each assembly below it shows its own cards, paged the same way.
   Their **Määrä** starts as kpl / kokoonpano × the largest batch size (a
-  loose card's as its BOM quantity or the largest batch size), shown in the field: the quantity they
+  loose card's as its BOM quantity or the largest batch size), filled in: the quantity they
   are nested at. A typed Määrä is nested instead; clearing it goes back.
 - **No cost twice.** A card in an assembly has no fasteners or welding: the
   assembly's bought parts (PEM nuts and studs too, with their pressing as
@@ -337,7 +345,7 @@ core/                   pure logic, no Streamlit
   pricing.py            price lookup, materials, thickness, densities, weight_kg, copper
   sheet_cost.py         price every sheet size (SheetOption), grouping, per-piece cost
   work.py               work: laser table, cutting / bends / threads / welding / setup, sheet minimum
-  batches.py            prices per batch size from one nesting
+  batches.py            prices per batch size, or at the order's quantities, from one nesting
   quote.py              quote PDF, Excel export, clean DXFs and their ZIP
   assemblies.py         assemblies: parts × kpl/kokoonpano + bought parts + assembly work
   linking.py            part numbers from file names; files → parts by name or text
@@ -397,7 +405,10 @@ For each group of parts that share a material and thickness,
 3. Charge whole sheets: sheets × sheet weight × price per tonne × (1 + margin).
    The cheapest row is chosen; at the same price, the one with fewer programs.
 4. Spread that cost over the parts by their real weight, which is the
-   per-part summary at the bottom.
+   per-part summary at the bottom. Under the chosen size's metrics, **Levyjen
+   hinta osille** shows that split: each part's share of the sheets (its
+   pieces' area), its material €/kpl and its total; the shares add up to the
+   sheets' price. **Materiaalikulu €/kpl (ka.)** is the average over all pieces.
 
 **Käyttöaste** (utilisation) is the real part area divided by the area of the
 sheets paid for. The real part area excludes the gap and, for DXF parts, has

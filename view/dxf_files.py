@@ -25,7 +25,8 @@ from core.step import available as step_available
 from core.step import bends_on
 from view import assemblies, attachments, bom, material_agent
 from view.common import thicknesses_for
-from view.ui import st
+from view.ui import ids_in, st
+from view.work import AUTO_SHOWN
 STORE   = "dxf_store"         # {card id: DxfFile}: each card's chosen shape
 REPORTS = "dxf_part_reports"  # {card id: DxfReport}
 CONFIG  = "dxf_part_config"   # {card id: {"material", "thickness", "source"}}
@@ -502,6 +503,9 @@ def evict(fid: str) -> None:
                 f"dxf_src_{fid}",
                 *(f"dxf_angle_{a}_{fid}" for a in NESTING_ANGLES)):
         ss.pop(key, None)
+    shown = ss.get(AUTO_SHOWN, {})
+    for key in [k for k in shown if ids_in([fid]).search(k)]:
+        del shown[key]
     sync()
 
 
@@ -515,7 +519,7 @@ def evict_all() -> None:
                 _DUPES, _SKIPPED,   # these warnings name files that are gone
                 _FOLDERS, _WAITING,
                 _BEND_LINES,
-                *material_agent.AUTO_KEYS, *assemblies.KEYS):
+                AUTO_SHOWN, *material_agent.AUTO_KEYS, *assemblies.KEYS):
         st.session_state.pop(key, None)
 
 

@@ -2,8 +2,8 @@
 subcontracting and setup, priced per piece.
 
 A piece's price is ``c + F / kpl``: ``c`` is what every piece costs (its
-material and its work), ``F`` what the batch costs once (setup and
-programming), shared over the quantity. Work carries no margin: the rates here are
+material and its work), ``F`` what the batch costs once (setup), shared
+over the quantity. Work carries no margin: the rates here are
 selling prices. Cutting is at least ``min_cut_eur_per_sheet`` per sheet used
 (see ``apply_sheet_minimum``)."""
 
@@ -109,8 +109,8 @@ class WorkRates:
 @dataclass(frozen=True)
 class WorkInputs:
     """One part's work, as set on its card. Lengths are per piece;
-    ``programming_eur`` and ``setup_eur`` are per batch. ``setup_eur`` None
-    means the default by phases (``default_setup``)."""
+    ``setup_eur`` is per batch; None means the default by phases
+    (``default_setup``)."""
 
     method: str = LASER
     cut_length_m: float = 0.0
@@ -125,7 +125,6 @@ class WorkInputs:
     eur_per_insert: float = FASTENER_INSERT_EUR   # putting one in
     weld_m: float = 0.0
     subcontract_eur: float = 0.0          # per piece
-    programming_eur: float = 0.0
     setup_eur: float | None = None
 
 
@@ -145,7 +144,7 @@ def default_setup(inp: WorkInputs, rates: WorkRates) -> float:
 @dataclass(frozen=True)
 class WorkCost:
     """One part's work. The first five are € per piece; ``setup``
-    and ``programming`` € per batch. ``cut_minimum`` is what the
+    € per batch. ``cut_minimum`` is what the
     per-sheet minimum added to the cutting, per piece."""
 
     qty: int
@@ -156,7 +155,6 @@ class WorkCost:
     welding: float = 0.0
     subcontract: float = 0.0
     setup: float = 0.0
-    programming: float = 0.0
     cut_minimum: float = 0.0
     cut_seconds: float = 0.0              # laser, one piece
     priced: bool = True                   # False: laser speed unknown
@@ -164,7 +162,7 @@ class WorkCost:
     @property
     def batch_fixed(self) -> float:
         """F: what the batch costs once."""
-        return self.setup + self.programming
+        return self.setup
 
     @property
     def per_piece(self) -> float:
@@ -203,7 +201,6 @@ def work_cost(inp: WorkInputs, qty: int, rates: WorkRates) -> WorkCost:
         welding=rates.weld_eur(inp.weld_m),
         subcontract=inp.subcontract_eur,
         setup=setup,
-        programming=inp.programming_eur,
         cut_seconds=inp.cut_length_m * laser.s_per_m if laser else 0.0,
         priced=not (inp.method == LASER and inp.laser is None and inp.cut_length_m),
     )

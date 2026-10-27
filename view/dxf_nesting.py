@@ -358,6 +358,8 @@ def _show(groups, settings: _Settings, cache: dict, nest, replan,
             margin_pct=settings.margin_pct, key=f"dxf_su_select::{sig}",
             draw_layout=lambda active: draw_sparrow_layout(active, entry["parts"]),
             note=note,
+            shares=[(p["name"], int(p["qty"]), entry["areas"].get(p["id"], 0.0))
+                    for p in prods],
         )
 
     out = render_groups(groups, render_one)

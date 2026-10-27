@@ -88,7 +88,7 @@ def test_setup_follows_the_phases_unless_set():
 
 
 def test_batch_costs_shrink_per_piece_with_the_quantity():
-    inp = WorkInputs(programming_eur=40)
+    inp = WorkInputs(setup_eur=80)
     assert work_cost(inp, 1, RATES).per_piece == 80
     assert work_cost(inp, 100, RATES).per_piece == pytest.approx(0.8)
 

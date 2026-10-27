@@ -67,7 +67,7 @@ _DRAWN_ON = [re.compile(p) for p in (
     r"dxf_card_page.*|asm_(name|fit_min|weld_m|setup_min|eur_per_h|other_eur)_.*",
     r"dxf_(margin_pct|nest_mode|rankavali_mm|edge_.*|sparrow_t|angle_(0|90)|angle_mode"
     r"|su_select::.*)",                                                      # Nestaus
-    r"quote_(breakdown_q|pdf_mat|dxf_name|dxf_marks)_dxf",                   # Hinnoittelu
+    r"quote_(mode|breakdown_q|pdf_mat|dxf_name|dxf_marks)_dxf",                 # Hinnoittelu
 )]
 
 
