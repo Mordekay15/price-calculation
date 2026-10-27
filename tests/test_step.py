@@ -383,3 +383,16 @@ def test_removing_an_assembly_removes_its_parts_and_its_step_file():
     assert not at.exception
     at.run()
     assert at.session_state["parts"] == ["Irto.dxf"] and at.session_state["models"] == []
+
+
+def test_a_part_that_comes_in_as_a_shell_is_still_a_part():
+    # Inventor's ITM-064555.stp reads as a shell, not a solid: it is still the
+    # one plate, not an empty model (which the tab took for an assembly).
+    from OCP.TopAbs import TopAbs_SHELL
+    from OCP.TopExp import TopExp_Explorer
+
+    shell = TopExp_Explorer(plate(519.75, 400.0, 3.0), TopAbs_SHELL).Current()
+    model = read_step(part_step(shell, "ITM-064555"), "ITM-064555_A.stp")
+    assert not model.problems
+    assert [(p.name, p.qty) for p in model.parts] == [("ITM-064555", 1)]
+    assert _size(unfold(model.parts[0].shape)) in {(519.75, 400.0), (400.0, 519.75)}

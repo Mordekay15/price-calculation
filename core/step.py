@@ -239,13 +239,25 @@ def _entry(label) -> str:
 
 
 def _solids(shape) -> list:
-    from OCP.TopAbs import TopAbs_SOLID
+    """The shape's solids; a body that came in as a shell only (Inventor's
+    ``MANIFOLD_SOLID_BREP`` read with a gap in it) is made a solid of."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeSolid
+    from OCP.TopAbs import TopAbs_SHELL, TopAbs_SOLID
     from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
 
     out = []
     exp = TopExp_Explorer(shape, TopAbs_SOLID)
     while exp.More():
         out.append(exp.Current())
+        exp.Next()
+    if out:
+        return out
+    exp = TopExp_Explorer(shape, TopAbs_SHELL)
+    while exp.More():
+        made = BRepBuilderAPI_MakeSolid(TopoDS.Shell(exp.Current()))
+        if made.IsDone():
+            out.append(made.Solid())
         exp.Next()
     return out
 

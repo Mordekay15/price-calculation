@@ -64,7 +64,8 @@ def is_assembly(file_id: str) -> bool:
     """A STEP file with more than one part, or several of one: shown in the
     BOM, not as a drawing linked to one card."""
     m = models().get(file_id)
-    return m is not None and (len(m["model"].parts) != 1 or m["model"].parts[0].qty != 1)
+    parts = m["model"].parts if m is not None else []
+    return len(parts) > 1 or (len(parts) == 1 and parts[0].qty != 1)
 
 
 def card_id(file_id: str, key: str) -> str:
