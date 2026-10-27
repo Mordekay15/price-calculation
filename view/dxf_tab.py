@@ -24,7 +24,6 @@ from view.common import (
     render_material_thickness,
     render_page_picker,
     render_settings,
-    thicknesses_for,
 )
 from view.drawing import preview_svg
 from view.dxf_files import (
@@ -33,7 +32,6 @@ from view.dxf_files import (
     ITEMS,
     REPORTS,
     Item,
-    apply_material,
     auto_fill_materials,
     card_bends,
     card_docs,
@@ -103,9 +101,7 @@ def render(data: dict, screen: str | None) -> None:
 
     materials = materials_with_copper(lookup)
     if screen == BOM:
-        cards, doc_links = auto_fill_materials(parts, materials, lookup)
-        material_agent.render(cards, doc_links, attachments.docs(), materials,
-                              lambda m: thicknesses_for(lookup, m), apply_material)
+        auto_fill_materials(parts, materials, lookup)
     # Per-part angles are chosen on the cards, by the Nestaus switch.
     per_part = len(parts) > 1 and st.session_state.get(ANGLE_MODE) == PER_PART
     with headless(screen != BOM):
@@ -406,6 +402,9 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict,
     note = material_agent.auto_note(fid, material, thickness)
     if note:
         st.caption("Materiaali täytetty automaattisesti", help=note)
+    elif not material and (check := material_agent.check_note(fid)):
+        st.warning(f"Piirustukset eivät ole yksimielisiä materiaalista ({check}). "
+                   "Valitse materiaali itse.")
     batch = max(current_sizes())
     qty = auto_input(
         st.columns(2)[0], "Määrä (kpl)", f"dxf_q_{fid}", max(per_assembly, 1) * batch,

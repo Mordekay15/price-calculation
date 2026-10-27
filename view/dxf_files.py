@@ -415,16 +415,13 @@ def _with_all_texts(parts: list[tuple[str, DxfFile]]) -> list[tuple[str, object]
     return out
 
 
-def auto_fill_materials(parts, materials: list[str], lookup: dict) -> tuple[list, dict]:
+def auto_fill_materials(parts, materials: list[str], lookup: dict) -> None:
     """Fill the empty cards' material and thickness from their own files (see
-    ``material_agent.auto_fill``); returns the cards for the material panel
-    and their linked files."""
-    cards, doc_links = _with_all_texts(parts), card_docs()
+    ``material_agent.auto_fill``)."""
     config = st.session_state.get(CONFIG, {})
-    material_agent.auto_fill(cards, doc_links, attachments.docs(), materials,
+    material_agent.auto_fill(_with_all_texts(parts), card_docs(), attachments.docs(), materials,
                              lambda m: thicknesses_for(lookup, m), apply_material,
                              lambda fid: bool(config.get(fid, {}).get("material")))
-    return cards, doc_links
 
 
 def step_flats(item: Item | None) -> list:

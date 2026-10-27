@@ -218,30 +218,24 @@ parts, work and contents.
   kokoonpano (the cards don't mention it), and a part in an assembly is not
   quoted separately.
 
-## Material proposals (Materiaaliehdotukset)
+## Materials
 
-**Etsi materiaalit** (no AI) reads the material grade and thickness from each part's
-DXF texts and linked PDFs. It also reads the **Tarjouspyynnön teksti** (the
-RFQ, e.g. "DXF:t tulee S355 2 mm"), which is used for parts whose own files
-say nothing. It knows structural steels (S235, S355MC…), cold-rolled (DC01…),
-hot-dip galvanised (DX51D+Z275, HDG, kuumasinkitty; the coating picks the
-price-list row), stainless and acid-proof (1.4301, AISI 316…), aluminium
-(EN AW-5754…), copper and brass. Grades are matched to the price list's materials, and
-thicknesses must be in the price list (±0.05 mm). Sources that disagree are
-listed under **Tarkistettavat**. A card's STEP model adds its sheet thickness
-as a source.
+A card without a material is filled in automatically, with no AI, from its
+own files: the material grade from the linked PDF's title block **Material**
+field (other lines on the drawing don't count then), or else from any line of
+the PDFs and the DXF texts that names one; the thickness from "PL 3", "t = 2",
+"2,0MM" and the like, and from the card's STEP model. It knows structural
+steels (S235, S355MC…), cold-rolled (DC01…), hot-dip galvanised (DX51D+Z275,
+HDG, kuumasinkitty; the coating picks the price-list row), stainless and
+acid-proof (1.4301, AISI 316…), aluminium (EN AW-5754…), copper and brass.
+Grades are matched to the price list's materials, and thicknesses must be in
+the price list (±0.05 mm).
 
-A card without a material is filled automatically when its own files name one
-and agree; the card says what it was read from. A card whose files disagree is
-left empty and listed under **Tarkistettavat**. A card is searched again only
-when its files change, so a material you clear stays clear. The proposals in
-the panel change nothing until you tick rows and press **Käytä valitut**. With **Muista valinnat**, the text that was read is saved
-with the choice in `material_aliases.json`, and that saved choice wins next
-time.
-
-**Kysy tekoälyltä avoimet** (only when the `anthropic` package is installed
-and `ANTHROPIC_API_KEY` is set) sends the open parts' texts and the price
-list's materials to Claude and fills in its proposals with its reasons.
+The card says what its material was read from. A card whose files disagree
+(two grades, or 3 mm and 2 mm) is left empty and says why, so you choose the
+material yourself. A card is searched again only when its files change, so a
+material you clear stays clear. Texts saved earlier in
+`material_aliases.json` still map to the material chosen for them.
 
 ## Run locally
 
@@ -366,7 +360,7 @@ view/                   Streamlit UI
   work.py               the work rates (sidebar), Työvaiheet on the cards, work per product
   quote.py              the Tarjous header, prices per batch size and the downloads
   attachments.py        PDF/STEP files on the DXF tab, links, previews, Tarkastettu
-  material_agent.py     the Materiaaliehdotukset panel
+  material_agent.py     materials filled in from each card's files
   bom.py                STEP-mallit: BOM, cards from unfolded parts, K factor, 3D view
   assemblies.py         Kokoonpanot: from STEP assemblies and assembly drawings, parts, bought parts, work
   drawing.py            every SVG: sheet layouts and the DXF part preview

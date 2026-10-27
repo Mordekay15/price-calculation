@@ -391,23 +391,15 @@ def test_price_only_changes_update_without_the_calculate_button():
     assert show(at, qty=41)[2]                                    # new quantity: the button
 
 
-def test_a_pdf_links_to_its_part_and_its_material_can_be_applied(tmp_path, monkeypatch):
+def test_a_pdf_links_to_its_part_and_fills_its_material():
     from streamlit.testing.v1 import AppTest
-
-    from core import materials
-
-    aliases = tmp_path / "aliases.json"     # "Muista valinnat" writes here
-    monkeypatch.setattr(materials, "ALIAS_FILE", aliases)
 
     at = AppTest.from_file("dxf_docs_page.py", default_timeout=30).run()
     assert not at.exception
     assert "dxf_checked_f0" in [c.key for c in at.checkbox]
     assert any("100325-revA.pdf" in e.label for e in at.expander)     # on card #1
-    at.text_area(key="dxf_rfq_note").set_value("Muut osat S235 2 mm").run()
-    at.button(key="dxf_find_materials").click().run()
-    at.button(key="dxf_apply_materials").click().run()
-    assert at.session_state["materials"] == [("S355MC", "3"), ("S235", "2")]
-    assert aliases.exists()
+    assert at.session_state["materials"] == [("S355MC", "3"), (None, None)]
+    assert not any("Materiaaliehdotukset" in e.label for e in at.expander)
 
 
 def test_a_parts_numbered_files_and_drawing_make_one_card():
@@ -505,13 +497,13 @@ def test_empty_cards_get_their_drawings_material_once_and_conflicts_wait():
             parts, {}, {}, ["S355MC", "RST 304"], lambda m: ["2", "3"],
             lambda fid, m, t: applied.append((fid, m, t)),
             lambda fid: fid in st.session_state.get("filled", ()))
-        st.session_state["to_check"] = [p.part_id for p in
-                                        st.session_state.get("dxf_material_proposals") or []]
+        st.session_state["to_check"] = [p for p in parts
+                                        if material_agent.check_note(p[0])]
 
     at = AppTest.from_function(page, default_timeout=30).run()
     assert not at.exception
     assert at.session_state["applied"] == [("a", "S355MC", "3")]
-    assert at.session_state["to_check"] == ["b"]
+    assert [p[0] for p in at.session_state["to_check"]] == ["b"]
     at.session_state["filled"] = ()       # the user cleared card a: it stays clear
     at.run()
     assert at.session_state["applied"] == [("a", "S355MC", "3")]

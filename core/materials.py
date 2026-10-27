@@ -2,25 +2,23 @@
 (no Streamlit).
 
 1. ``extract_hints`` finds material grades and thicknesses in a text: a PDF
-   title block, the DXF's notes or the customer's RFQ email
-   ("DXFt tulee s355 2mm").
+   title block (its Material field, ``material_field``, wins) or the DXF's
+   notes.
 2. ``propose`` turns each part's hints into one proposal: a catalogue
    material from the price lists and one of its thicknesses. The shop's alias
    table (raw text → choice made before) wins; otherwise the grade is matched
-   to the catalogue names. Hints that disagree (the PDF says 2.5 mm, the RFQ
-   2 mm) are flagged as a conflict to check.
-3. ``ask_claude`` (optional) proposes for the parts the rules left open, when
-   the ``anthropic`` package and an API key are available.
+   to the catalogue names. Hints that disagree (the PDF says 2.5 mm, the
+   STEP model 2 mm) are flagged as a conflict to check.
 
-Nothing is written to the parts here: the page applies the proposals the
-user ticks.
+Nothing is written to the parts here: the page fills in the proposals that
+have nothing to check.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 from core.pricing import parse_thickness_mm
@@ -348,78 +346,3 @@ def _propose_one(pid, name, hints, materials, thicknesses_for, aliases) -> Propo
     raw = with_family[0].raw if with_family else (with_thickness[0].raw if with_thickness else "")
     return Proposal(pid, name, material, thickness, confidence, evidence,
                     "; ".join(conflicts), raw=raw)
-
-
-# ── Optional: ask Claude ──────────────────────────────────────────────────────
-
-MODEL = "claude-opus-5-5"
-
-
-def claude_available() -> bool:
-    """True when the ``anthropic`` package is installed. Credentials come
-    from the environment (``ANTHROPIC_API_KEY`` or a saved login)."""
-    try:
-        import anthropic  # noqa: F401
-    except ImportError:
-        return False
-    return True
-
-
-def ask_claude(proposals: list[Proposal], note: str, materials: list[str],
-               thicknesses_for) -> list[Proposal]:
-    """Ask Claude for the parts the rules left without a material or a
-    thickness; the others come back as they were. Errors are raised to the
-    caller (the page shows them)."""
-    open_ = [p for p in proposals if p.material is None or p.thickness is None]
-    if not open_:
-        return proposals
-
-    import anthropic
-    from pydantic import BaseModel
-
-    class Choice(BaseModel):
-        part_id: str
-        material: str | None
-        thickness: str | None
-        confidence: str
-        reason: str
-
-    class Answer(BaseModel):
-        choices: list[Choice]
-
-    catalogue = {m: thicknesses_for(m) for m in materials}
-    parts = [{"part_id": p.part_id, "part": p.part,
-              "texts": [f"{h.source}: {h.raw}" for h in p.evidence] or ["(ei tekstiä)"]}
-             for p in open_]
-    prompt = (
-        "You map sheet-metal parts to a shop's material catalogue for a quote.\n"
-        "For each part, pick one catalogue material (exact name from the catalogue) and "
-        "one of its thicknesses (exact label), from the texts found in the part's "
-        "drawings and the customer's request below. Use null when the texts don't tell. "
-        "confidence is one of: korkea, keskitaso, matala. reason: one short sentence in "
-        "Finnish naming the text you used.\n\n"
-        f"Customer's request:\n{note or '(none)'}\n\n"
-        f"Parts:\n{json.dumps(parts, ensure_ascii=False)}\n\n"
-        f"Catalogue (material: thicknesses):\n{json.dumps(catalogue, ensure_ascii=False)}"
-    )
-    client = anthropic.Anthropic()
-    response = client.messages.parse(
-        model=MODEL,
-        max_tokens=16000,
-        messages=[{"role": "user", "content": prompt}],
-        output_format=Answer,
-    )
-    if response.stop_reason == "refusal" or response.parsed_output is None:
-        return proposals
-    by_id = {c.part_id: c for c in response.parsed_output.choices}
-    out = []
-    for p in proposals:
-        c = by_id.get(p.part_id)
-        if p in open_ and c is not None and c.material in catalogue:
-            thickness = c.thickness if c.thickness in catalogue[c.material] else None
-            confidence = c.confidence if c.confidence in (HIGH, MEDIUM, LOW) else LOW
-            p = replace(p, material=c.material, thickness=thickness, confidence=confidence,
-                        note=c.reason, via="tekoäly")
-        out.append(p)
-    return out
-
