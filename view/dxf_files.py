@@ -17,6 +17,7 @@ from core.dwg import read_drawing
 from core.dxf import DxfFile, DxfReport, fasteners_from_texts
 from core.items import (Choice, Source, choose, group_sources, looks_like_drawing,
                         score_dxf, STEP_CHOICE)
+from core.linking import base_key
 from core.sparrow import NESTING_ANGLES
 from core.step import available as step_available
 from core.step import bends_on
@@ -320,7 +321,7 @@ def sync() -> list[tuple[str, DxfFile]]:
                 for fid, d in files.items()]
                + bom.sources(ss.setdefault(_HIDDEN, set()), folder_of))
     groups = group_sources(sources, lambda sid: sid in files
-                           and looks_like_drawing(report(sid)))
+                           and looks_like_drawing(report(sid)), _pdf_texts())
     store, items = {}, {}
     for members in groups:
         cid = members[0]
@@ -339,6 +340,16 @@ def sync() -> list[tuple[str, DxfFile]]:
         items[cid] = Item(members, chosen, scores, {m: shape(m).name for m in members}, blank)
     ss[STORE], ss[ITEMS] = store, items
     return list(store.items())
+
+
+def _pdf_texts():
+    """The text of the dropped PDFs of a part number, read only when asked
+    (a drawing whose title block may name the part it belongs to)."""
+    by_key: dict[str, list[str]] = {}
+    for d, doc in attachments.docs().items():
+        if doc["kind"] == "pdf":
+            by_key.setdefault(base_key(doc["name"]), []).append(d)
+    return lambda key: "\n".join(attachments.text(d) for d in by_key.get(key, []))
 
 
 def resync() -> None:

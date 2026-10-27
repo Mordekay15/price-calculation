@@ -8,7 +8,9 @@ one item, and the best of them is chosen as the shape to price.
   otherwise (the drawing ``DRW-023179_A.dwg``) joins the item whose part
   number its texts name (``ITM-072558.A`` in the title block), when they
   name exactly one, or else the one other item in its folder of a dropped
-  ZIP.
+  ZIP. The PDF of the same drawing counts as its texts: a DWG whose title
+  block didn't come through (``DRW-021780_A.dwg``) still joins the item its
+  ``DRW-021780_A.pdf`` names (``ITM-064555.A``).
 - **Choosing.** Every candidate shape is scored: a clean flat pattern beats a
   drawing sheet (a frame the size of an A-paper, other views and the title
   block around the part, many texts); a DXF whose size matches the STEP
@@ -47,12 +49,13 @@ class Source:
         return self.keys or {base_key(self.name)}
 
 
-def group_sources(sources: list[Source], is_drawing=lambda source_id: True
-                  ) -> list[list[str]]:
+def group_sources(sources: list[Source], is_drawing=lambda source_id: True,
+                  pdf_text=lambda key: "") -> list[list[str]]:
     """The items: lists of source ids, each in drop order, the items in the
     order of their first file. A group joins another by its texts only when
     ``is_drawing`` says each of its files is a drawing (not a flat part of
-    its own that merely mentions another part number)."""
+    its own that merely mentions another part number). ``pdf_text(key)`` is
+    the text of the PDFs of a part number (``base_key``), "" when none."""
     groups: dict[str, list[Source]] = {}
     for s in sources:
         keys = s.part_keys()
@@ -63,7 +66,7 @@ def group_sources(sources: list[Source], is_drawing=lambda source_id: True
     # number is that part's drawing: it joins it.
     names = {key: key for key in groups}
     for key, members in _drawings(groups, is_drawing):
-        texts = "\n".join(t for s in members for t in s.texts)
+        texts = "\n".join([*(t for s in members for t in s.texts), pdf_text(key)])
         others = {k: n for k, n in names.items() if k != key and k in groups}
         found = link_by_text(others, {"x": texts})
         if found:

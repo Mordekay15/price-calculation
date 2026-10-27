@@ -94,3 +94,18 @@ def test_a_drawing_that_names_no_part_joins_the_item_in_its_folder():
     sources[2] = Source("other", "100325.dxf", "dxf", [], folder="ITM-072558")
     assert group_sources(sources, lambda sid: sid in drawings) == [
         ["dwg"], ["dxf"], ["other"], ["lone"]]
+
+
+def test_a_drawing_joins_the_item_its_pdf_names():
+    # The DWG came without its title block; its PDF reads "ITM-064555.A" and
+    # "DRW-021780.A", so the DWG and the flat DXF are one item.
+    sources = [Source("dwg", "DRW-021780_A.dwg", "dxf", ["Ø10 -3 SYVÄ"]),
+               Source("dxf", "ITM-064555_A.dxf", "dxf", ["ITM-064555"]),
+               Source("other", "ITM-064556_A.dxf", "dxf", [])]
+    pdfs = {"drw-021780": "Item / Drawing ID and Revision:\nITM-064555.A\nDRW-021780.A"}
+    assert group_sources(sources, lambda sid: sid == "dwg", lambda k: pdfs.get(k, "")) == [
+        ["dwg", "dxf"], ["other"]]
+    # Without the PDF it can't tell; a flat part isn't moved by its PDF.
+    assert group_sources(sources, lambda sid: sid == "dwg") == [["dwg"], ["dxf"], ["other"]]
+    assert group_sources(sources, lambda sid: False, lambda k: pdfs.get(k, "")) == [
+        ["dwg"], ["dxf"], ["other"]]
