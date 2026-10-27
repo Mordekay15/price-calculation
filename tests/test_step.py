@@ -408,13 +408,14 @@ def _cut(solid, x, y, z):
     return BRepAlgoAPI_Cut(solid, box).Shape()
 
 
-def test_tabs_notched_apart_bend_on_their_own_a_slot_across_a_bend_does_not_split_it():
+def test_tabs_notched_apart_and_the_bridges_by_a_slot_bend_on_their_own():
     # ITM-082584: an angle whose flange is notched into 3 tabs, the notches
     # cutting through the bend: 3 bends, not 1.
     tabs = l_bracket(w=100.0, hole=False)
     for y in ((30, 40), (60, 70)):
         tabs = _cut(tabs, (-1, 51), y, (-1, 4.0))
     assert [round(b.angle_deg) for b in unfold(tabs).bends] == [90, 90, 90]
-    # A slot across the bend: both flanges still go across, it's one bend.
+    # ITM-082616: a slot across the bend leaves a bridge each side, and each
+    # counts as a bend.
     slot = _cut(l_bracket(w=100.0, hole=False), (-1, 12), (45, 55), (-1, 12))
-    assert [round(b.angle_deg) for b in unfold(slot).bends] == [90]
+    assert [round(b.angle_deg) for b in unfold(slot).bends] == [90, 90]
