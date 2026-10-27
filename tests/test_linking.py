@@ -79,3 +79,20 @@ def test_an_assembly_drawing_calls_out_its_items():
             "ASSEMBLY KIT: 3AXD50001107246\n"
             "DMS Number 3AXD10002100550 Weight kg Total 1\n328\n26-Feb-24")
     assert callouts(text) == ["3axd50000018805", "3axd50000026889", "3axd50001016005"]
+
+
+def test_a_bom_row_gives_its_parts_quantity():
+    from core.linking import bom_quantities
+
+    bom = ("Pos ID.Rev Thumbnail Name and Description EN Qty Unit QRCode\n"
+           "PH-002620.1 031 - Subcontractor Laser cutting Stencil 1\n"
+           "1 ITM-064555.A Plate Installation guide, sofa, Plate_02 2 pcs\n"
+           "2 ITM-064556.A Plate, sofa 4 kpl")
+    drawing = "Material: S355MC\nEverything is possible ITM-064555.A\nDRW-021780.A"
+    cards = {"c1": ["DRW-021780_A.dwg", "ITM-064555_A.dxf"], "c2": ["ITM-064556_A.dxf"],
+             "c3": ["100325.dxf"]}
+    assert bom_quantities(cards, {"PH-002620_1_BOM.pdf": bom, "DRW-021780_A.pdf": drawing}) == {
+        "c1": (2, ["PH-002620_1_BOM.pdf"]), "c2": (4, ["PH-002620_1_BOM.pdf"])}
+    # Two BOMs that both need the part: their quantities add up.
+    other = "10 ITM-064555 Plate 3 pcs"
+    assert bom_quantities(cards, {"a.pdf": bom, "b.pdf": other})["c1"] == (5, ["a.pdf", "b.pdf"])

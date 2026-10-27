@@ -8,6 +8,7 @@ A card keeps its settings (material, thickness, quantity) in ``CONFIG`` while
 files join or leave it, and ``evict`` removes it with everything kept for it.
 The card itself is drawn by ``view.dxf_tab``."""
 
+import re
 import time
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -18,6 +19,7 @@ from core.dxf import DxfFile, DxfReport, fasteners_from_texts
 from core.items import (Choice, Source, choose, group_sources, looks_like_drawing,
                         score_dxf, STEP_CHOICE)
 from core.linking import base_key
+from core.linking import bom_quantities as _bom_quantities
 from core.sparrow import NESTING_ANGLES
 from core.step import available as step_available
 from core.step import bends_on
@@ -389,6 +391,22 @@ def card_docs() -> dict[str, list[str]]:
     card_folders = {cid: {f for f in map(folder_of, item.members) if f}
                     for cid, item in st.session_state.get(ITEMS, {}).items()}
     return attachments.links(_card_names(), card_folders, st.session_state.get(_FOLDERS, {}))
+
+
+# A PDF named as a parts list: read for its quantities even when it links to
+# no card.
+_BOM_NAME = re.compile(r"bom|osaluettelo|kappaleluettelo|parts?[\s_\-]?list|st[üu]ckliste",
+                       re.IGNORECASE)
+
+
+def bom_quantities() -> dict[str, tuple[int, list[str]]]:
+    """The quantity each card's BOMs ask for, ``{card id: (kpl, [BOM
+    names])}`` (see ``core.linking.bom_quantities``). The PDFs read are the
+    ones already read for linking and the ones named as a parts list."""
+    read = st.session_state.get(attachments.TEXTS, {})
+    texts = {doc["name"]: attachments.text(d) for d, doc in attachments.docs().items()
+             if doc["kind"] == "pdf" and (d in read or _BOM_NAME.search(doc["name"]))}
+    return _bom_quantities(_card_names(), texts)
 
 
 def _card_names() -> dict[str, list[str]]:

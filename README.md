@@ -106,7 +106,8 @@ or DXF, the STEP model and the PDF. They become **one card** (`core/items.py`):
   `_2.dxf`, `3AUA0000098622.stp` and `.pdf` are one part. A drawing saved
   under its drawing number (`DRW-023179_A.dwg`) joins the part its title block
   names (`ITM-072558.A`), when it looks like a drawing (a paper-size frame, or
-  other views around the part) and names exactly one card's part number.
+  other views around the part) and names exactly one card's part number. The
+  drawing's PDF counts as its title block when the DWG's doesn't come through.
 - **Choosing the shape.** Each DXF/DWG is scored: a clean flat pattern beats
   a drawing sheet (frame, views and title block, many texts, no unit). With a
   STEP model, a DXF the size of the unfolded blank is confirmed by it; when no
@@ -116,7 +117,9 @@ or DXF, the STEP model and the PDF. They become **one card** (`core/items.py`):
 - **The rest of the card.** PDFs show their first page under
   **Piirustukset**; a PDF named otherwise links by the part number in its
   text. The material search reads the texts of all the card's files.
-  **Poista** removes the card and its files. In laser mode a card also prices punching (Levari)
+  **Poista** removes the card and its files. A loose card listed in a BOM
+  PDF (`1 ITM-064555.A Plate … 2 pcs`) is nested for the BOM's quantity
+  instead of the largest batch size; two BOMs that list it add up. In laser mode a card also prices punching (Levari)
   for comparison, and says which method would be cheaper.
 
 ## STEP models: BOM and unfolding
@@ -202,7 +205,7 @@ parts, work and contents.
 - **Apart from the loose parts.** **Osat** lists only the parts in no
   assembly. Each assembly below it shows its own cards, paged the same way.
   Their **Määrä** starts as kpl / kokoonpano × the largest batch size (a
-  loose card's as the largest batch size), shown in grey: the quantity they
+  loose card's as its BOM quantity or the largest batch size), shown in grey: the quantity they
   are nested at. A typed Määrä is nested instead; clearing it goes back.
 - **No cost twice.** A card in an assembly has no fasteners or welding: the
   assembly's bought parts (PEM nuts and studs too, with their pressing as

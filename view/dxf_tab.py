@@ -33,6 +33,7 @@ from view.dxf_files import (
     REPORTS,
     Item,
     auto_fill_materials,
+    bom_quantities,
     card_bends,
     card_docs,
     card_fasteners,
@@ -136,6 +137,7 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
     index = {fid: idx for idx, (fid, _) in enumerate(parts)}
     per_assembly = per_unit(assemblies.current(card_of))  # card id: kpl in its assemblies
     doc_links = card_docs()
+    in_boms = bom_quantities()                  # card id: (kpl, BOMs)
     products: dict[int, dict | None] = {}
     fill = _FillOffer()
 
@@ -150,7 +152,7 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
                 products[idx] = _render_part_config(fid, part, idx, materials, lookup,
                                                     per_part_angles, fill if offer else None,
                                                     doc_links.get(fid, []),
-                                                    per_assembly.get(fid, 0))
+                                                    per_assembly.get(fid, 0), in_boms.get(fid))
 
     loose = [idx for idx, (fid, _) in enumerate(parts)
              if fid not in per_assembly and fid not in drawing_of.values()]
@@ -224,6 +226,7 @@ def _render_part_config(
     fill: "_FillOffer | None" = None,
     doc_ids: list[str] = (),
     per_assembly: int = 0,
+    in_bom: tuple[int, list[str]] | None = None,
 ) -> dict | None:
     """Draw one part's card, preview left and inputs right; return its product
     dict, or None if not priceable. Its ``angles`` are None (set later from the
@@ -231,7 +234,8 @@ def _render_part_config(
     question from card to card (see ``_offer_same_material``). ``doc_ids``
     are the supporting files linked to it (see ``view.attachments``). A card in
     an assembly (``per_assembly`` kpl in one) takes its quantity from the batch
-    sizes and leaves its fasteners and welding to the assembly."""
+    sizes and leaves its fasteners and welding to the assembly; a loose card
+    listed in a BOM (``in_bom``: kpl, BOM names) takes the BOM's quantity."""
     in_assembly = per_assembly > 0
     with st.container(border=True):
         hdr = st.columns([5, 3, 1], vertical_alignment="center")
@@ -278,7 +282,8 @@ def _render_part_config(
         if size is None:
             return None
         with input_col:
-            material, thickness, qty = _render_part_inputs(fid, materials, lookup, per_assembly)
+            material, thickness, qty = _render_part_inputs(fid, materials, lookup, per_assembly,
+                                                             in_bom)
             if fill is not None:
                 _offer_same_material(fid, idx, material, thickness, fill)
             angles = render_nesting_angles(fid) if per_part_angles else None
@@ -376,10 +381,12 @@ def _checked_size(fid: str, dxf: DxfFile, report: DxfReport, badge,
 
 
 def _render_part_inputs(fid: str, materials: list[str], lookup: dict,
-                        per_assembly: int = 0) -> tuple:
+                        per_assembly: int = 0,
+                        in_bom: tuple[int, list[str]] | None = None) -> tuple:
     """Material, thickness and quantity; returns ``(material, thickness, qty)``.
-    A part is nested for the largest batch size (in an assembly,
-    ``per_assembly`` kpl in each) unless another quantity is typed.
+    A part is nested for the quantity its BOM asks for, else for the largest
+    batch size (in an assembly, ``per_assembly`` kpl in each), unless another
+    quantity is typed.
 
     Material + thickness are persisted per file: the selectboxes are seeded
     from the stored choice, then the current choice is written back.
@@ -401,12 +408,17 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict,
         st.warning(f"Piirustukset eivät ole yksimielisiä materiaalista ({check}). "
                    "Valitse materiaali itse.")
     batch = max(current_sizes())
-    qty = auto_input(
-        st.columns(2)[0], "Määrä (kpl)", f"dxf_q_{fid}", max(per_assembly, 1) * batch,
-        step=1.0, fmt="%.0f",
-        help="Levyt nestataan tälle määrälle. Oletus: "
-             + (f"{per_assembly} kpl / kokoonpano × " if per_assembly else "")
-             + f"suurin eräkoko {batch} (eräkoot sivun yläosan Tarjous-kohdasta).")
+    if in_bom and not per_assembly:
+        auto, why = in_bom[0], f"BOM: {in_bom[0]} kpl ({', '.join(in_bom[1])})"
+    else:
+        auto = max(per_assembly, 1) * batch
+        why = ((f"{per_assembly} kpl / kokoonpano × " if per_assembly else "")
+               + f"suurin eräkoko {batch} (eräkoot sivun yläosan Tarjous-kohdasta)")
+    col = st.columns(2)[0]
+    qty = auto_input(col, "Määrä (kpl)", f"dxf_q_{fid}", auto, step=1.0, fmt="%.0f",
+                     help="Levyt nestataan tälle määrälle. Oletus: " + why + ".")
+    if in_bom and not per_assembly:
+        col.caption(f"Määrä BOM:sta: {in_bom[0]} kpl", help=", ".join(in_bom[1]))
     return material, thickness, max(int(qty), 1)
 
 

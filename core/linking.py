@@ -51,6 +51,49 @@ def base_key(file_name: str) -> str:
     return re.sub(r"[\s_\-.]+\d{1,2}$", "", key) or key
 
 
+def _patterns(part_names) -> dict[str, re.Pattern]:
+    """A pattern per part number (``base_key``) that finds it in a text, its
+    separators optional: ``ITM-072558`` finds ``ITM-072558.A`` and
+    ``ITM072558``. Part numbers shorter than 4 characters or without a digit
+    are left out."""
+    patterns: dict[str, re.Pattern] = {}
+    for name in part_names:
+        key = base_key(name)
+        if len(key) >= 4 and any(c.isdigit() for c in key) and key not in patterns:
+            body = r"[\s_\-.]?".join(re.escape(p) for p in re.split(r"[\s_\-.]+", key) if p)
+            patterns[key] = re.compile(rf"(?<![a-z0-9]){body}(?![0-9])", re.IGNORECASE)
+    return patterns
+
+
+# A quantity on a BOM row: "2 pcs", "4 kpl", "1 st".
+_QTY = re.compile(r"(?<![\w.,])(\d{1,5})\s*(?:pcs|pc|pce|kpl|st|stk|ea)\b", re.IGNORECASE)
+
+
+def bom_quantities(part_names: dict[str, list[str]], texts: dict[str, str]
+                   ) -> dict[str, tuple[int, list[str]]]:
+    """How many of each part the BOMs ask for: ``part_names`` maps a card to
+    its file names, ``texts`` a PDF's name to its text. A BOM row names one
+    card's part number and a quantity with its unit (``1 ITM-064555.A Plate
+    … 2 pcs``). Returns ``{card: (kpl, [BOM names])}``, the kpl of all the
+    BOMs that list it added up (one BOM's first row for it)."""
+    patterns = _patterns(n for ns in part_names.values() for n in ns)
+    card_of = {base_key(n): cid for cid, ns in part_names.items() for n in ns}
+    out: dict[str, tuple[int, list[str]]] = {}
+    for doc, text in texts.items():
+        seen = set()
+        for line in (text or "").splitlines():
+            qty = _QTY.findall(line)
+            if not qty:
+                continue
+            cards = {card_of[k] for k, pat in patterns.items() if pat.search(line)}
+            if len(cards) != 1 or (cid := cards.pop()) in seen:
+                continue
+            seen.add(cid)
+            n, docs = out.get(cid, (0, []))
+            out[cid] = (n + int(qty[-1]), [*docs, doc])
+    return out
+
+
 def link_by_text(part_names: dict[str, str], texts: dict[str, str],
                  group=None) -> dict[str, list[str]]:
     """Files whose name says nothing, linked by the part number written in
@@ -60,14 +103,8 @@ def link_by_text(part_names: dict[str, str], texts: dict[str, str],
     part number on the cards (numbered pieces of one, ``_1`` and ``_2``, count
     as one) (an assembly drawing listing several is left for
     linking by hand) or, with ``group`` (part id -> card), the part numbers of
-    exactly one card; part numbers shorter than 4 characters or without a
-    digit are never searched for."""
-    patterns: dict[str, re.Pattern] = {}
-    for name in part_names.values():
-        key = base_key(name)
-        if len(key) >= 4 and any(c.isdigit() for c in key) and key not in patterns:
-            body = r"[\s_\-.]?".join(re.escape(p) for p in re.split(r"[\s_\-.]+", key) if p)
-            patterns[key] = re.compile(rf"(?<![a-z0-9]){body}(?![0-9])", re.IGNORECASE)
+    exactly one card (see ``_patterns``)."""
+    patterns = _patterns(part_names.values())
     group = group or (lambda pid: pid)
     out: dict[str, list[str]] = {}
     for fid, text in texts.items():
