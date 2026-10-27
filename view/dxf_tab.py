@@ -496,12 +496,14 @@ def _render_part_config(
                                                              in_bom)
             if fill is not None:
                 _offer_same_material(fid, idx, material, thickness, fill)
-            angles = render_nesting_angles(fid) if per_part_angles else None
             work = render_work_inputs(fid, material=material, thickness=thickness, qty=qty,
                                       cut_length_m=report.cut_length_mm / 1000,
                                       bends=card_bends(report, item), threads=report.threads,
                                       fasteners=0 if in_assembly else card_fasteners(dxf, item),
                                       in_assembly=in_assembly)
+        # Under the preview, so the part is in view when choosing.
+        with preview_col:
+            angles = render_nesting_angles(fid, report) if per_part_angles else None
         status = ("✓ valmis" if material and thickness and angles != ()
                   else f"{_OPEN} valitse nestauskulma" if material and thickness
                   else f"{_OPEN} valitse paksuus" if material

@@ -4,6 +4,7 @@ shapes), the edge-gap diagram and the DXF part preview on a card."""
 import streamlit as st
 
 from core.dxf import DxfReport, is_slit
+from core.geometry import rotate_translate
 from core.sheet_cost import SheetOption, fmt_m, product_label, utilization
 
 
@@ -365,3 +366,52 @@ def preview_svg(report: DxfReport, px: int = 260, bends: list | None = None) -> 
                        f'stroke-dasharray="{stroke * 6:.1f} {stroke * 3:.1f}"/>')
     out.append("</svg>")
     return "".join(out)
+
+
+# A part with a clear way round, for the nesting-angle tiles of the run row
+# (no one part to show there).
+_SAMPLE_PART = [[(0, 0), (100, 0), (100, 18), (32, 18), (32, 50), (0, 50)]]
+
+
+def orientation_svg(rings: list | None, angle: int, on: bool, px: int = 96) -> str:
+    """One nesting-angle tile: the part (``rings``: outline first, then holes;
+    a sample part when None) turned by ``angle`` on a patch of sheet whose
+    lines and top arrow run in the rolling direction (horizontal, as on the
+    layouts).
+    ``on``: the angle is allowed (part in colour), else greyed out."""
+    rings = [rotate_translate(r, angle, (0.0, 0.0)) for r in rings or _SAMPLE_PART if len(r) >= 3]
+    if not rings:
+        return ""
+    xs = [x for r in rings for x, _ in r]
+    ys = [y for r in rings for _, y in r]
+    min_x, min_y = min(xs), min(ys)
+    w, h = max(xs) - min_x, max(ys) - min_y
+    size = max(w, h)
+    if size <= 0:
+        return ""
+    pad = size * 0.12
+    side = size + 2 * pad
+    ox, oy = pad + (size - w) / 2, pad + (size - h) / 2
+    d = " ".join("M " + " L ".join(f"{x - min_x + ox:.1f} {oy + h - (y - min_y):.1f}"
+                                   for x, y in r) + " Z" for r in rings)
+    step = side / 9
+    grain = " ".join(f"M 0 {i * step:.1f} H {side:.1f}" for i in range(1, 9))
+    # The rolling direction, an arrow along the top edge.
+    a, y = pad * 0.45, pad * 0.5
+    arrow = (f"M {side * 0.6:.1f} {y:.1f} H {side - pad * 0.6:.1f} "
+             f"M {side - pad * 0.6 - a:.1f} {y - a * 0.6:.1f} L {side - pad * 0.6:.1f} {y:.1f} "
+             f"L {side - pad * 0.6 - a:.1f} {y + a * 0.6:.1f}")
+    fill, line = ("#3b82f6", "#2563eb") if on else ("#cbd5e1", "#94a3b8")
+    return (
+        f'<svg width="{px}" height="{px}" viewBox="0 0 {side:.1f} {side:.1f}" '
+        f'style="max-width:100%;height:auto;display:block;border-radius:6px;'
+        f'border:2px {"solid #2563eb" if on else "dashed #cbd5e1"};'
+        f'background:{"#eff6ff" if on else "#f8fafc"};opacity:{1 if on else 0.75};">'
+        f'<path d="{grain}" stroke="#94a3b8" stroke-opacity="0.45" '
+        f'stroke-width="{side / 200:.2f}"/>'
+        f'<path d="{arrow}" fill="none" stroke="#64748b" stroke-width="{side / 90:.2f}" '
+        f'stroke-linecap="round" stroke-linejoin="round"/>'
+        f'<path d="{d}" fill="{fill}" fill-opacity="{0.35 if on else 0.3}" '
+        f'fill-rule="evenodd" stroke="{line}" stroke-width="{side / 90:.2f}" '
+        f'stroke-linejoin="round"/></svg>'
+    )

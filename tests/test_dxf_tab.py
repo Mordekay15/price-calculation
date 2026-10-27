@@ -661,3 +661,13 @@ def test_many_parts_are_drawn_a_page_at_a_time_and_all_priced():
     assert at.session_state["qtys"][21] == 10                  # the largest batch
     at.selectbox(key="dxf_card_page").set_value(1).run()      # and shown as set
     assert at.selectbox(key="dxf_mat_f21").value == "S235"
+
+
+def test_nesting_angle_tiles_show_the_part_turned_and_greyed_when_off():
+    from view.drawing import orientation_svg
+
+    strip = [[(0, 0), (100, 0), (100, 10), (0, 10)]]
+    along, across = orientation_svg(strip, 0, True), orientation_svg(strip, 90, False)
+    assert "#2563eb" in along and "dashed" in across
+    assert along != across
+    assert orientation_svg(None, 0, True)   # the run row's sample part

@@ -28,12 +28,12 @@ from core.sparrow import (
 )
 from view import assemblies
 from view.common import NESTING_LABELS, SheetSettings, render_groups
-from view.drawing import draw_sparrow_layout
+from view.drawing import draw_sparrow_layout, orientation_svg
 from view.dxf_files import source_cards
 from view.quote import render_batch_prices
 from view.sheet_usage import render_group
 from view.sparrow_progress import SparrowProgress, run_with_progress
-from view.ui import headless, st
+from view.ui import headless, is_headless, st
 
 _CACHE = "dxf_sparrow_cache"    # {signature: computed group}
 _RUNS = "dxf_sparrow_runs"      # {instance key: SparrowResult}, every Sparrow run so far
@@ -100,7 +100,8 @@ def _render_nesting(products, n_parts, lookup, nest_mode, sheet, margin_pct):
     st.divider()
     # Two rows above the button they apply to: the nesting angle, then the
     # search time with the buttons.
-    shared = _render_angle_controls(n_parts)
+    shared = _render_angle_controls(n_parts, products[0]["report"]
+                                    if n_parts == 1 and len(products) == 1 else None)
     if shared == ():
         return None, NestState(ready=False)  # no angle ticked: the warning says so
     c_time, c_run, c_update = st.columns([1, 2, 2], vertical_alignment="bottom")
@@ -440,9 +441,9 @@ def _parts_for_group(products: list[dict]) -> tuple[list, dict[str, float]]:
 
 _ANGLE_LABELS = {0: "0/180", 90: "90/270"}
 _ANGLE_HELP = (
-    "Kulmat lasketaan piirustuksesta: 0/180 pitää piirustuksen X-akselin "
-    "valssaussuunnassa eli levyn pitkän sivun suuntaisena, 90/270 sitä vastaan "
-    "kohtisuorassa. Kun molemmat on valittu, osa saa kääntyä vapaasti."
+    "Nuoli ja viivat näyttävät valssaussuunnan (levyn pitkä sivu). 0/180: osa "
+    "levyssä niin kuin kortti sen näyttää, 90/270: käännettynä poikittain. "
+    "Kun molemmat on valittu, osa saa kääntyä vapaasti."
 )
 
 
@@ -450,27 +451,39 @@ ANGLE_MODE = "dxf_angle_mode"
 _SHARED, PER_PART = "Sama kaikille", "Osakohtainen"
 
 
-def render_nesting_angles(fid: str = "") -> tuple[int, ...]:
+def render_nesting_angles(fid: str = "", report: DxfReport | None = None) -> tuple[int, ...]:
     """Allowed nesting angles (see ``core.sparrow.NESTING_ANGLES``), both
-    ticked by default; () with a warning when none is. ``fid`` keys a card's
-    own choice; without it, the run row's shared one."""
+    ticked by default; () with a warning when none is. Each is a tile showing
+    the part (``report``'s, else a sample) as it would lie on the sheet, with
+    its tick under it. ``fid`` keys a card's own choice; without it, the run
+    row's shared one."""
     suffix = f"_{fid}" if fid else ""
-    cols = st.columns([2, 1, 1], vertical_alignment="center")
-    cols[0].markdown("Sallittu nestauskulma", help=_ANGLE_HELP)
-    angles = tuple(a for a, col in zip(NESTING_ANGLES, cols[1:])
-                   if col.checkbox(_ANGLE_LABELS[a], value=True, key=f"dxf_angle_{a}{suffix}"))
+    rings = ([report.outline.points, *(h.points for h in report.holes)]
+             if report is not None and report.outline else None)
+    angles = []
+    box = st.container(width=240)   # the tiles side by side, not spread apart
+    box.caption("Sallittu nestauskulma", help=_ANGLE_HELP)
+    for a, col in zip(NESTING_ANGLES, box.columns(len(NESTING_ANGLES))):
+        key = f"dxf_angle_{a}{suffix}"
+        if not is_headless():
+            col.markdown(orientation_svg(rings, a, st.session_state.get(key, True)),
+                         unsafe_allow_html=True)
+        if col.checkbox(_ANGLE_LABELS[a], value=True, key=key):
+            angles.append(a)
     if not angles:
         st.warning("Valitse vähintään yksi nestauskulma.")
-    return angles
+    return tuple(angles)
 
 
-def _render_angle_controls(n_parts: int) -> tuple[int, ...] | None:
+def _render_angle_controls(n_parts: int, report: DxfReport | None = None
+                           ) -> tuple[int, ...] | None:
     """The nesting-angle row above the run button: the angles every part gets,
     or None when they are chosen per part on the cards (a switch offered only
-    for several parts, left of the angles)."""
+    for several parts, left of the angles). ``report``: the one part, drawn
+    on the tiles."""
     if n_parts == 1:
-        with st.columns([3, 2])[0]:
-            return render_nesting_angles()
+        with st.columns([1, 3])[0]:
+            return render_nesting_angles(report=report)
     switch, angles = st.columns([2, 3], vertical_alignment="center")
     if switch.radio("Nestauskulma", (_SHARED, PER_PART), horizontal=True,
                     key=ANGLE_MODE) == PER_PART:
