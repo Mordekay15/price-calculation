@@ -5,9 +5,8 @@
    title block (its Material field, ``material_field``, wins) or the DXF's
    notes.
 2. ``propose`` turns each part's hints into one proposal: a catalogue
-   material from the price lists and one of its thicknesses. The shop's alias
-   table (raw text → choice made before) wins; otherwise the grade is matched
-   to the catalogue names. Hints that disagree (the PDF says 2.5 mm, the
+   material from the price lists and one of its thicknesses, the grade
+   matched to the catalogue names. Hints that disagree (the PDF says 2.5 mm, the
    STEP model 2 mm) are flagged as a conflict to check.
 
 Nothing is written to the parts here: the page fills in the proposals that
@@ -16,15 +15,10 @@ have nothing to check.
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
-from pathlib import Path
 
 from core.pricing import parse_thickness_mm
-
-ROOT = Path(__file__).resolve().parent.parent
-ALIAS_FILE = ROOT / "material_aliases.json"
 
 # ── Hints from text ───────────────────────────────────────────────────────────
 
@@ -188,45 +182,16 @@ def pdf_text(data: bytes, max_pages: int = 3) -> list[tuple[int, str]]:
 
 # ── Proposals ─────────────────────────────────────────────────────────────────
 
-HIGH, MEDIUM, LOW = "korkea", "keskitaso", "matala"
-
-
 @dataclass(frozen=True)
 class Proposal:
-    """What to set on one part, why, and how sure it is."""
+    """What to set on one part and why."""
 
     part_id: str
     part: str
     material: str | None
     thickness: str | None
-    confidence: str = LOW
     evidence: tuple[Hint, ...] = ()
     conflict: str = ""                # why the sources disagree, "" when they don't
-    via: str = "säännöt"              # "alias", "säännöt", "tekoäly"
-    raw: str = ""                     # the text the alias table keys on
-    note: str = ""                    # the AI's reason, when it chose
-
-
-def normalize(raw: str) -> str:
-    """The alias table's key for a raw text."""
-    return re.sub(r"\s+", " ", raw.strip().lower())
-
-
-def load_aliases(path: Path | None = None) -> dict[str, dict]:
-    path = path or ALIAS_FILE
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-
-
-def save_aliases(new: dict[str, dict], path: Path | None = None) -> None:
-    """Add ``{raw: {"material", "thickness"}}`` to the alias table."""
-    path = path or ALIAS_FILE
-    table = load_aliases(path)
-    table.update({normalize(k): v for k, v in new.items()})
-    path.write_text(json.dumps(table, ensure_ascii=False, indent=1, sort_keys=True),
-                    encoding="utf-8")
 
 
 def match_material(hint: Hint, materials: list[str]) -> list[str]:
@@ -280,32 +245,16 @@ def match_thickness(thickness_mm: float | None, available: list[str]) -> str | N
                  and abs(mm - thickness_mm) <= 0.05), None)
 
 
-def propose(parts: dict[str, tuple[str, list[Hint]]], note_hints: list[Hint],
-            materials: list[str], thicknesses_for, aliases: dict[str, dict] | None = None,
-            ) -> list[Proposal]:
+def propose(parts: dict[str, tuple[str, list[Hint]]], materials: list[str],
+            thicknesses_for) -> list[Proposal]:
     """One proposal per part. ``parts`` maps a part id to ``(name, hints from
-    its own files)``; ``note_hints`` come from the RFQ and apply to parts whose
-    own files say nothing about a material or a thickness.
-    ``thicknesses_for(material)`` lists a catalogue material's thicknesses."""
-    aliases = aliases or {}
-    out = []
-    for pid, (name, own) in parts.items():
-        hints = list(own)
-        if not any(h.family for h in hints):
-            hints += [h for h in note_hints if h.family]
-        if not any(h.thickness_mm is not None for h in hints):
-            hints += [h for h in note_hints if h.thickness_mm is not None and h not in hints]
-        out.append(_propose_one(pid, name, hints, materials, thicknesses_for, aliases))
-    return out
+    its own files)``; ``thicknesses_for(material)`` lists a catalogue
+    material's thicknesses."""
+    return [_propose_one(pid, name, hints, materials, thicknesses_for)
+            for pid, (name, hints) in parts.items()]
 
 
-def _propose_one(pid, name, hints, materials, thicknesses_for, aliases) -> Proposal:
-    for h in hints:
-        alias = aliases.get(normalize(h.raw))
-        if alias and alias.get("material") in materials:
-            return Proposal(pid, name, alias["material"], alias.get("thickness"), HIGH,
-                            (h,), via="alias", raw=h.raw)
-
+def _propose_one(pid, name, hints, materials, thicknesses_for) -> Proposal:
     # A drawing's Material field names the part's own material: other lines
     # (a screw's "A2", a bracket's "S235" in a note) don't count then. The
     # hint with a grade first: "DX51D+Z275" says more than "HDG STEEL".
@@ -325,7 +274,6 @@ def _propose_one(pid, name, hints, materials, thicknesses_for, aliases) -> Propo
             sorted({f"{h.thickness_mm:g} mm ({h.source})" for h in with_thickness})))
 
     material = None
-    candidates: list[str] = []
     if with_family:
         candidates = match_material(with_family[0], materials)
         material = candidates[0] if candidates else None
@@ -335,14 +283,5 @@ def _propose_one(pid, name, hints, materials, thicknesses_for, aliases) -> Propo
         if thickness is None:
             conflicts.append(f"paksuutta {with_thickness[0].thickness_mm:g} mm ei ole "
                              f"hinnastossa materiaalille {material}")
-
-    if material and thickness and not conflicts:
-        confidence = HIGH if len(candidates) == 1 else MEDIUM
-    elif material:
-        confidence = MEDIUM if thickness else LOW
-    else:
-        confidence = LOW
     evidence = tuple(with_family[:2] + [h for h in with_thickness[:2] if h not in with_family])
-    raw = with_family[0].raw if with_family else (with_thickness[0].raw if with_thickness else "")
-    return Proposal(pid, name, material, thickness, confidence, evidence,
-                    "; ".join(conflicts), raw=raw)
+    return Proposal(pid, name, material, thickness, evidence, "; ".join(conflicts))

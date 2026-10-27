@@ -1,14 +1,6 @@
 """Reading materials from drawings and proposing catalogue materials."""
 
-from core.materials import (
-    HIGH,
-    Hint,
-    extract_hints,
-    load_aliases,
-    match_thickness,
-    propose,
-    save_aliases,
-)
+from core.materials import extract_hints, match_thickness, propose
 
 MATERIALS = ["S355MC", "S235JR", "RST 2B", "RST HARJATTU", "HST 2B", "ALUMIINI 5754", "DC01"]
 THICK = {"S355MC": ["2", "3"], "S235JR": ["2"], "RST 2B": ["1.5", "2.5"],
@@ -19,8 +11,8 @@ def _t(material):
     return THICK.get(material, [])
 
 
-def _one(hints, note=(), aliases=None):
-    return propose({"p": ("100325.dxf", list(hints))}, list(note), MATERIALS, _t, aliases)[0]
+def _one(hints):
+    return propose({"p": ("100325.dxf", list(hints))}, MATERIALS, _t)[0]
 
 
 def test_extract_grades_and_thickness():
@@ -31,11 +23,6 @@ def test_extract_grades_and_thickness():
     assert extract_hints("EN AW-5754 3 mm", "x")[0].family == "ALUMIINI"
     assert extract_hints("1.4404", "x")[0].family == "HST"
     assert extract_hints("DC01", "x")[0].family == "KY"
-
-
-def test_rfq_note_fills_parts_without_own_hints():
-    p = _one([], note=extract_hints("DXFt tulee s355 2mm", "Tarjouspyyntö"))
-    assert (p.material, p.thickness, p.conflict) == ("S355MC", "2", "")
 
 
 def test_pdf_stainless_maps_to_2b():
@@ -50,24 +37,10 @@ def test_disagreeing_thickness_is_a_conflict():
     assert "paksuus" in p.conflict
 
 
-def test_own_files_beat_the_note():
-    p = _one(extract_hints("S235JR 2 mm", "PDF"), note=extract_hints("S355 3 mm", "RFQ"))
-    assert (p.material, p.thickness, p.conflict) == ("S235JR", "2", "")
-
-
 def test_missing_thickness_is_flagged():
     p = _one(extract_hints("S355 4 mm", "PDF"))
     assert p.material == "S355MC" and p.thickness is None
     assert "ei ole hinnastossa" in p.conflict
-
-
-def test_alias_wins(tmp_path):
-    path = tmp_path / "aliases.json"
-    save_aliases({"  Customer  Steel X ": {"material": "DC01", "thickness": "1"}}, path)
-    aliases = load_aliases(path)
-    assert "customer steel x" in aliases
-    p = _one([Hint("PDF", "Customer steel X")], aliases=aliases)
-    assert (p.material, p.thickness, p.confidence, p.via) == ("DC01", "1", HIGH, "alias")
 
 
 def test_match_thickness_tolerance():
@@ -83,8 +56,8 @@ def test_hot_dip_galvanised_with_its_coating():
         ("SINK", "", 1.5), ("SINK", "Z275", None)]
     for materials in (["Kuumasinkitty Z275", "Sähkösinkitty ZE", "Kuumasinkitty DX51D+Z100MAC",
                        "DC01"], ["KU-SI DX51D+Z100", "KU-SI DX51D+Z275", "DC01"]):
-        p = propose({"p": ("x.dxf", hints)}, [], materials, lambda m: ["1", "1.5"])[0]
-        assert "Z275" in p.material and p.thickness == "1.5" and p.confidence == HIGH
+        p = propose({"p": ("x.dxf", hints)}, materials, lambda m: ["1", "1.5"])[0]
+        assert "Z275" in p.material and p.thickness == "1.5"
         assert not p.conflict
 
 

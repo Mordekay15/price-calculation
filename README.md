@@ -234,8 +234,7 @@ the price list (±0.05 mm).
 The card says what its material was read from. A card whose files disagree
 (two grades, or 3 mm and 2 mm) is left empty and says why, so you choose the
 material yourself. A card is searched again only when its files change, so a
-material you clear stays clear. Texts saved earlier in
-`material_aliases.json` still map to the material chosen for them.
+material you clear stays clear.
 
 ## Run locally
 
@@ -335,7 +334,7 @@ core/                   pure logic, no Streamlit
   linking.py            part numbers from file names; files → parts by name or text
   archive.py            dropped ZIPs: files folder by folder, nested ZIPs, Finnish names
   items.py              one card per part: grouping its files, choosing the shape
-  materials.py          material/thickness hints, proposals, alias table, optional Claude
+  materials.py          material/thickness hints, the Material field, proposals
   step.py               STEP: BOM with quantities, sheet unfolding, flat DXF, 3D mesh
   programs.py           repeatable programs: the kit search both packers share
   cutting_stock.py      the fewest-sheets plan: candidate sheets + integer program

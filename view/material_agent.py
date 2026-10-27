@@ -8,7 +8,7 @@ from dataclasses import replace
 
 import streamlit as st
 
-from core.materials import Hint, Proposal, extract_hints, load_aliases, propose
+from core.materials import Hint, Proposal, extract_hints, propose
 from view import attachments
 
 _AUTO = "dxf_material_auto"          # {card id: what it was filled from (see auto_fill)}
@@ -80,4 +80,4 @@ def _search(parts, doc_links, docs, materials, thicknesses_for) -> list[Proposal
                 hints += [replace(h, field=True) for h in
                           extract_hints(text, f"{doc['name']}, s. {page}, Material-kenttä")]
         by_part[fid] = (dxf.name, hints)
-    return propose(by_part, [], materials, thicknesses_for, load_aliases())
+    return propose(by_part, materials, thicknesses_for)
