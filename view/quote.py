@@ -59,7 +59,7 @@ class Totals:
 def render_header(clear_all=None):
     """The bar above the tabs: the quote's name, the batch sizes, the quote's
     details behind a button and, given ``clear_all`` (a callback), "Tyhjennä
-    kaikki" behind a confirmation. Returns the place for the totals, filled
+    kaikki" behind one confirming click. Returns the place for the totals, filled
     once the open tab has priced (``render_totals``). Both tabs read it back
     with ``current_info`` and ``current_sizes``."""
     d = QuoteInfo()
@@ -94,10 +94,10 @@ def render_header(clear_all=None):
             st.text_area("Lisätiedot tarjoukseen", key=_FIELDS["notes"], height=68)
         if clear_all is not None:
             with clear.popover("Tyhjennä kaikki", width="stretch"):
-                st.markdown("Poistetaanko kaikki tiedostot, osat ja tarjouksen tiedot?",
-                            help="Hinnastot ja työn hinnat sivupalkissa jäävät.")
                 st.button("Kyllä, tyhjennä", key="ui_clear_all", type="primary",
-                          on_click=clear_all)
+                          on_click=clear_all, width="stretch",
+                          help="Poistaa tiedostot, osat ja tarjouksen tiedot. Hinnastot ja "
+                               "työn hinnat sivupalkissa jäävät.")
         return st.container()
 
 

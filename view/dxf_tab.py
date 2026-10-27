@@ -165,9 +165,9 @@ def _render_next(screen: str) -> None:
 _KEPT = ("upload_", "copper_", "manual_route", "menu", "dxf_inbox")
 
 
-def _clear() -> None:
+def clear_all() -> None:
     """Everything of the quote at once: the files, the cards, the nesting, the
-    quote's details and the calculator; undone with "Kumoa" on step 1."""
+    quote's details and the calculator (and any "Kumoa" still offered)."""
     ss = st.session_state
     keep = set(RATE_KEYS)
     for key in [k for k in ss.keys() if isinstance(k, str)]:
@@ -175,9 +175,6 @@ def _clear() -> None:
             del ss[key]
     ss["dxf_inbox"] = ss.get("dxf_inbox", 0) + 1      # a fresh, empty drop area
     ss[MENU] = BOM
-
-
-clear_all = undoable(_clear, "kaikki")
 
 
 def _go(screen: str, only_open: bool = False) -> None:
