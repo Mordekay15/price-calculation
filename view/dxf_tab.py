@@ -61,8 +61,7 @@ MENU = "dxf_menu"   # the screens' menu, under "Edistynyt"
 
 # The keys of the widgets the screens draw, besides the cards'.
 _DRAWN_ON = [re.compile(p) for p in (
-    r"dxf_(doc_show_linked|doc_page|doc_link_.*|step_k_input|step_3d_.*|step_pick_.*"
-    r"|rfq_note|material_remember)",                                         # BOM
+    r"dxf_(doc_show_linked|doc_page|doc_link_.*|step_k_input|step_3d_.*|step_pick_.*)",  # BOM
     r"dxf_card_page.*|asm_(name|fit_min|weld_m|setup_min|eur_per_h|other_eur)_.*",
     r"dxf_(margin_pct|nest_mode|rankavali_mm|edge_.*|sparrow_t|angle_(0|90)|angle_mode"
     r"|su_select::.*)",                                                      # Nestaus
