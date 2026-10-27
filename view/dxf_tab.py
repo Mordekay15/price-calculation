@@ -127,7 +127,7 @@ def render(data: dict, screen: str | None):
     materials = materials_with_copper(lookup)
     if screen == BOM:
         auto_fill_materials(parts, materials, lookup)
-    # Per-part angles are chosen on the cards, by the Nestaus switch.
+    # Per-part angles are chosen on the Nestaus step, by its switch.
     per_part = len(parts) > 1 and st.session_state.get(ANGLE_MODE) == PER_PART
     with headless(screen != BOM):
         products = _render_part_cards(parts, materials, lookup, per_part)
@@ -150,14 +150,17 @@ def render(data: dict, screen: str | None):
 
 
 def _render_next(screen: str) -> None:
-    """The next step's button, at the end of the step: where the work on it
-    ends."""
-    nxt = SCREENS.index(screen) + 1
-    if nxt < len(SCREENS):
-        st.divider()
-        _, col = st.columns([3, 1])
-        col.button(f"Seuraava: {SCREENS[nxt]} →", key="ui_go_next", type="primary",
-                   on_click=_go, args=(SCREENS[nxt],), width="stretch")
+    """The previous and next step's buttons, at the end of the step: where
+    the work on it ends."""
+    at = SCREENS.index(screen)
+    st.divider()
+    back, _, nxt = st.columns([1, 2, 1])
+    if at > 0:
+        back.button(f"← {SCREENS[at - 1]}", key="ui_go_back", on_click=_go,
+                    args=(SCREENS[at - 1],), width="stretch")
+    if at + 1 < len(SCREENS):
+        nxt.button(f"Seuraava: {SCREENS[at + 1]} →", key="ui_go_next", type="primary",
+                   on_click=_go, args=(SCREENS[at + 1],), width="stretch")
 
 
 # Kept by "Tyhjennä kaikki": the sidebar (price lists, copper, work rates),
@@ -432,7 +435,8 @@ def _render_part_config(
 ) -> dict | None:
     """Draw one part's card, preview left and inputs right; return its product
     dict, or None if not priceable. Its ``angles`` are None (set later from the
-    run row) unless ``per_part_angles``. ``fill`` carries the "same material?"
+    run row) unless ``per_part_angles`` (then its own, chosen on the run row,
+    () when none is). ``fill`` carries the "same material?"
     question from card to card (see ``_offer_same_material``). ``doc_ids``
     are the supporting files linked to it (see ``view.attachments``). A card in
     an assembly (``per_assembly`` kpl in one) takes its quantity from the batch
@@ -501,17 +505,15 @@ def _render_part_config(
                                       bends=card_bends(report, item), threads=report.threads,
                                       fasteners=0 if in_assembly else card_fasteners(dxf, item),
                                       in_assembly=in_assembly)
-        # Under the preview, so the part is in view when choosing.
-        with preview_col:
-            angles = render_nesting_angles(fid, report) if per_part_angles else None
-        status = ("✓ valmis" if material and thickness and angles != ()
-                  else f"{_OPEN} valitse nestauskulma" if material and thickness
+        # Chosen on the Nestaus step, next to the run button (see
+        # ``dxf_nesting._render_angle_controls``); read here for the product.
+        with headless():
+            angles = render_nesting_angles(fid) if per_part_angles else None
+        status = ("✓ valmis" if material and thickness
                   else f"{_OPEN} valitse paksuus" if material
                   else f"{_OPEN} valitse materiaali")
         _row(fid, idx, dxf, status, Materiaali=material or "", Paksuus=thickness or "", Määrä=qty,
              **{"Koko (mm)": f"{size[0]:g} × {size[1]:g}"})
-        if angles == ():
-            return None
 
     return {
         "id":        fid,

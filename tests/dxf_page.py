@@ -28,7 +28,7 @@ ingest([SimpleNamespace(file_id=f"f{n[1:-4]}", name=n, getvalue=lambda: data) fo
 parts = list(st.session_state.get(STORE, {}).items())
 per_part = len(parts) > 1 and st.session_state.get(ANGLE_MODE) == PER_PART
 products = _render_part_cards(parts, ["S235"], {("2", "S235 | 1000x2000"): 900.0}, per_part)
-shared = _render_angle_controls(len(parts))
+shared = _render_angle_controls(len(parts), products)
 st.session_state["angles"] = [shared if shared is not None else p["angles"] for p in products]
 st.session_state["materials"] = [(p["material"], p["thickness"]) for p in products]
 st.session_state["qtys"] = [p["qty"] for p in products]

@@ -100,9 +100,8 @@ def _render_nesting(products, n_parts, lookup, nest_mode, sheet, margin_pct):
     st.divider()
     # Two rows above the button they apply to: the nesting angle, then the
     # search time with the buttons.
-    shared = _render_angle_controls(n_parts, products[0]["report"]
-                                    if n_parts == 1 and len(products) == 1 else None)
-    if shared == ():
+    shared = _render_angle_controls(n_parts, products)
+    if shared == () or shared is None and any(p["angles"] == () for p in products):
         return None, NestState(ready=False)  # no angle ticked: the warning says so
     c_time, c_run, c_update = st.columns([1, 2, 2], vertical_alignment="bottom")
     time_limit = c_time.number_input(
@@ -451,18 +450,19 @@ ANGLE_MODE = "dxf_angle_mode"
 _SHARED, PER_PART = "Sama kaikille", "Osakohtainen"
 
 
-def render_nesting_angles(fid: str = "", report: DxfReport | None = None) -> tuple[int, ...]:
+def render_nesting_angles(fid: str = "", report: DxfReport | None = None,
+                          label: str = "Sallittu nestauskulma") -> tuple[int, ...]:
     """Allowed nesting angles (see ``core.sparrow.NESTING_ANGLES``), both
     ticked by default; () with a warning when none is. Each is a tile showing
     the part (``report``'s, else a sample) as it would lie on the sheet, with
-    its tick under it. ``fid`` keys a card's own choice; without it, the run
-    row's shared one."""
+    its tick under it, below ``label``. ``fid`` keys a part's own choice;
+    without it, the shared one."""
     suffix = f"_{fid}" if fid else ""
     rings = ([report.outline.points, *(h.points for h in report.holes)]
              if report is not None and report.outline else None)
     angles = []
     box = st.container(width=240)   # the tiles side by side, not spread apart
-    box.caption("Sallittu nestauskulma", help=_ANGLE_HELP)
+    box.caption(label, help=_ANGLE_HELP)
     for a, col in zip(NESTING_ANGLES, box.columns(len(NESTING_ANGLES))):
         key = f"dxf_angle_{a}{suffix}"
         if not is_headless():
@@ -475,19 +475,25 @@ def render_nesting_angles(fid: str = "", report: DxfReport | None = None) -> tup
     return tuple(angles)
 
 
-def _render_angle_controls(n_parts: int, report: DxfReport | None = None
-                           ) -> tuple[int, ...] | None:
+_PER_ROW = 4
+
+
+def _render_angle_controls(n_parts: int, products: list[dict]) -> tuple[int, ...] | None:
     """The nesting-angle row above the run button: the angles every part gets,
-    or None when they are chosen per part on the cards (a switch offered only
-    for several parts, left of the angles). ``report``: the one part, drawn
-    on the tiles."""
+    or None when each part has its own (a switch offered only for several
+    parts, left of the angles); then each part's tiles are drawn here, a grid
+    under the switch, so they are chosen where they are used. One part is
+    drawn on the tiles itself; shared by several, a sample part."""
     if n_parts == 1:
         with st.columns([1, 3])[0]:
-            return render_nesting_angles(report=report)
+            return render_nesting_angles(report=products[0]["report"] if products else None)
     switch, angles = st.columns([2, 3], vertical_alignment="center")
     if switch.radio("Nestauskulma", (_SHARED, PER_PART), horizontal=True,
-                    key=ANGLE_MODE) == PER_PART:
-        angles.caption("Sallittu nestauskulma valitaan osakorteilla.")
-        return None
-    with angles:
-        return render_nesting_angles()
+                    key=ANGLE_MODE) != PER_PART:
+        with angles:
+            return render_nesting_angles()
+    for start in range(0, len(products), _PER_ROW):
+        for p, col in zip(products[start:start + _PER_ROW], st.columns(_PER_ROW)):
+            with col:
+                render_nesting_angles(p["id"], p["report"], p["name"])
+    return None
