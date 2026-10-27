@@ -440,11 +440,11 @@ def _parts_for_group(products: list[dict]) -> tuple[list, dict[str, float]]:
 
 # A part's nesting-angle choice (see ``core.sparrow.NESTING_ANGLES``): along
 # the rolling direction (0/180), across it (90/270), or both (free).
-_TURN_ICONS = {0: ":material/swap_horiz:", 90: ":material/swap_vert:"}
+_TURN_LABELS = {0: "0/180", 90: "90/270"}
 _ANGLE_HELP = (
     "Kuvan viivat ja nuoli näyttävät valssaussuunnan (levyn pitkä sivu). "
-    "⇄: osa levyssä niin kuin kuva sen näyttää (0/180). ⇅: käännettynä "
-    "poikittain (90/270). Molemmat valittuina osa saa kääntyä vapaasti."
+    "0/180: osa levyssä niin kuin kuva sen näyttää, 90/270: käännettynä "
+    "poikittain. Molemmat valittuina osa saa kääntyä vapaasti."
 )
 
 
@@ -463,8 +463,8 @@ def render_nesting_angles(fid: str = "", report: DxfReport | None = None,
     """Allowed nesting angles (see ``core.sparrow.NESTING_ANGLES``), both by
     default; () with a warning when none is. A picture of the part
     (``report``'s, else a sample) as it would lie on the sheet, turned
-    across when only that is chosen, and the two arrows beside it, under
-    ``label`` (without ``picture``, the arrows alone). ``fid`` keys a part's
+    across when only that is chosen, and the two choices beside it, under
+    ``label`` (without ``picture``, the choices alone). ``fid`` keys a part's
     own choice; without it, the shared one."""
     key = turn_key(fid)
     choice = st.container()
@@ -477,7 +477,7 @@ def render_nesting_angles(fid: str = "", report: DxfReport | None = None,
         drawn.markdown(orientation_svg(rings, 90 if turned else 0, True, px),
                          unsafe_allow_html=True)
     chosen = choice.pills(label, NESTING_ANGLES, selection_mode="multi",
-                          default=list(NESTING_ANGLES), key=key, format_func=_TURN_ICONS.get,
+                          default=list(NESTING_ANGLES), key=key, format_func=_TURN_LABELS.get,
                           help=_ANGLE_HELP if not fid else None)
     if not chosen:
         choice.warning("Valitse suunta.")
@@ -491,13 +491,14 @@ _ROWS_SHOWN = 4   # more parts than this many rows scroll in their own box
 def _render_angle_controls(n_parts: int, products: list[dict]) -> tuple[int, ...] | None:
     """The nesting-angle row above the run button: the angles every part gets,
     or None when each part has its own (a switch offered only for several
-    parts, beside the arrows); then every part's choice is drawn here, a
+    parts, before the shared choice); then every part's choice is drawn here, a
     compact grid under the switch (scrolling when long), so they are chosen
-    where they are used. One part is drawn beside its arrows."""
+    where they are used. One part is drawn beside its choices."""
     if n_parts == 1:
         with st.columns([1, 2])[0]:
             return render_nesting_angles(report=products[0]["report"] if products else None)
-    shared, switch, _ = st.columns([1, 1, 2], vertical_alignment="bottom")
+    # The switch first, so it stays put when the shared choice goes.
+    switch, shared, _ = st.columns([1, 1, 2], vertical_alignment="bottom")
     if not switch.toggle("Osakohtainen", key=ANGLE_MODE,
                          help="Valitse nestauskulma jokaiselle osalle erikseen."):
         with shared:
