@@ -134,7 +134,14 @@ and in the whole model. Each body is checked for sheet metal:
   default 0.44). The flat outline, holes and bend lines become a part card,
   with the model's total as its quantity. The card's bends come from the bend
   lines (layers `BEND_UP` / `BEND_DOWN`), so the work cost uses them. The thickness note (`t = 2 mm`) is read
-  by the material proposals.
+  for the material.
+- **What counts as a bend.** Each cylinder of the skin is a bend, as in
+  FreeCAD's SheetMetal unfolder: tabs notched apart and the bridges either
+  side of a slot each count. One cylinder exported as several faces (same
+  axis and radius) is one bend, its angles added up; a sliver left where a
+  notch cuts into a bend is not a bend. A cylinder that ends in a face curved
+  both ways (sphere, torus) belongs to a pressed form, such as a louvre: it
+  is not a bend, and the card says how many forms the model has.
 - The unfolded part is on the card of its part number with the part's DXF,
   if there is one; the card's shape is chosen as described in
   [One card per part](#one-card-per-part-dxf-tab).

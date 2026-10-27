@@ -37,6 +37,7 @@ from view.dxf_files import (
     card_bends,
     card_docs,
     card_fasteners,
+    card_forms,
     card_report,
     empty_cards,
     evict,
@@ -279,6 +280,9 @@ def _render_part_config(
         if not is_headless():
             with preview_col:
                 _render_preview(report, model_bends(fid, report, item))
+                if forms := card_forms(item):
+                    st.caption(f"{forms} painomuotoa (esim. kidukset) STEP-mallissa: niitä ei "
+                               "lasketa taivutuksiksi.")
         if size is None:
             return None
         with input_col:

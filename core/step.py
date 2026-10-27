@@ -65,6 +65,7 @@ class FlatPart:
     outline: list = field(default_factory=list)   # [(x, y)], closed
     holes: list = field(default_factory=list)
     bends: list[Bend] = field(default_factory=list)
+    forms: int = 0                                # louvres, beads…: pressed, not bent
     reason: str = ""                              # why not sheet, or a warning
 
     @property
@@ -312,7 +313,7 @@ class _Face:
     def __init__(self, face):
         from OCP.BRepAdaptor import BRepAdaptor_Surface
         from OCP.BRepGProp import BRepGProp
-        from OCP.GeomAbs import GeomAbs_Cylinder, GeomAbs_Plane
+        from OCP.GeomAbs import GeomAbs_Cylinder, GeomAbs_Plane, GeomAbs_Sphere, GeomAbs_Torus
         from OCP.GProp import GProp_GProps
 
         self.face = face
@@ -320,6 +321,8 @@ class _Face:
         kind = surf.GetType()
         self.kind = ("plane" if kind == GeomAbs_Plane
                      else "cylinder" if kind == GeomAbs_Cylinder else "other")
+        # Curved both ways: pressed by a forming tool, not bent on a brake.
+        self.pressed = kind in (GeomAbs_Sphere, GeomAbs_Torus)
         props = GProp_GProps()
         BRepGProp.SurfaceProperties_s(face, props)
         self.area = props.Mass()
@@ -483,9 +486,14 @@ def _lay_flat(faces: list, base, t: float, flat: FlatPart, k: float) -> None:
     from core.geometry import area
     loops.sort(key=lambda lp: abs(area(lp)), reverse=True)
     flat.outline, flat.holes = loops[0], loops[1:]
-    flat.bends = _bends(faces, bend_faces, {
+    # A bend face that ends in a face curved both ways (a louvre's hood and
+    # hinge end in spheres and tori) is part of a pressed form, not a bend.
+    pressed = {i for i, f in enumerate(faces) if f.pressed}
+    formed = {j for j, _ in bend_faces if any(i in pressed for _, i in neighbours(j))}
+    flat.bends = _bends(faces, [b for b in bend_faces if b[0] not in formed], {
         j: [(edge, edge_faces.get(hash(edge), set()) & skin - {j}) for edge in _edges(faces[j].face)]
         for j, _ in bend_faces})
+    flat.forms = _count_forms(formed, pressed, neighbours)
     flat.is_sheet = True
 
     # The flat area times the thickness should give the volume (exactly at
@@ -551,6 +559,25 @@ def _side2(e2, e3, w3, normal):
     from the outward normal."""
     hand = 1.0 if _dot(_cross(e3, w3), normal) >= 0 else -1.0
     return (-e2[1] * hand, e2[0] * hand)
+
+
+def _count_forms(formed: set[int], pressed: set[int], neighbours) -> int:
+    """The pressed forms: the formed bend faces, joined through the faces
+    curved both ways around them."""
+    seen: set[int] = set()
+    count = 0
+    for start in formed:
+        if start in seen:
+            continue
+        count += 1
+        seen.add(start)
+        stack = [start]
+        while stack:
+            for _, j in neighbours(stack.pop()):
+                if j not in seen and (j in formed or j in pressed):
+                    seen.add(j)
+                    stack.append(j)
+    return count
 
 
 def _bends(faces, bend_faces, edges) -> list[Bend]:

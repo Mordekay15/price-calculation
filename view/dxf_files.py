@@ -457,6 +457,13 @@ def card_bends(report: DxfReport, item: Item | None) -> int:
     return len(flats[0].bends) if flats else report.bends
 
 
+def card_forms(item: Item | None) -> int:
+    """The pressed forms (louvres, beads) of the card's STEP model: not
+    counted as bends."""
+    flats = step_flats(item)
+    return flats[0].forms if flats else 0
+
+
 def card_fasteners(dxf: DxfFile, item: Item | None) -> int:
     """The fasteners the notes of the card's files ask for (the most any one
     file asks for: a flat and its drawing repeat the same note)."""
