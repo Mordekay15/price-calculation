@@ -83,7 +83,7 @@ _DRAWN_ON = [re.compile(p) for p in (
     r"dxf_(doc_show_linked|doc_page|doc_link_.*|step_k_input|step_3d_.*|step_pick_.*)",  # BOM
     r"dxf_card_page.*|dxf_(only_open|view|parts_table|bulk_.*)"
     r"|asm_(name|fit_min|weld_m|setup_min|eur_per_h|other_eur)_.*",
-    r"dxf_(margin_pct|nest_mode|rankavali_mm|edge_.*|sparrow_t|auto_nest|angle_(0|90)|angle_mode"
+    r"dxf_(margin_pct|nest_mode|rankavali_mm|edge_.*|sparrow_t|angle_(0|90)|angle_mode"
     r"|su_select::.*)",                                                      # Nestaus
     r"quote_(breakdown_q|pdf_mat|dxf_name|dxf_marks)_dxf",                   # Hinnoittelu
 )]
@@ -136,11 +136,11 @@ def render(data: dict, screen: str | None):
             key_prefix="dxf", separate_label="Laske jokainen osa erikseen")
     totals, nest = None, NestState()
     if any(is_ready(p) for p in products):
-        # Nested by themselves on Nestaus and Hinnoittelu; on step 1 only
-        # priced from what is nested, so typing on a card stays quick.
+        # Priced from what is nested on every step, so the bar is live;
+        # Sparrow runs only from the Nestaus buttons.
         totals, nest = render_nesting(products, len(parts), lookup, nest_mode, sheet,
                                       margin_pct, nesting=screen == NESTING,
-                                      prices=screen == PRICING, auto=screen != BOM)
+                                      prices=screen == PRICING)
     elif screen != BOM:
         st.info(f"Valitse materiaali ja paksuus vähintään yhdelle osalle ({BOM}).")
     with strip:
@@ -178,8 +178,8 @@ def _render_start() -> None:
         ("2 · Tarkista osat", "Materiaali ja määrä.",
          "Materiaali ja paksuus täytetään piirustuksista, kun ne löytyvät. Yläreunan tila "
          "kertoo, mitä vielä puuttuu."),
-        ("3 · Nestaus ja hinta", "Laskee itsestään.",
-         "Levyt nestataan itsestään, ja summa näkyy sivun ylälaidassa. Tarjous-PDF "
+        ("3 · Nestaus ja hinta", "Laske levykäyttö, lataa PDF.",
+         "Nestaus lasketaan painikkeesta, ja summa näkyy sivun ylälaidassa. Tarjous-PDF "
          "ladataan kohdasta 3 · Hinnoittelu."),
     )
     for col, (title, text, more) in zip(st.columns(3), steps):

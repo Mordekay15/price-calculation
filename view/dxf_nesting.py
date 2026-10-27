@@ -70,27 +70,22 @@ class NestState:
     ready: bool = True      # False: Sparrow is missing, or no nesting angle
 
 
-AUTO_NEST = "dxf_auto_nest"     # nest new groups by themselves
-_AUTO_TRIED = "dxf_auto_tried"  # {signature} of groups nested by themselves so far
-
-
 def render_nesting(products: list[dict], n_parts: int, lookup: dict, nest_mode: str,
                    sheet: SheetSettings, margin_pct: float, *, nesting: bool = True,
-                   prices: bool = False, auto: bool = False):
+                   prices: bool = False):
     """The run row and every group's result (drawn when ``nesting``), then
-    the prices (drawn when ``prices``); both run either way. ``auto``: groups
-    with no result are nested now, without the button, if "Laske
-    automaattisesti" is on. ``products`` are what the part cards return.
+    the prices (drawn when ``prices``); both run either way, and Sparrow
+    runs only from the buttons. ``products`` are what the part cards return.
     Returns ``(quote.Totals or None, NestState)``."""
     with headless(not nesting):
         priced, state = _render_nesting(products, n_parts, lookup, nest_mode, sheet,
-                                        margin_pct, auto=auto)
+                                        margin_pct)
     with headless(not prices):
         totals = _render_prices(products, priced, margin_pct)
     return totals, state
 
 
-def _render_nesting(products, n_parts, lookup, nest_mode, sheet, margin_pct, *, auto=False):
+def _render_nesting(products, n_parts, lookup, nest_mode, sheet, margin_pct):
     """The run row and the groups; returns what ``_show`` priced (or None)
     and the ``NestState``."""
     exe = find_executable()
@@ -108,16 +103,12 @@ def _render_nesting(products, n_parts, lookup, nest_mode, sheet, margin_pct, *, 
     shared = _render_angle_controls(n_parts)
     if shared == ():
         return None, NestState(ready=False)  # no angle ticked: the warning says so
-    c_time, c_run, c_update, c_auto = st.columns([1, 2, 2, 2], vertical_alignment="bottom")
+    c_time, c_run, c_update = st.columns([1, 2, 2], vertical_alignment="bottom")
     time_limit = c_time.number_input(
         "Sijoittelun hakuaika (s)", min_value=1, value=4, step=1, key="dxf_sparrow_t",
         help="Aikaraja yhdelle sijoitteluyritykselle (levyä kohden tehdään "
              "yksi tai useampi). Pidempi aika voi löytää tiiviimmän sijoittelun, "
              "mutta laskenta kestää kauemmin.")
-    by_itself = c_auto.toggle(
-        "Laske automaattisesti", value=True, key=AUTO_NEST,
-        help="Uudet osat nestataan itsestään, kun Nestaus tai Hinnoittelu avataan. "
-             "Eri asetuksilla laskettuja ei lasketa uudelleen ilman painiketta.")
     if shared is not None:
         products = [{**p, "angles": shared} for p in products]
     groups = group_products(products, nest_mode)
@@ -125,13 +116,6 @@ def _render_nesting(products, n_parts, lookup, nest_mode, sheet, margin_pct, *, 
     cache: dict = st.session_state.setdefault(_CACHE, {})
     n_new, n_stale = _count_pending(groups, settings, cache)
     run, update = _render_run_buttons(c_run, c_update, n_new, n_stale, len(groups))
-    if auto and by_itself and n_new and not run:
-        # Each group once: one that can't be nested isn't tried on every run.
-        pending = {_sig(k, prods, settings) for k, prods in groups.items()
-                   if parse_thickness_mm(k[1]) is not None} - set(cache)
-        tried: set = st.session_state.setdefault(_AUTO_TRIED, set())
-        run = bool(pending - tried)
-        tried |= pending
     st.divider()  # the run buttons above, the results below
     renest = st.session_state.pop(_RENEST, set())
     replanned, priced = _show(groups, settings, cache, _nester(lookup, settings, exe),
@@ -411,8 +395,8 @@ def _render_prices(products: list[dict], priced: tuple | None, margin_pct: float
         return None
     groups, areas, (prices, grand_total, missing, sheets, totals) = priced
     if missing and grand_total is None:
-        st.info("Levyjä ei ole vielä nestattu: avaa 2 · Nestaus, tai laita "
-                "automaattinen laskenta päälle siellä.")
+        st.info("Levyjä ei ole vielä nestattu: paina **Laske levykäyttö** kohdassa "
+                "2 · Nestaus.")
         return None
     if missing:
         st.warning("Hinnoissa ovat vain lasketut ryhmät: laske loput "

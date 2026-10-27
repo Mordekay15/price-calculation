@@ -66,7 +66,6 @@ def test_each_screen_keeps_the_others_inputs_and_prices_on_hinnoittelu(tmp_path,
     at.selectbox(key="dxf_mat_f0").select("S235").run()
     at.selectbox(key="dxf_th_f0").select("2").run()
     at.number_input(key="work_bends_f0").set_value(3.0).run()     # work is on the card
-    at.session_state["dxf_auto_nest"] = False
     at.session_state["dxf_menu"] = PRICING
     at.run()
     assert any("ei ole vielä nestattu" in i.value for i in at.info)
@@ -94,16 +93,14 @@ def test_each_screen_keeps_the_others_inputs_and_prices_on_hinnoittelu(tmp_path,
     at.run()
     assert at.number_input(key="dxf_sparrow_t").value == 1
     assert at.button(key="dxf_sparrow_run").label.endswith("kaikki laskettu")
-    # With "Laske automaattisesti" on, a new quantity is nested by itself.
-    at.toggle(key="dxf_auto_nest").set_value(True).run()
+    # A new quantity waits for the button: nothing is nested by itself.
     at.session_state["dxf_menu"] = BOM
     at.run()
     at.number_input(key="dxf_q_f0").set_value(12).run()
-    at.session_state["dxf_menu"] = PRICING
+    at.session_state["dxf_menu"] = NESTING
     at.run()
     assert not at.exception
-    assert not any("ei ole vielä nestattu" in i.value for i in at.info)
-    assert any("Taivutus" in d.value.columns for d in at.dataframe)
+    assert not at.button(key="dxf_sparrow_run").disabled
 
 
 def test_a_dxf_part_is_nested_for_the_largest_batch_size_unless_typed():
