@@ -59,7 +59,7 @@ the quantity). Work has no margin; its rates are selling prices.
   € per batch.
 - **Setup** per batch by the number of work phases: 40 / 60 / 80 €.
 
-A value in an input that you haven't typed is the automatic one; typing replaces it, clearing the
+An input starts with its automatic value; typing replaces it, clearing the
 input goes back to it. The rates are under **Työn hinnat** in the sidebar.
 
 ## Quote (Tarjous) and batch sizes
@@ -212,7 +212,7 @@ parts, work and contents.
 - **Apart from the loose parts.** **Osat** lists only the parts in no
   assembly. Each assembly below it shows its own cards, paged the same way.
   Their **Määrä** starts as kpl / kokoonpano × the largest batch size (a
-  loose card's as its BOM quantity or the largest batch size), shown in the field: the quantity they
+  loose card's as its BOM quantity or the largest batch size), filled in: the quantity they
   are nested at. A typed Määrä is nested instead; clearing it goes back.
 - **No cost twice.** A card in an assembly has no fasteners or welding: the
   assembly's bought parts (PEM nuts and studs too, with their pressing as
