@@ -126,10 +126,10 @@ def _render_summary(active: SheetOption, n_pieces: int) -> None:
     m[4].metric("Käyttöaste", f"{active.utilization * 100:.1f} %",
                 help="Osien pinta-ala veloitettujen levyjen pinta-alasta.")
     if active.utilization < _LOW_USE:
-        st.caption(f":orange[Käyttöaste on alhainen ({active.utilization * 100:.0f} %): suurin "
-                   "osa levystä jää hukaksi tai jäännökseksi. Pienempi levykoko taulukosta, "
-                   "suurempi määrä tai osien yhdistäminen samalle levylle muiden kanssa "
-                   "(Sijoittelutapa) voi laskea kappalehintaa.]")
+        st.caption(":orange[Alhainen käyttöaste]",
+                   help="Suurin osa levystä jää hukaksi tai jäännökseksi. Pienempi levykoko "
+                        "taulukosta, suurempi määrä tai osien yhdistäminen samalle levylle "
+                        "(Sijoittelutapa) voi laskea kappalehintaa.")
 
 
 _LOW_USE = 0.20     # below this, the strip says how the material could cost less
@@ -152,9 +152,9 @@ def _render_last_share(active: SheetOption, key: str) -> None:
         note.warning(f"Osat tarvitsevat vähintään {need:.0f} % levystä: "
                      f"veloitetaan {active.last_share * 100:.0f} %.")
     else:
-        note.caption(f"Osat vievät {need:.0f} % viimeisen levyn pituudesta. "
-                     "Kuvassa veloitettu osa on rajattu katkoviivalla, jäännöslevy "
-                     "on viivoitettu.")
+        note.caption(f"Osat vievät {need:.0f} % viimeisestä levystä",
+                     help="Kuvassa veloitettu osa on rajattu katkoviivalla, jäännöslevy "
+                          "on viivoitettu.")
 
 
 _PROGRAMS_HELP = (

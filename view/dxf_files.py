@@ -91,9 +91,9 @@ def render_drop_area() -> list[tuple[str, DxfFile]]:
     skipped = st.session_state.get(_SKIPPED)
     if skipped:
         more = len(skipped) - _SKIPPED_SHOWN
-        st.caption(f"Ohitettiin {len(skipped)} tiedostoa, joita ei tarvita "
-                   f"hinnoitteluun: {', '.join(skipped[:_SKIPPED_SHOWN])}"
-                   + (f" ja {more} muuta" if more > 0 else ""))
+        st.caption(f"Ohitettiin {len(skipped)} tiedostoa",
+                   help="Ei tarvita hinnoitteluun: " + ", ".join(skipped[:_SKIPPED_SHOWN])
+                        + (f" ja {more} muuta" if more > 0 else ""))
     render_waiting(None)
     _warn_duplicates(parts)
     labels = {fid: f"#{i + 1} · {dxf.name}" for i, (fid, dxf) in enumerate(parts)}

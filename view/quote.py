@@ -73,7 +73,6 @@ def render_header():
             "Tarjous " + ss["quote_number"] if ss.get("quote_number") else "Uusi tarjous",
             ss.get("quote_customer")]))
         name.markdown(f"#### {title}")
-        name.caption("Stremet Price Tool")
         sizes.text_input("Eräkoot (kpl)", value=" ".join(map(str, DEFAULT_BATCH_SIZES)),
                          key=_SIZES_KEY,
                          help="Jokainen osa hinnoitellaan näillä kappalemäärillä, esim. "
@@ -103,7 +102,7 @@ def render_totals(slot, totals: Totals | None) -> None:
     hinta?" (what it is made of)."""
     with slot:
         if totals is None or not totals.totals:
-            st.caption("Hinta näkyy tässä, kun ensimmäinen osa on hinnoiteltu.")
+            st.caption("Ei vielä hintaa")
             return
         cols = st.columns([2] * len(totals.sizes) + [3], vertical_alignment="center")
         for i, (col, q, t) in enumerate(zip(cols, totals.sizes, totals.totals)):
@@ -127,9 +126,8 @@ def _render_why(q: int, total: float, parts: dict[str, float],
     rows = [{"Mistä": k, "€": round(v, 2), "Osuus": f"{v / total * 100:.0f} %" if total else ""}
             for k, v in parts.items() if abs(v) >= 0.005]
     st.dataframe(rows, hide_index=True, width="stretch")
-    st.caption("Materiaali on nestattujen levyjen hinta"
-               + (f" materiaalin katteella ({margin_pct:g} %)" if margin_pct is not None else "")
-               + ". Asetus on erän kiinteä kulu. Tarkempi erittely osittain: Hinnoittelu.")
+    st.caption("Materiaali sis. katteen" + (f" {margin_pct:g} %" if margin_pct is not None else "")
+               + ". Osittain: 3 · Hinnoittelu.")
 
 
 def current_sizes() -> list[int]:
@@ -232,7 +230,6 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
         + (" 🧩 Kokoonpanon └-rivit ovat sen osuuksia yhdestä kokoonpanosta "
            "(kpl / kokoonpano × €/kpl), ja niiden summa on kokoonpanon kpl-hinta."
            if assemblies and table else "")))
-    st.caption("Tarjouksen summa kullakin eräkoolla on sivun ylälaidassa.")
     if table:
         _render_table(lines, members, sizes, lead)
     _render_breakdown(costs, names, by_part, priced, sizes, rates, key, folded=table)
@@ -302,9 +299,7 @@ def _render_customer_view(info: QuoteInfo, lines: list[QuoteLine], sizes: list[i
                      **{f"{q} kpl, €/kpl": None if t is None else round(t, 2)
                         for q, t in zip(sizes, totals)}})
         st.dataframe(rows, hide_index=True, width="stretch", key=f"quote_preview_{key}")
-        st.caption("Viimeinen rivi on tarjouksen summa kullakin eräkoolla (ALV 0 %). "
-                   + (info.payment_terms and f"Maksuehto: {info.payment_terms}. " or "")
-                   + (info.delivery and f"Toimitus: {info.delivery}." or ""))
+        st.caption("ALV 0 %")
 
 
 def _file(make, package: str, slot) -> bytes | None:

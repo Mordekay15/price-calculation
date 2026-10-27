@@ -171,22 +171,20 @@ def _go(screen: str, only_open: bool = False) -> None:
 
 def _render_start() -> None:
     """The empty step 1: what happens, in three steps."""
-    st.markdown("##### Tarjous kolmessa vaiheessa")
     steps = (
-        ("1 · Pudota tiedostot",
-         "DXF, DWG, STEP ja PDF, tai koko ZIP yllä olevaan alueeseen. Saman osanumeron "
-         "tiedostot kootaan yhdeksi osaksi, ja kokoonpanot tunnistetaan STEP-malleista "
-         "ja kokoonpanopiirustuksista."),
-        ("2 · Tarkista osat",
-         "Materiaali ja paksuus täytetään piirustuksista, kun ne löytyvät. Yläreunan "
-         "tila kertoo, mitä vielä puuttuu, ja vie suoraan niihin osiin."),
-        ("3 · Nestaus ja hinta",
-         "Levyt nestataan itsestään, ja tarjouksen summa jokaisella eräkoolla näkyy "
-         "heti sivun ylälaidassa. Tarjous-PDF ladataan kohdasta 3 · Hinnoittelu."),
+        ("1 · Pudota tiedostot", "DXF, DWG, STEP, PDF tai ZIP.",
+         "Saman osanumeron tiedostot kootaan yhdeksi osaksi, ja kokoonpanot tunnistetaan "
+         "STEP-malleista ja kokoonpanopiirustuksista."),
+        ("2 · Tarkista osat", "Materiaali ja määrä.",
+         "Materiaali ja paksuus täytetään piirustuksista, kun ne löytyvät. Yläreunan tila "
+         "kertoo, mitä vielä puuttuu."),
+        ("3 · Nestaus ja hinta", "Laskee itsestään.",
+         "Levyt nestataan itsestään, ja summa näkyy sivun ylälaidassa. Tarjous-PDF "
+         "ladataan kohdasta 3 · Hinnoittelu."),
     )
-    for col, (title, text) in zip(st.columns(3), steps):
+    for col, (title, text, more) in zip(st.columns(3), steps):
         with col.container(border=True):
-            st.markdown(f"**{title}**")
+            st.markdown(f"**{title}**", help=more)
             st.caption(text)
 
 
@@ -226,13 +224,13 @@ def _render_status(screen: str, nest: NestState, priced: bool) -> None:
     with st.container(border=True):
         flow, action = st.columns([5, 2], vertical_alignment="center")
         flow.markdown("  →  ".join(
-            (f"**{s}**" if s == screen else s) + " " + state(s) for s in SCREENS))
+            (f"**{s}**" if s == screen else s) + " " + state(s) for s in SCREENS),
+            help="Luettu: " + " · ".join(read))
         what = {}
         for reason in issues.values():
             what[reason] = what.get(reason, 0) + 1
-        flow.caption("Luettu: " + " · ".join(read) + (
-            "  \nKesken: " + " · ".join(f"{r} ({n})" for r, n in what.items())
-            if what else ""))
+        if what:
+            flow.caption("Kesken: " + " · ".join(f"{r} ({n})" for r, n in what.items()))
         if issues and not (screen == BOM and ss.get(_ONLY_OPEN)):
             action.button(f"Näytä keskeneräiset ({len(issues)})", key="ui_go_open",
                           on_click=_go, args=(BOM, True), width="stretch")
@@ -345,11 +343,9 @@ def _render_table(fids: list[str], rows: dict[str, dict], materials: list[str],
                  key=_TABLE, on_select="rerun", selection_mode="multi-row",
                  hide_index=True, width="stretch")
     if not picked:
-        st.caption("Valitse rivi avataksesi osan kortin, tai useita rivejä antaaksesi "
-                   "niille saman materiaalin.")
+        st.caption("Valitse rivi", help="Yksi rivi avaa osan kortin alle; useille riveille "
+                                        "voi antaa saman materiaalin kerralla.")
         return
-    if len(picked) == 1:
-        st.caption("Valitun osan kortti on alla.")
     with st.container(border=True):
         st.markdown(f"**Aseta valituille ({len(picked)} osaa)**")
         cols = st.columns([2, 2, 1], vertical_alignment="bottom")
@@ -471,8 +467,9 @@ def _render_part_config(
             with preview_col:
                 _render_preview(report, model_bends(fid, report, item))
                 if forms := card_forms(item):
-                    st.caption(f"{forms} painomuotoa (esim. kidukset) STEP-mallissa: niitä ei "
-                               "lasketa taivutuksiksi.")
+                    st.caption(f"{forms} painomuotoa",
+                               help="Painomuodot (esim. kidukset) STEP-mallissa: niitä ei "
+                                    "lasketa taivutuksiksi.")
         if size is None:
             _row(fid, idx, dxf, f"{_PROBLEM} ei hinnoiteltavissa" if report.problems
                  else f"{_OPEN} vahvista mittayksikkö")
@@ -522,13 +519,12 @@ def _render_preview(report: DxfReport, bends: list | None = None) -> None:
         st.caption("Taivutuslinjat STEP-mallista: :green[ylös] · :orange[alas]")
     slits = sum(map(is_slit, report.open_lines))
     if slits:
-        st.caption(f"{slits} rakoa (suoria leikkauksia osan sisällä) on mukana "
-                   "leikkuupituudessa.")
+        st.caption(f"{slits} rakoa", help="Suorat leikkaukset osan sisällä ovat mukana "
+                                         "leikkuupituudessa.")
     if report.dropped_count:
-        st.caption(
-            f"Osan ulkopuolelta ohitettiin {report.dropped_count} kuviota "
-            "(esim. lisäkuvat tai irralliset viivat) — harmaalla esikatselussa."
-        )
+        st.caption(f"{report.dropped_count} kuviota ohitettu",
+                   help="Osan ulkopuolella olevat kuviot (esim. lisäkuvat tai irralliset "
+                        "viivat) eivät ole osaa; ne ovat harmaalla esikatselussa.")
 
 
 def _unit_reason(dxf: DxfFile, report: DxfReport, item: Item | None, doc_ids) -> str | None:
@@ -562,8 +558,8 @@ def _checked_size(fid: str, dxf: DxfFile, report: DxfReport, badge,
     # gives and price only once the user confirms it. The warning goes above
     # the checkbox and only while it is unticked.
     if dxf.unit_guessed and confirmed:
-        st.caption(f"Mittayksikkö puuttuu tiedostosta; {report.unit_label} vahvistettu: "
-                   f"{confirmed}.")
+        st.caption(f"Yksikkö {report.unit_label} vahvistettu",
+                   help=f"Mittayksikkö puuttuu tiedostosta; vahvistettu: {confirmed}.")
     elif dxf.unit_guessed:
         note = st.empty()
         if not st.checkbox(f"Koko {width:g} × {height:g} mm on oikein",
@@ -605,7 +601,7 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict,
     cfg["thickness"] = thickness
     note = material_agent.auto_note(fid, material, thickness)
     if note:
-        st.caption("Materiaali täytetty automaattisesti", help=note)
+        st.caption("Täytetty automaattisesti", help=note)
     elif not material and (check := material_agent.check_note(fid)):
         st.warning(f"Piirustukset eivät ole yksimielisiä materiaalista ({check}). "
                    "Valitse materiaali itse.")
@@ -619,8 +615,6 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict,
     col = st.columns(2)[0]
     qty = auto_input(col, "Määrä (kpl)", f"dxf_q_{fid}", auto, step=1.0, fmt="%.0f",
                      help="Levyt nestataan tälle määrälle. Oletus: " + why + ".")
-    if in_bom and not per_assembly:
-        col.caption(f"Määrä BOM:sta: {in_bom[0]} kpl", help=", ".join(in_bom[1]))
     return material, thickness, max(int(qty), 1)
 
 
