@@ -30,6 +30,7 @@ from core.linking import base_key, callouts
 from core.work import FASTENER_INSERT_EUR
 from view import bom
 from view.ui import is_headless, st
+from view.undo import undoable
 
 ASSEMBLIES = "dxf_assemblies"
 _SEEN = "dxf_assemblies_seen"      # STEP file ids already made into assemblies
@@ -179,7 +180,8 @@ def _render_one(aid: str, a: dict, card_of: dict[str, str],
         c1, c2 = st.columns([6, 1], vertical_alignment="bottom")
         a["name"] = c1.text_input("Kokoonpano", value=a["name"], key=f"asm_name_{aid}",
                                   help=_ORIGIN.get(next((k for k in _ORIGIN if a.get(k)), "")))
-        c2.button("Poista", key=f"asm_del_{aid}", on_click=_remove,
+        c2.button("Poista", key=f"asm_del_{aid}",
+                  on_click=undoable(_remove, f"kokoonpano {a['name']}"),
                   args=(aid, card_of, remove_card),
                   help="Poistaa kokoonpanon ja sen osat (kortit, piirustuksen ja STEP-mallin).")
         if a.get("awaited"):

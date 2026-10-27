@@ -246,6 +246,8 @@ def draw_sparrow_layout(option: SheetOption, parts: list) -> None:
             if i < len(parts) else f"#{i + 1}")
         for i in used
     ])
+    st.caption("Värit ja numerot ovat osat (#numero kuten osakortilla). Harmaa kaista on "
+               "reunavara, jolle ei sijoiteta osia; katkoviivat ovat taivutuslinjoja.")
     # A part with a fixed nesting angle lies to the rolling direction.
     if any(not parts[i].turns for i in used if i < len(parts)):
         st.caption("Valssaussuunta → levyn pitkä sivu (kuvissa vaakasuunta)")

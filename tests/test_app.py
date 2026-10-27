@@ -3,26 +3,26 @@
 from streamlit.testing.v1 import AppTest
 
 
+FILES, MANUAL = "Tarjous tiedostoista", "Pikalaskuri (käsin)"
+BOM, NESTING, PRICING = "1 · Osat ja tiedostot", "2 · Nestaus", "3 · Hinnoittelu"
+
+
 def test_app_renders_the_menu_and_each_screen():
     at = AppTest.from_file("../app.py", default_timeout=60).run()
     assert not at.exception
-    assert [t.label for t in at.tabs] == ["Peruslaskuri", "Edistynyt"]
-    at.session_state["menu"] = "Edistynyt"
-    at.run()
-    assert [t.label for t in at.tabs] == [
-        "Peruslaskuri", "Edistynyt", "BOM & Tiedostot", "Nestaus", "Hinnoittelu"]
-    for screen in ("Nestaus", "Hinnoittelu", "BOM & Tiedostot"):
+    assert sorted(t.label for t in at.tabs) == sorted([FILES, MANUAL, BOM, NESTING, PRICING])
+    for screen in (NESTING, PRICING, BOM):
         at.session_state["dxf_menu"] = screen
         at.run()
         assert not at.exception
-    at.session_state["dxf_menu"] = "Nestaus"
+    at.session_state["dxf_menu"] = NESTING
     at.run()
-    at.session_state["menu"] = "Peruslaskuri"
+    at.session_state["menu"] = MANUAL
     at.run()
     assert not at.exception and len(at.tabs) == 2
-    at.session_state["menu"] = "Edistynyt"
+    at.session_state["menu"] = FILES
     at.run()
-    assert at.session_state["dxf_menu"] == "Nestaus"        # back on the same screen
+    assert at.session_state["dxf_menu"] == NESTING          # back on the same screen
 
 
 def test_a_missing_solver_is_said_on_the_page(monkeypatch):
@@ -61,36 +61,49 @@ def test_each_screen_keeps_the_others_inputs_and_prices_on_hinnoittelu(tmp_path,
     doc.modelspace().add_lwpolyline([(0, 0), (300, 0), (300, 200), (0, 200)], close=True)
     at = AppTest.from_file("../app.py", default_timeout=120)
     at.session_state["dxf_files"] = {"f0": read_dxf(dxf_bytes(doc), "p.dxf")}
-    at.session_state["menu"] = "Edistynyt"
+    at.session_state["menu"] = FILES
     at.run()
     at.selectbox(key="dxf_mat_f0").select("S235").run()
     at.selectbox(key="dxf_th_f0").select("2").run()
     at.number_input(key="work_bends_f0").set_value(3.0).run()     # work is on the card
-    at.session_state["dxf_menu"] = "Hinnoittelu"
+    at.session_state["dxf_auto_nest"] = False
+    at.session_state["dxf_menu"] = PRICING
     at.run()
-    assert any("Laske levykäyttö ensin" in i.value for i in at.info)
-    at.session_state["dxf_menu"] = "Nestaus"
+    assert any("ei ole vielä nestattu" in i.value for i in at.info)
+    at.session_state["dxf_menu"] = NESTING
     at.run()
     at.number_input(key="dxf_sparrow_t").set_value(1).run()
     at.button(key="dxf_sparrow_run").click().run()
     assert not at.exception
     assert not any(n.key == "work_bends_f0" for n in at.number_input)   # not drawn here
     assert not any("kpl, €/kpl" in "".join(d.value.columns) for d in at.dataframe)
-    at.session_state["dxf_menu"] = "Hinnoittelu"
+    at.session_state["dxf_menu"] = PRICING
     at.run()
     assert not at.exception
-    # Only the batch-size switchable breakdown is left here.
-    [table] = [d.value for d in at.dataframe]
+    # The batch-size switchable breakdown, and the quote as the customer sees it.
+    [table] = [d.value for d in at.dataframe if "Taivutus" in d.value.columns]
     assert len(table) == 1 and table["Taivutus"].iloc[0] > 0     # the card's 3 bends
-    at.session_state["dxf_menu"] = "BOM & Tiedostot"
+    at.session_state["dxf_menu"] = BOM
     at.run()
     assert at.number_input(key="work_bends_f0").value == 3.0
     assert at.selectbox(key="dxf_mat_f0").value == "S235"
     assert at.number_input(key="dxf_q_f0").value == 10   # the largest batch
-    at.session_state["dxf_menu"] = "Nestaus"
+    # The bar has the total on every step, here too.
+    assert [m.value for m in at.metric if m.label == "10 kpl / nimike"][0] not in ("", "–")
+    at.session_state["dxf_menu"] = NESTING
     at.run()
     assert at.number_input(key="dxf_sparrow_t").value == 1
     assert at.button(key="dxf_sparrow_run").label.endswith("kaikki laskettu")
+    # With "Laske automaattisesti" on, a new quantity is nested by itself.
+    at.toggle(key="dxf_auto_nest").set_value(True).run()
+    at.session_state["dxf_menu"] = BOM
+    at.run()
+    at.number_input(key="dxf_q_f0").set_value(12).run()
+    at.session_state["dxf_menu"] = PRICING
+    at.run()
+    assert not at.exception
+    assert not any("ei ole vielä nestattu" in i.value for i in at.info)
+    assert any("Taivutus" in d.value.columns for d in at.dataframe)
 
 
 def test_a_dxf_part_is_nested_for_the_largest_batch_size_unless_typed():
@@ -104,16 +117,16 @@ def test_a_dxf_part_is_nested_for_the_largest_batch_size_unless_typed():
     doc.modelspace().add_lwpolyline([(0, 0), (300, 0), (300, 200), (0, 200)], close=True)
     at = AppTest.from_file("../app.py", default_timeout=60)
     at.session_state["dxf_files"] = {"f0": read_dxf(dxf_bytes(doc), "p.dxf")}
-    at.session_state["menu"] = "Edistynyt"
+    at.session_state["menu"] = FILES
     at.run()
     assert at.number_input(key="dxf_q_f0").value == 10
     at.text_input(key="quote_batch_sizes").set_value("2 25").run()
     assert at.number_input(key="dxf_q_f0").value == 25
     # A typed quantity wins, and stays when the screen changes.
     at.number_input(key="dxf_q_f0").set_value(7).run()
-    at.session_state["dxf_menu"] = "Nestaus"
+    at.session_state["dxf_menu"] = NESTING
     at.run()
-    at.session_state["dxf_menu"] = "BOM & Tiedostot"
+    at.session_state["dxf_menu"] = BOM
     at.run()
     assert at.number_input(key="dxf_q_f0").value == 7
     at.text_input(key="quote_batch_sizes").set_value("30").run()
