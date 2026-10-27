@@ -77,6 +77,7 @@ class Hint:
     family: str | None = None
     grade: str = ""
     thickness_mm: float | None = None
+    field: bool = False               # read from a drawing's Material field
 
 
 def extract_hints(text: str, source: str) -> list[Hint]:
@@ -116,6 +117,61 @@ def _thickness(line: str) -> float | None:
             if 0.3 <= value <= 60:
                 return value
     return None
+
+
+# The title block's material field: "Material:", "Materiaali", "Werkstoff".
+_MATERIAL_LABEL = re.compile(r"^(?:material|materiaali|materiaal|werkstoff|matl|mat)\.?(?::(.*))?$",
+                             re.I)
+
+
+def material_field(words: list[dict]) -> str:
+    """The text in a drawing's Material field, "" when there is none.
+    ``words`` are pdfplumber words (``text``, ``x0``, ``x1``, ``top``,
+    ``bottom``). The value is right of the label on its row (or run into it,
+    ``Material:HDG``), or else on the first row under it, up to the next
+    label (a word ending in ":") of the label's row: in ``Material:
+    Dimensions:`` over ``S355MC PL3x520x400`` the material is S355MC."""
+    for label in words:
+        m = _MATERIAL_LABEL.match(label["text"])
+        if not m:
+            continue
+        glued = m.group(1) or ""          # "Material:HDG", the value run into the label
+        height = max(label["bottom"] - label["top"], 4.0)
+
+        def same_row(w, ref=label):
+            return abs(w["top"] - ref["top"]) <= height * 0.6
+
+        ends = [w["x0"] for w in words if w is not label and same_row(w)
+                and w["x0"] > label["x1"] and w["text"].endswith(":")]
+        end = min(ends, default=float("inf"))
+        right = [w for w in words if w is not label and same_row(w)
+                 and label["x1"] <= w["x0"] < end]
+        if right or glued:
+            return " ".join([glued, *(w["text"] for w in sorted(right, key=lambda w: w["x0"]))]
+                            ).strip()
+        below = [w for w in words if label["bottom"] < w["top"] <= label["bottom"] + 4 * height
+                 and label["x0"] - 3 <= w["x0"] < end]
+        if below:
+            first = min(below, key=lambda w: w["top"])
+            row = [w for w in below if same_row(w, first)]
+            return " ".join(w["text"] for w in sorted(row, key=lambda w: w["x0"]))
+    return ""
+
+
+def pdf_material_fields(data: bytes, max_pages: int = 3) -> list[tuple[int, str]]:
+    """``[(page number, Material field text)]`` of a PDF's first pages that
+    have one (see ``material_field``)."""
+    import io
+
+    import pdfplumber
+
+    try:
+        with pdfplumber.open(io.BytesIO(data)) as pdf:
+            found = [(i + 1, material_field(page.extract_words()))
+                     for i, page in enumerate(pdf.pages[:max_pages])]
+    except Exception:  # noqa: BLE001 - any unreadable PDF just gives nothing
+        return []
+    return [(page, text) for page, text in found if text]
 
 
 def pdf_text(data: bytes, max_pages: int = 3) -> list[tuple[int, str]]:
@@ -252,12 +308,17 @@ def _propose_one(pid, name, hints, materials, thicknesses_for, aliases) -> Propo
             return Proposal(pid, name, alias["material"], alias.get("thickness"), HIGH,
                             (h,), via="alias", raw=h.raw)
 
-    # The hint with a grade first: "DX51D+Z275" says more than "HDG STEEL".
-    with_family = sorted((h for h in hints if h.family), key=lambda h: not h.grade)
+    # A drawing's Material field names the part's own material: other lines
+    # (a screw's "A2", a bracket's "S235" in a note) don't count then. The
+    # hint with a grade first: "DX51D+Z275" says more than "HDG STEEL".
+    named = [h for h in hints if h.family]
+    named = [h for h in named if h.field] or named
+    with_family = sorted(named, key=lambda h: not h.grade)
     with_thickness = [h for h in hints if h.thickness_mm is not None]
     conflicts = []
     families = {(h.family, h.grade) for h in with_family}
-    if len({f for f, _ in families}) > 1:
+    grades = {g for _, g in families if g}
+    if len({f for f, _ in families}) > 1 or len(grades) > 1:
         conflicts.append("materiaali: " + " / ".join(
             sorted({f"{h.grade or h.family} ({h.source})" for h in with_family})))
     thick_values = {round(h.thickness_mm, 2) for h in with_thickness}

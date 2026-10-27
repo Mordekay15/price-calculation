@@ -94,3 +94,45 @@ def test_a_title_block_read_without_spaces_still_gives_the_material():
     assert [(h.family, h.grade, h.thickness_mm) for h in hints] == [("S", "S355", 3.0)]
     p = _one(hints)
     assert (p.material, p.thickness, p.conflict) == ("S355MC", "3", "")
+
+
+def _w(text, x0, top, x1=None, h=6):
+    return {"text": text, "x0": x0, "x1": x1 or x0 + 6 * len(text), "top": top, "bottom": top + h}
+
+
+def test_the_material_field_is_read_under_or_beside_its_label():
+    from core.materials import material_field
+
+    # DRW-021780_A.pdf: labels on one row, values on the row under them.
+    words = [_w("Material:", 626, 665, 649), _w("Dimensions:", 853, 665, 886),
+             _w("Weight(kg):", 1052, 663, 1084),
+             _w("S355MCEN10149-2", 626, 683, 721, 9), _w("PL3x520x400", 853, 682, 927, 9),
+             _w("NA", 1052, 684, 1068), _w("Designedby:", 626, 697, 661)]
+    assert material_field(words) == "S355MCEN10149-2"
+    # The value right after the label, up to the next label.
+    words = [_w("Materiaali:", 10, 100, 60), _w("S235JR", 70, 100), _w("Paino:", 200, 100)]
+    assert material_field(words) == "S235JR"
+    assert material_field([_w("Note:", 10, 10), _w("S235", 50, 10)]) == ""
+
+
+def test_the_material_field_beats_the_other_lines():
+    from dataclasses import replace
+
+    note = extract_hints("kiinnitysruuvi A2 / S235 kiinnike", "PDF")
+    field = [replace(h, field=True) for h in extract_hints("S355MCEN10149-2", "PDF, Material")]
+    p = _one(note + field + extract_hints("PL 3 x 520 x 400", "PDF"))
+    assert (p.material, p.thickness, p.conflict) == ("S355MC", "3", "")
+
+
+def test_two_grades_of_one_kind_are_a_conflict():
+    p = _one(extract_hints("S235JR\nS355MC t=3", "PDF"))
+    assert "S235" in p.conflict and "S355" in p.conflict
+
+
+def test_a_material_run_into_its_label_is_read():
+    from core.materials import material_field
+
+    # ABB's 3AXD drawings: "Material:HDG STEEL SHEET 1,5MM".
+    words = [_w("Material:HDG", 10, 100), _w("STEEL", 90, 100), _w("SHEET", 130, 100),
+             _w("1,5MM", 170, 100)]
+    assert material_field(words) == "HDG STEEL SHEET 1,5MM"

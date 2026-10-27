@@ -17,6 +17,7 @@ DOCS = "dxf_docs"            # {doc id: {"name", "size", "kind", "load"}}
 _MANUAL = "dxf_doc_links"    # {doc id: part id or "" (= no part)}, set by hand
 _PREVIEWS = "dxf_doc_previews"  # {doc id: PNG bytes of page 1}
 TEXTS = "dxf_doc_texts"      # {doc id: [(page, text)]}, see core.materials.pdf_text
+FIELDS = "dxf_doc_fields"    # {doc id: [(page, Material field)]}, see material_fields
 CHECKED = "dxf_checked_{}"   # widget key of a card's "Tarkastettu" tick
 
 DOC_TYPES = {"pdf": "pdf", "step": "step", "stp": "step"}
@@ -45,6 +46,7 @@ def remove_doc(doc_id: str) -> None:
     st.session_state.get(_MANUAL, {}).pop(doc_id, None)
     st.session_state.get(_PREVIEWS, {}).pop(doc_id, None)
     st.session_state.get(TEXTS, {}).pop(doc_id, None)
+    st.session_state.get(FIELDS, {}).pop(doc_id, None)
 
 
 def docs() -> dict[str, dict]:
@@ -112,6 +114,17 @@ def pages(doc_id: str, doc: dict) -> list[tuple[int, str]]:
     cache = st.session_state.setdefault(TEXTS, {})
     if doc_id not in cache:
         cache[doc_id] = pdf_text(doc["load"]())
+    return cache[doc_id]
+
+
+def material_fields(doc_id: str, doc: dict) -> list[tuple[int, str]]:
+    """A PDF's title block Material field, ``[(page, text)]``, read once (see
+    ``core.materials.material_field``)."""
+    from core.materials import pdf_material_fields
+
+    cache = st.session_state.setdefault(FIELDS, {})
+    if doc_id not in cache:
+        cache[doc_id] = pdf_material_fields(doc["load"]())
     return cache[doc_id]
 
 

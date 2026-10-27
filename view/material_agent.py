@@ -5,6 +5,8 @@ apply only the proposals the user ticks (see ``core.materials``)."""
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import streamlit as st
 
 from core.materials import (
@@ -129,6 +131,9 @@ def _search(parts, doc_links, docs, materials, thicknesses_for) -> list[Proposal
                 continue
             for page, text in attachments.pages(d, doc):
                 hints += extract_hints(text, f"{doc['name']}, s. {page}")
+            for page, text in attachments.material_fields(d, doc):
+                hints += [replace(h, field=True) for h in
+                          extract_hints(text, f"{doc['name']}, s. {page}, Material-kenttä")]
         by_part[fid] = (dxf.name, hints)
     note = extract_hints(st.session_state.get(_NOTE, ""), "Tarjouspyyntö")
     return propose(by_part, note, materials, thicknesses_for, load_aliases())
