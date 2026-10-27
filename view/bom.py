@@ -244,19 +244,13 @@ def render_3d(shape, cache_key: str) -> None:
 
 
 def render_card_model(card: str, source_ids: list[str]) -> None:
-    """On a card with a model's part: where it came from, the unfolding's
-    facts and the 3D view."""
+    """On a card with a model's part: where it came from and the 3D view."""
     for sid in source_ids:
         src = source(sid)
         if src is None:
             continue
-        m, part, flat = src
-        bends = ", ".join(f"{b.angle_deg:.0f}° r{b.inner_radius_mm:g}" for b in flat.bends)
+        m, part, _ = src
         with st.expander(f"STEP: {m['name']} · {part.qty} kpl mallissa"):
-            k = st.session_state.get(K_FACTOR, step.DEFAULT_K_FACTOR)
-            st.caption(f"Avattu tasoaihioksi: paksuus {flat.thickness_mm:g} mm, "
-                       f"{len(flat.bends)} taivutusta{': ' + bends if bends else ''} "
-                       f"(K = {k:.2f}).")
             if st.toggle("Näytä 3D", key=f"dxf_step_card_3d_{card}_{sid}"):
                 file_id = sid.split(_SEP, 1)[0]
                 render_3d(lambda: shapes(file_id)[part.key], sid)
