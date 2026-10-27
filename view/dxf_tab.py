@@ -77,33 +77,20 @@ _ONLY_OPEN = "dxf_only_open"            # show only the cards that still need so
 _VIEW, CARDS, TABLE = "dxf_view", "Kortit", "Taulukko"
 _TABLE = "dxf_parts_table"
 
-# The keys of the widgets the screens draw, besides the cards'.
-_DRAWN_ON = [re.compile(p) for p in (
-    r"dxf_(doc_show_linked|doc_page|doc_link_.*|step_k_input|step_3d_.*|step_pick_.*)",  # BOM
-    r"dxf_card_page.*|dxf_(only_open|view|parts_table|bulk_.*)"
-    r"|asm_(name|fit_min|weld_m|setup_min|eur_per_h|other_eur)_.*",
-    r"dxf_(margin_pct|nest_mode|rankavali_mm|edge_.*|sparrow_t|angle_(0|90)|angle_mode"
-    r"|su_select::.*)",                                                      # Nestaus
-    r"quote_(breakdown_q|pdf_mat|dxf_name|dxf_marks)_dxf",                   # Hinnoittelu
-)]
-
-
-def _keep_inputs() -> None:
-    """Keep every screen's and card's inputs, on every run: a screen not
-    open draws none of them, and one opened again draws them anew in the
-    browser, from their defaults unless set through the session (see
-    ``view.ui.keep``). Run before anything is drawn; a card added on this
-    run has nothing to keep yet."""
-    ss = st.session_state
-    cards = ids_in({*ss.get(ITEMS, {}), *ss.get(CONFIG, {})})
-    keep(lambda key: any(p.fullmatch(key) for p in _DRAWN_ON) or bool(cards.search(key)))
+def keep_inputs() -> None:
+    """Keep every input of the page, on every run, until "Tyhjennä kaikki"
+    (``clear_all``): a screen or tab not open draws none of its inputs, and
+    one opened again draws them anew in the browser, from their defaults
+    unless set through the session (see ``view.ui.keep``). Every key is kept
+    but the menus' (which screen is open), so a new input needs no listing
+    here. Run first on the page, before anything is drawn."""
+    keep(lambda key: key not in (MENU, "menu"))
 
 
 def render(data: dict, screen: str | None):
     """One of ``SCREENS``; None when another tab is open (then only the
     inputs are kept). Returns the quote's totals for the bar
     (``quote.Totals``), or None."""
-    _keep_inputs()
     if screen is None:
         keep(lambda key: key == MENU)   # back on the same screen
         return None

@@ -15,6 +15,7 @@ st.set_page_config(
     page_title="Stremet Price Tool",
     layout="wide",
 )
+dxf_tab.keep_inputs()   # before anything is drawn
 
 price_data = sidebar.render()
 totals_slot = quote.render_header(dxf_tab.clear_all)

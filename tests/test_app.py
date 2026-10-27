@@ -183,3 +183,65 @@ def test_clear_all_empties_the_quote_and_keeps_the_rates():
     assert at.number_input(key="work_weld_eur_per_h").value == 99.0     # the sidebar stays
     assert not any(n.key == "dxf_q_f0" for n in at.number_input)
     assert not any(b.key == "ui_undo_do" for b in at.button)       # nothing more to answer
+
+
+def test_nestaus_choices_stay_when_going_to_another_step_and_back(tmp_path, monkeypatch):
+    import json
+
+    import ezdxf
+
+    from core import suppliers
+    from core.dxf import read_dxf
+    from tests.conftest import dxf_bytes
+
+    monkeypatch.chdir(tmp_path)
+    rows = [{"Paksuus (mm)": "2", "S235 | 1000x2000": 900.0}]
+    json.dump({"data": {"levyt": rows}, "source_file": "t.pdf", "updated_at": "x"},
+              open(tmp_path / suppliers.SUPPLIERS[0].path, "w"))
+    doc = ezdxf.new()
+    doc.header["$INSUNITS"] = 4
+    doc.modelspace().add_lwpolyline([(0, 0), (300, 0), (300, 200), (0, 200)], close=True)
+    data = dxf_bytes(doc)
+    at = AppTest.from_file("../app.py", default_timeout=120)
+    at.session_state["dxf_files"] = {f"f{i}": read_dxf(data, f"p{i}.dxf") for i in range(2)}
+    at.session_state["menu"] = FILES
+    at.run()
+    for i in range(2):
+        at.selectbox(key=f"dxf_mat_f{i}").select("S235").run()
+        at.selectbox(key=f"dxf_th_f{i}").select("2").run()
+    at.session_state["dxf_menu"] = NESTING
+    at.run()
+    at.pills(key="dxf_turn").set_value([0]).run()
+    at.toggle(key="dxf_angle_per_part").set_value(True).run()
+    at.pills(key="dxf_turn_f1").set_value([90]).run()
+    for screen in (BOM, PRICING, NESTING):
+        at.session_state["dxf_menu"] = screen
+        at.run()
+        assert not at.exception
+    assert at.toggle(key="dxf_angle_per_part").value
+    assert at.pills(key="dxf_turn_f1").value == [90]
+    at.toggle(key="dxf_angle_per_part").set_value(False).run()
+    assert at.pills(key="dxf_turn").value == [0]
+
+
+def test_every_read_only_widget_is_left_out_of_keeping():
+    # Every input is kept between steps (``view.dxf_tab.keep_inputs``), but a
+    # button's, download's, upload's or editor's value can't be set: their
+    # keys must start with one of ``view.ui._BUTTONS``.
+    import ast
+    import pathlib
+
+    from view.ui import _BUTTONS
+
+    read_only = {"button", "download_button", "file_uploader", "data_editor"}
+    for path in pathlib.Path(__file__).parent.parent.joinpath("view").glob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in read_only):
+                continue
+            key = next((k.value for k in node.keywords if k.arg == "key"), None)
+            if isinstance(key, ast.JoinedStr):
+                key = key.values[0]
+            if isinstance(key, ast.Constant):   # an f-string's start: its listed ends
+                assert any(str(key.value).startswith(b) or b.startswith(str(key.value))
+                           for b in _BUTTONS), f"{path.name}: {key.value}"
