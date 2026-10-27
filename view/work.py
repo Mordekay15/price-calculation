@@ -30,6 +30,7 @@ _RATE_KEYS = {          # WorkRates field -> sidebar widget key
     "weld_eur_per_h":        "work_weld_eur_per_h",
 }
 _SETUP_KEYS = ("work_setup_1", "work_setup_2", "work_setup_3")
+RATE_KEYS = (*_RATE_KEYS.values(), *_SETUP_KEYS)    # the sidebar's, kept by "Tyhjennä kaikki"
 
 
 # ── Sidebar: the shop's rates ─────────────────────────────────────────────────

@@ -66,7 +66,7 @@ from view.dxf_nesting import (
 )
 from view.quote import current_sizes
 from view.ui import headless, ids_in, is_headless, keep, st
-from view.work import auto_input, render_work_inputs
+from view.work import RATE_KEYS, auto_input, render_work_inputs
 
 BOM, NESTING, PRICING = "1 · Osat ja tiedostot", "2 · Nestaus", "3 · Hinnoittelu"
 SCREENS = (BOM, NESTING, PRICING)
@@ -158,6 +158,26 @@ def _render_next(screen: str) -> None:
         _, col = st.columns([3, 1])
         col.button(f"Seuraava: {SCREENS[nxt]} →", key="ui_go_next", type="primary",
                    on_click=_go, args=(SCREENS[nxt],), width="stretch")
+
+
+# Kept by "Tyhjennä kaikki": the sidebar (price lists, copper, work rates),
+# the open menu, and the drop area's counter (its old files must not return).
+_KEPT = ("upload_", "copper_", "manual_route", "menu", "dxf_inbox")
+
+
+def _clear() -> None:
+    """Everything of the quote at once: the files, the cards, the nesting, the
+    quote's details and the calculator; undone with "Kumoa" on step 1."""
+    ss = st.session_state
+    keep = set(RATE_KEYS)
+    for key in [k for k in ss.keys() if isinstance(k, str)]:
+        if key not in keep and not key.startswith(_KEPT):
+            del ss[key]
+    ss["dxf_inbox"] = ss.get("dxf_inbox", 0) + 1      # a fresh, empty drop area
+    ss[MENU] = BOM
+
+
+clear_all = undoable(_clear, "kaikki")
 
 
 def _go(screen: str, only_open: bool = False) -> None:

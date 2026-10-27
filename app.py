@@ -17,7 +17,7 @@ st.set_page_config(
 )
 
 price_data = sidebar.render()
-totals_slot = quote.render_header()
+totals_slot = quote.render_header(dxf_tab.clear_all)
 
 # Two menus: a quote from files (DXF, STEP, PDF), with its steps, or the
 # manual calculator. Only the open step runs drawn: a click reruns the page.

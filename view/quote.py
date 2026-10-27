@@ -56,16 +56,17 @@ class Totals:
     margin_pct: float | None = None
 
 
-def render_header():
-    """The bar above the tabs: the quote's name, the batch sizes and the
-    quote's details behind a button. Returns the place for the totals, filled
+def render_header(clear_all=None):
+    """The bar above the tabs: the quote's name, the batch sizes, the quote's
+    details behind a button and, given ``clear_all`` (a callback), "Tyhjennä
+    kaikki" behind a confirmation. Returns the place for the totals, filled
     once the open tab has priced (``render_totals``). Both tabs read it back
     with ``current_info`` and ``current_sizes``."""
     d = QuoteInfo()
     ss = st.session_state
     bar = st.container(border=True)
     with bar:
-        name, sizes, details = st.columns([5, 2, 2], vertical_alignment="bottom")
+        name, sizes, details, clear = st.columns([5, 2, 2, 2], vertical_alignment="bottom")
         title = " · ".join(filter(None, [
             "Tarjous " + ss["quote_number"] if ss.get("quote_number") else "Uusi tarjous",
             ss.get("quote_customer")]))
@@ -91,6 +92,12 @@ def render_header():
             c[1].text_input("Yritys", value=d.company, key=_FIELDS["company"])
             st.text_input("Yrityksen osoite", key=_FIELDS["company_address"])
             st.text_area("Lisätiedot tarjoukseen", key=_FIELDS["notes"], height=68)
+        if clear_all is not None:
+            with clear.popover("Tyhjennä kaikki", width="stretch"):
+                st.markdown("Poistetaanko kaikki tiedostot, osat ja tarjouksen tiedot?",
+                            help="Hinnastot ja työn hinnat sivupalkissa jäävät.")
+                st.button("Kyllä, tyhjennä", key="ui_clear_all", type="primary",
+                          on_click=clear_all)
         return st.container()
 
 

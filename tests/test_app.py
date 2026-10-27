@@ -160,3 +160,28 @@ def test_an_unpriced_part_leaves_the_money_columns_numeric():
         for col in frame.value.columns:
             if "€" in col:
                 assert pd.api.types.is_numeric_dtype(frame.value[col]), col
+
+
+def test_clear_all_empties_the_quote_keeps_the_rates_and_can_be_undone():
+    import ezdxf
+
+    from core.dxf import read_dxf
+    from tests.conftest import dxf_bytes
+
+    doc = ezdxf.new()
+    doc.header["$INSUNITS"] = 4
+    doc.modelspace().add_lwpolyline([(0, 0), (300, 0), (300, 200), (0, 200)], close=True)
+    at = AppTest.from_file("../app.py", default_timeout=60)
+    at.session_state["dxf_files"] = {"f0": read_dxf(dxf_bytes(doc), "p.dxf")}
+    at.run()
+    at.text_input(key="quote_customer").set_value("Asiakas Oy").run()
+    at.number_input(key="work_weld_eur_per_h").set_value(99.0).run()
+    at.button(key="ui_clear_all").click().run()
+    assert not at.exception
+    assert not at.session_state["dxf_files"]
+    assert at.text_input(key="quote_customer").value == ""
+    assert at.number_input(key="work_weld_eur_per_h").value == 99.0     # the sidebar stays
+    assert not any(n.key == "dxf_q_f0" for n in at.number_input)
+    at.button(key="ui_undo_do").click().run()
+    assert at.text_input(key="quote_customer").value == "Asiakas Oy"
+    assert any(n.key == "dxf_q_f0" for n in at.number_input)
