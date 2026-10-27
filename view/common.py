@@ -201,7 +201,6 @@ def _render_main_settings(*, key_prefix: str, separate_label: str) -> tuple[floa
 def render_settings(*, key_prefix: str, separate_label: str) -> tuple[float, str, SheetSettings]:
     """The settings row (margin, nesting mode), then the folded sheet settings
     and their one-line summary: ``(margin_pct, nest_mode, sheet)``."""
-    st.divider()
     margin_pct, nest_mode = _render_main_settings(key_prefix=key_prefix,
                                                   separate_label=separate_label)
     with st.expander(_ADVANCED_LABEL):
