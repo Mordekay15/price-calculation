@@ -23,7 +23,8 @@ from view.sheet_usage import render_group
 from view.work import render_work_inputs, work_costs
 
 
-def render(data: dict) -> None:
+def render(data: dict):
+    """The manual calculator; returns its totals for the bar (``quote.Totals``)."""
     lookup = build_lookup(data)
 
     products = _render_products(materials_with_copper(lookup), lookup)
@@ -65,7 +66,8 @@ def render(data: dict) -> None:
     render_pieces_summary(products, prices,
                           weight_label="Kappaleiden yhteispaino (kg)", lead="#",
                           work=work_costs(products, groups, sheets))
-    render_batch_prices(products, prices, groups, sheets, totals, lead="#", key="calc")
+    return render_batch_prices(products, prices, groups, sheets, totals, lead="#", key="calc",
+                               margin_pct=margin_pct)
 
 
 @st.cache_data(max_entries=64, show_spinner="Etsitään vähiten levyjä käyttävää suunnitelmaa…")

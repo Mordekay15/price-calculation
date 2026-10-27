@@ -236,7 +236,7 @@ def test_a_card_takes_its_bends_from_the_model_and_its_material_from_the_pdf():
     svg = next(m.value for m in at.markdown if m.value.startswith("<svg"))
     assert "#16a34a" in svg or "#ea580c" in svg          # the model's bend line
     assert any(c.value.startswith("Taivutuslinjat STEP-mallista") for c in at.caption)
-    assert any(c.value.startswith("Materiaali täytetty automaattisesti") and "STEP" in c.proto.help
+    assert any(c.value.startswith("Täytetty automaattisesti") and "STEP" in c.proto.help
                for c in at.caption)
 
 

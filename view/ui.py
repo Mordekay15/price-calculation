@@ -153,7 +153,7 @@ st = _St()
 _BUTTONS = ("dxf_del_", "dxf_fill_yes_", "dxf_fill_no_", "dxf_doc_dl_", "dxf_read_waiting",
             "dxf_step_del_", "dxf_doc_del_", "dxf_renest::", "dxf_sparrow_run",
             "dxf_sparrow_update", "dxf_uploader_", "asm_del_",
-            "asm_bought_", "quote_pdf_dxf", "quote_xlsx_", "quote_dxf_zip_")
+            "asm_bought_", "quote_pdf_dxf", "quote_xlsx_", "quote_dxf_zip_", "ui_")
 
 
 def keep(owned) -> None:

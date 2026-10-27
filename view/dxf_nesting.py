@@ -59,19 +59,35 @@ class _Settings:
         return {**self.sheet.values(), "time_limit": self.time_limit}
 
 
+@dataclass(frozen=True)
+class NestState:
+    """Where the nesting is, for the status strip: groups in all, with no
+    result yet, and with a result made with other Sparrow settings."""
+
+    groups: int = 0
+    new: int = 0
+    stale: int = 0
+    ready: bool = True      # False: Sparrow is missing, or no nesting angle
+
+
 def render_nesting(products: list[dict], n_parts: int, lookup: dict, nest_mode: str,
-                   sheet: SheetSettings, margin_pct: float, *, prices: bool = False) -> None:
-    """The run row, then every group's result; with ``prices``, only the
-    prices instead (the groups priced headless). ``products`` are what the
-    part cards return."""
-    with headless(prices):
-        priced = _render_nesting(products, n_parts, lookup, nest_mode, sheet, margin_pct)
-    if prices:
-        _render_prices(products, priced)
+                   sheet: SheetSettings, margin_pct: float, *, nesting: bool = True,
+                   prices: bool = False):
+    """The run row and every group's result (drawn when ``nesting``), then
+    the prices (drawn when ``prices``); both run either way, and Sparrow
+    runs only from the buttons. ``products`` are what the part cards return.
+    Returns ``(quote.Totals or None, NestState)``."""
+    with headless(not nesting):
+        priced, state = _render_nesting(products, n_parts, lookup, nest_mode, sheet,
+                                        margin_pct)
+    with headless(not prices):
+        totals = _render_prices(products, priced, margin_pct)
+    return totals, state
 
 
 def _render_nesting(products, n_parts, lookup, nest_mode, sheet, margin_pct):
-    """The run row and the groups; returns what ``_show`` priced, or None."""
+    """The run row and the groups; returns what ``_show`` priced (or None)
+    and the ``NestState``."""
     exe = find_executable()
     if exe is None:
         st.error(
@@ -79,14 +95,14 @@ def _render_nesting(products, n_parts, lookup, nest_mode, sheet, margin_pct):
             "Aseta polku `SPARROW_BIN`-ympäristömuuttujaan tai lisää binääri "
             "`bin/sparrow`-tiedostoksi."
         )
-        return None
+        return None, NestState(ready=False)
 
     st.divider()
     # Two rows above the button they apply to: the nesting angle, then the
     # search time with the buttons.
     shared = _render_angle_controls(n_parts)
     if shared == ():
-        return None  # no angle ticked: the warning says so
+        return None, NestState(ready=False)  # no angle ticked: the warning says so
     c_time, c_run, c_update = st.columns([1, 2, 2], vertical_alignment="bottom")
     time_limit = c_time.number_input(
         "Sijoittelun hakuaika (s)", min_value=1, value=4, step=1, key="dxf_sparrow_t",
@@ -109,7 +125,7 @@ def _render_nesting(products, n_parts, lookup, nest_mode, sheet, margin_pct):
         # The button's count was drawn before these groups were nested:
         # redraw it with the new count (e.g. "kaikki laskettu").
         st.rerun()
-    return priced
+    return priced, NestState(len(groups), n_new, n_stale)
 
 
 _NESTING_LABELS = {
@@ -371,22 +387,25 @@ def _show(groups, settings: _Settings, cache: dict, nest, replan,
     return bool(replanned), (groups, areas, out)
 
 
-def _render_prices(products: list[dict], priced: tuple | None) -> None:
-    """The batch prices, from what ``_show`` priced."""
+def _render_prices(products: list[dict], priced: tuple | None, margin_pct: float):
+    """The batch prices, from what ``_show`` priced; returns their totals
+    (``quote.Totals``), or None."""
     if priced is None:
-        st.info("Levylaskenta ei ole valmis: katso Nestaus-välilehti.")
-        return
+        st.info("Levylaskenta ei ole valmis: katso 2 · Nestaus.")
+        return None
     groups, areas, (prices, grand_total, missing, sheets, totals) = priced
     if missing and grand_total is None:
-        st.info("Laske levykäyttö ensin Nestaus-välilehdellä.")
-        return
+        st.info("Levyjä ei ole vielä nestattu: paina **Laske levykäyttö** kohdassa "
+                "2 · Nestaus.")
+        return None
     if missing:
         st.warning("Hinnoissa ovat vain lasketut ryhmät: laske loput "
-                   "Nestaus-välilehdellä.")
+                   "kohdassa 2 · Nestaus.")
     ready = [p for p in products if is_ready(p)]
-    render_batch_prices(ready, prices, groups, sheets, totals, lead="Osa", key="dxf",
-                        areas_mm2=areas, clean_parts=[_clean_part(p) for p in ready],
-                        assemblies=assemblies.current(source_cards()), table=False)
+    return render_batch_prices(ready, prices, groups, sheets, totals, lead="Osa", key="dxf",
+                               areas_mm2=areas, clean_parts=[_clean_part(p) for p in ready],
+                               assemblies=assemblies.current(source_cards()), table=False,
+                               margin_pct=margin_pct, missing=bool(missing))
 
 
 def _clean_part(product: dict) -> CleanPart:

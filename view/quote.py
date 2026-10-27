@@ -1,14 +1,14 @@
-"""The quote in the UI: the "Tarjous" header above the tabs (customer, quote
-number, terms and the batch sizes), and under each tab's results the price
-per batch size with the downloads: the quote PDF, the Excel export and, on the
+"""The quote in the UI: the bar above the tabs (the quote's name, the batch
+sizes, the quote's details behind a button, and the live total at each batch
+size), and under each tab's results the price per
+batch size with the downloads: the quote PDF, the Excel export and, on the
 DXF tab, the clean DXFs for production (see ``core.batches``, ``core.quote``)."""
 
 from __future__ import annotations
 
 from contextlib import nullcontext
+from dataclasses import dataclass
 from datetime import date
-
-import streamlit as st
 
 from core.assemblies import Assembly, assembly_prices, fit_eur, per_unit
 from core.batches import (
@@ -30,6 +30,7 @@ from core.quote import (
     quote_xlsx,
 )
 from core.sheet_cost import piece_costs
+from view.ui import is_headless, st
 from view.work import current_rates
 
 _SIZES_KEY = "quote_batch_sizes"
@@ -44,36 +45,78 @@ _FIELDS = {                           # QuoteInfo field -> widget key
 
 # ── Header ────────────────────────────────────────────────────────────────────
 
-def render_header() -> None:
-    """The quote's header, folded above the tabs. Both tabs read it back with
-    ``current_info`` and ``current_sizes``."""
+@dataclass
+class Totals:
+    """A tab's quote at each batch size, for the bar: the total (None where a
+    line is unpriced). ``missing``: some groups aren't nested yet."""
+
+    sizes: list[int]
+    totals: list[float | None]
+    missing: bool = False
+    margin_pct: float | None = None
+
+
+def render_header(clear_all=None):
+    """The bar above the tabs: the quote's name, the batch sizes, the quote's
+    details behind a button and, given ``clear_all`` (a callback), "Tyhjennä
+    kaikki" behind one confirming click. Returns the place for the totals, filled
+    once the open tab has priced (``render_totals``). Both tabs read it back
+    with ``current_info`` and ``current_sizes``."""
     d = QuoteInfo()
-    sizes = current_sizes()
-    title = "Tarjous" + (f" {st.session_state.get('quote_number')}"
-                         if st.session_state.get("quote_number") else "")
-    with st.expander(f"{title} · eräkoot {' · '.join(map(str, sizes))} kpl"):
-        c = st.columns(4)
-        c[0].text_input("Tarjousnumero", key=_FIELDS["number"])
-        c[1].text_input("Asiakas", key=_FIELDS["customer"])
-        c[2].text_input("Yhteyshenkilö", key=_FIELDS["contact"])
-        c[3].text_input("Myyjä", key=_FIELDS["seller"])
-        c = st.columns(4)
-        c[0].text_input("Asiakkaan osoite", key=_FIELDS["customer_address"])
-        c[1].date_input("Tarjouspäivä", value=date.today(), key="quote_date",
-                        format="DD.MM.YYYY")
-        c[2].number_input("Voimassa (pv)", min_value=1, value=d.valid_days, step=1,
-                          key="quote_valid_days")
-        c[3].text_input("Eräkoot (kpl)", value=" ".join(map(str, DEFAULT_BATCH_SIZES)),
-                        key=_SIZES_KEY,
-                        help="Jokainen osa hinnoitellaan näillä kappalemäärillä, esim. "
-                             "\"1 5 10\". Osakortin määrä on se, jolla levyt nestataan; "
-                             "muiden eräkokojen materiaali arvioidaan siitä.")
-        c = st.columns(4)
-        c[0].text_input("Maksuehto", value=d.payment_terms, key=_FIELDS["payment_terms"])
-        c[1].text_input("Toimitus", value=d.delivery, key=_FIELDS["delivery"])
-        c[2].text_input("Yritys", value=d.company, key=_FIELDS["company"])
-        c[3].text_input("Yrityksen osoite", key=_FIELDS["company_address"])
-        st.text_area("Lisätiedot tarjoukseen", key=_FIELDS["notes"], height=68)
+    ss = st.session_state
+    bar = st.container(border=True)
+    with bar:
+        name, sizes, details, clear = st.columns([5, 2, 2, 2], vertical_alignment="bottom")
+        title = " · ".join(filter(None, [
+            "Tarjous " + ss["quote_number"] if ss.get("quote_number") else "Uusi tarjous",
+            ss.get("quote_customer")]))
+        name.markdown(f"#### {title}")
+        sizes.text_input("Eräkoot (kpl)", value=" ".join(map(str, DEFAULT_BATCH_SIZES)),
+                         key=_SIZES_KEY,
+                         help="Jokainen osa hinnoitellaan näillä kappalemäärillä, esim. "
+                              "\"1 5 10\". Osakortin määrä on se, jolla levyt nestataan; "
+                              "muiden eräkokojen materiaali arvioidaan siitä.")
+        with details.popover("Tarjouksen tiedot", width="stretch"):
+            c = st.columns(2)
+            c[0].text_input("Tarjousnumero", key=_FIELDS["number"])
+            c[1].text_input("Asiakas", key=_FIELDS["customer"])
+            c[0].text_input("Yhteyshenkilö", key=_FIELDS["contact"])
+            c[1].text_input("Myyjä", key=_FIELDS["seller"])
+            c[0].text_input("Asiakkaan osoite", key=_FIELDS["customer_address"])
+            c[1].date_input("Tarjouspäivä", value=date.today(), key="quote_date",
+                            format="DD.MM.YYYY")
+            c[0].number_input("Voimassa (pv)", min_value=1, value=d.valid_days, step=1,
+                              key="quote_valid_days")
+            c[1].text_input("Maksuehto", value=d.payment_terms, key=_FIELDS["payment_terms"])
+            c[0].text_input("Toimitus", value=d.delivery, key=_FIELDS["delivery"])
+            c[1].text_input("Yritys", value=d.company, key=_FIELDS["company"])
+            st.text_input("Yrityksen osoite", key=_FIELDS["company_address"])
+            st.text_area("Lisätiedot tarjoukseen", key=_FIELDS["notes"], height=68)
+        if clear_all is not None:
+            with clear.popover("Tyhjennä kaikki", width="stretch"):
+                st.button("Kyllä, tyhjennä", key="ui_clear_all", type="primary",
+                          on_click=clear_all, width="stretch",
+                          help="Poistaa tiedostot, osat ja tarjouksen tiedot. Hinnastot ja "
+                               "työn hinnat sivupalkissa jäävät.")
+        return st.container()
+
+
+def render_totals(slot, totals: Totals | None) -> None:
+    """The bar's totals: the quote at each batch size."""
+    with slot:
+        if totals is None or not totals.totals:
+            st.caption("Ei vielä hintaa")
+            return
+        cols = st.columns([2] * len(totals.sizes) + [3], vertical_alignment="center")
+        for col, q, t in zip(cols, totals.sizes, totals.totals):
+            col.metric(f"{q} kpl / nimike", fmt_eur(t) or "–",
+                       help=None if t is not None else "Osalta puuttuu hinta.")
+        notes = []
+        if totals.missing:
+            notes.append(":orange[Arvio: kaikkia ryhmiä ei ole vielä nestattu.]")
+        if totals.margin_pct is not None:
+            notes.append(f"Materiaalin kate {totals.margin_pct:g} %")
+        cols[-1].caption("  \n".join(notes) or "ALV 0 %")
 
 
 def current_sizes() -> list[int]:
@@ -101,18 +144,21 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
                         areas_mm2: dict[str, float] | None = None,
                         clean_parts: list[CleanPart] | None = None,
                         assemblies: list[Assembly] | None = None,
-                        table: bool = True) -> None:
+                        table: bool = True, margin_pct: float | None = None,
+                        missing: bool = False) -> Totals | None:
     """The price of every part at every batch size, the quote's total at each,
     and the downloads. ``clean_parts`` (DXF tab) adds the clean-DXF ZIP.
     Without ``table``, the breakdown at one batch size replaces the table of
     every size, open.
     A part in one of the ``assemblies`` is priced inside it: the assembly is
-    the quote line, and a batch size counts assemblies."""
+    the quote line, and a batch size counts assemblies. Returns the totals
+    for the bar (None when nothing is priced); headless, only that, without
+    making the downloads."""
     costs = piece_costs(products, prices, areas_mm2)
     group_of = {p["id"]: k for k, prods in groups.items() for p in prods}
     costs = [pc for pc in costs if pc.product["id"] in group_of]
     if not costs:
-        return
+        return None
 
     sizes = current_sizes()
     group_sheets = {}
@@ -158,6 +204,9 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
             + ([{"name": "\u2003└ Kokoonpanotyö", "per": None,
                  "units": [p.work for p in prices]}] if any(p.work for p in prices) else []))
     line_totals = quote_totals(lines, len(sizes))
+    result = Totals(sizes, line_totals, missing, margin_pct)
+    if is_headless():
+        return result
 
     if table:
         st.divider()
@@ -165,13 +214,10 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
         "Kpl-hinta jokaisella eräkoolla: materiaali + työ + erän kiinteät kulut "
         "jaettuna eräkoolla. Materiaali: ryhmän levyt nestattuna osakorttien "
         "määrillä; muilla eräkoilla tarvittavat kokonaiset levyt arvioidaan samalla "
-        "hukalla. Eräkoot muutetaan sivun yläosan Tarjous-kohdasta."
+        "hukalla. Eräkoot muutetaan sivun ylälaidasta."
         + (" 🧩 Kokoonpanon └-rivit ovat sen osuuksia yhdestä kokoonpanosta "
            "(kpl / kokoonpano × €/kpl), ja niiden summa on kokoonpanon kpl-hinta."
            if assemblies and table else "")))
-    for col, q, t in zip(st.columns(len(sizes)), sizes, line_totals):
-        col.metric(f"Yhteensä, {q} kpl/nimike", fmt_eur(t) or "–",
-                   help=None if t is not None else "Osalta puuttuu hinta.")
     if table:
         _render_table(lines, members, sizes, lead)
     _render_breakdown(costs, names, by_part, priced, sizes, rates, key, folded=table)
@@ -192,8 +238,35 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
                            data=xlsx, file_name=f"{stem}.xlsx",
                            mime="application/vnd.openxmlformats-officedocument."
                                 "spreadsheetml.sheet")
+    _render_customer_view(info, lines, sizes, line_totals, key)
     if clean_parts:
         _render_clean_dxfs(clean_parts, key)
+    return result
+
+
+def _render_customer_view(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int],
+                          totals: list[float | None], key: str) -> None:
+    """The quote as the customer gets it in the PDF: the header, then each
+    line's €/kpl at each batch size and the totals."""
+    with st.expander("Esikatsele tarjous asiakkaan näkymänä"):
+        head = " · ".join(filter(None, [
+            f"Tarjous {info.number}" if info.number else "Tarjous",
+            info.customer, info.quote_date.strftime("%d.%m.%Y"),
+            f"voimassa {info.valid_days} pv"]))
+        st.markdown(f"**{head}**")
+        rows = []
+        for line in lines:
+            row = {"Nimike": ("🧩 " if line.is_assembly else "") + line.name,
+                   "Materiaali": " ".join(filter(None, [line.material, line.thickness
+                                                        and f"{line.thickness} mm"]))}
+            for q, p in zip(sizes, line.prices):
+                row[f"{q} kpl, €/kpl"] = None if p.unit is None else round(p.unit, 2)
+            rows.append(row)
+        rows.append({"Nimike": "Yhteensä € (koko erä)", "Materiaali": "",
+                     **{f"{q} kpl, €/kpl": None if t is None else round(t, 2)
+                        for q, t in zip(sizes, totals)}})
+        st.dataframe(rows, hide_index=True, width="stretch", key=f"quote_preview_{key}")
+        st.caption("ALV 0 %")
 
 
 def _file(make, package: str, slot) -> bytes | None:
