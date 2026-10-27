@@ -7,8 +7,9 @@ import os
 import tempfile
 
 
-def l_bracket(a=50.0, b=30.0, t=2.0, r=2.0, w=40.0, hole=True):
-    """Flanges a (along X) and b (along Z) outside, width w along Y."""
+def l_bracket(a=50.0, b=30.0, t=2.0, r=2.0, w=40.0, hole=True, pieces=1):
+    """Flanges a (along X) and b (along Z) outside, width w along Y; the bend
+    is made of ``pieces`` faces (as some CAD programs export it)."""
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
     from OCP.BRepBuilderAPI import (BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeFace,
                                     BRepBuilderAPI_MakeWire)
@@ -23,17 +24,26 @@ def l_bracket(a=50.0, b=30.0, t=2.0, r=2.0, w=40.0, hole=True):
     def P(x, z):
         return gp_Pnt(x, 0, z)
 
+    def on(rad, deg):       # 0°: toward z = 0, 90°: toward x = 0
+        return P(c - rad * math.sin(math.radians(deg)), c - rad * math.cos(math.radians(deg)))
+
     def arc(rad, p, q):
-        return BRepBuilderAPI_MakeEdge(
-            GC_MakeArcOfCircle(p, P(c - rad * s45, c - rad * s45), q).Value()).Edge()
+        if pieces == 1:
+            return [BRepBuilderAPI_MakeEdge(
+                GC_MakeArcOfCircle(p, P(c - rad * s45, c - rad * s45), q).Value()).Edge()]
+        start, end = (0, 90) if rad == r else (90, 0)
+        degs = [start + (end - start) * i / pieces for i in range(pieces + 1)]
+        return [BRepBuilderAPI_MakeEdge(GC_MakeArcOfCircle(
+            on(rad, d0), on(rad, (d0 + d1) / 2), on(rad, d1)).Value()).Edge()
+            for d0, d1 in zip(degs, degs[1:])]
 
     def seg(p, q):
         return BRepBuilderAPI_MakeEdge(p, q).Edge()
 
     wire = BRepBuilderAPI_MakeWire()
     for e in (seg(P(c, 0), P(a, 0)), seg(P(a, 0), P(a, t)), seg(P(a, t), P(c, t)),
-              arc(r, P(c, t), P(t, c)), seg(P(t, c), P(t, b)), seg(P(t, b), P(0, b)),
-              seg(P(0, b), P(0, c)), arc(ro, P(0, c), P(c, 0))):
+              *arc(r, P(c, t), P(t, c)), seg(P(t, c), P(t, b)), seg(P(t, b), P(0, b)),
+              seg(P(0, b), P(0, c)), *arc(ro, P(0, c), P(c, 0))):
         wire.Add(e)
     solid = BRepPrimAPI_MakePrism(BRepBuilderAPI_MakeFace(wire.Wire()).Face(),
                                   gp_Vec(0, w, 0)).Shape()

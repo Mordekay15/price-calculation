@@ -419,3 +419,15 @@ def test_tabs_notched_apart_and_the_bridges_by_a_slot_bend_on_their_own():
     # counts as a bend.
     slot = _cut(l_bracket(w=100.0, hole=False), (-1, 12), (45, 55), (-1, 12))
     assert [round(b.angle_deg) for b in unfold(slot).bends] == [90, 90]
+
+
+def test_a_bend_exported_as_several_faces_is_one_bend():
+    # As in FreeCAD's unfolder: pieces of one cylinder (same axis and radius,
+    # meeting along its length) are one bend, their angles added up.
+    one = unfold(l_bracket(hole=False), 0.44)
+    for pieces in (2, 3):
+        split = unfold(l_bracket(hole=False, pieces=pieces), 0.44)
+        assert [round(b.angle_deg, 6) for b in split.bends] == [90]
+        assert [c for p in split.bends[0].line for c in p] == pytest.approx(
+            [c for p in one.bends[0].line for c in p], abs=1e-6)
+        assert _size(split) == pytest.approx(_size(one), abs=1e-3)

@@ -483,9 +483,9 @@ def _lay_flat(faces: list, base, t: float, flat: FlatPart, k: float) -> None:
     from core.geometry import area
     loops.sort(key=lambda lp: abs(area(lp)), reverse=True)
     flat.outline, flat.holes = loops[0], loops[1:]
-    flat.bends = _bends(faces, bend_faces, t, lambda j: {
-        i for edge in _edges(faces[j].face) for i in edge_faces.get(hash(edge), ())
-        if i != j and i in skin})
+    flat.bends = _bends(faces, bend_faces, {
+        j: [(edge, edge_faces.get(hash(edge), set()) & skin - {j}) for edge in _edges(faces[j].face)]
+        for j, _ in bend_faces})
     flat.is_sheet = True
 
     # The flat area times the thickness should give the volume (exactly at
@@ -553,30 +553,79 @@ def _side2(e2, e3, w3, normal):
     return (-e2[1] * hand, e2[0] * hand)
 
 
-def _bends(faces, bend_faces, t, neighbours) -> list[Bend]:
-    """One bend per bend face: its angle, inner radius and centre line on the
-    flat. Tabs notched apart and the bridges either side of a slot across a
-    bend line each count. A sliver left where a notch cuts into a bend
-    touches one flange only: it is part of the bend on its axis, not a bend
-    of its own. ``neighbours(face)`` are the skin faces next to a bend face."""
+def _bends(faces, bend_faces, edges) -> list[Bend]:
+    """The bends: their angle, inner radius and centre line on the flat.
+    ``edges[face]`` are a bend face's edges with the skin faces on their
+    other side.
+
+    As in FreeCAD's SheetMetal unfolder, a bend is a cylinder of the skin, but
+    one cylinder exported as several faces (split along its length, same axis
+    and radius) is one bend, its angles added up. Tabs notched apart and the
+    bridges either side of a slot across a bend line each count. A sliver
+    left where a notch cuts into a bend touches one flange only: it is part
+    of the bend on its axis, not a bend of its own."""
+    def key(j):
+        f = faces[j]
+        axis = tuple(round(abs(c), 3) for c in f.axis)
+        # The axis's point nearest the origin: the same for every face on it.
+        foot = _sub(f.axis_point, _mul(f.axis, _dot(f.axis_point, f.axis)))
+        return (tuple(round(c, 1) for c in foot), round(f.radius, 2), axis)
+
+    infos = dict(bend_faces)
+    group = {j: j for j in infos}
+
+    def root(j):
+        while group[j] != j:
+            j = group[j]
+        return j
+
+    for j in infos:
+        for edge, others in edges[j]:
+            line = _line_ends(edge)
+            if line is None or abs(abs(_dot(_unit(_sub(*line)), faces[j].axis)) - 1) > 1e-3:
+                continue          # pieces of one bend meet along a straight line on its axis
+            for k in others:
+                if k in infos and key(k) == key(j):
+                    group[root(k)] = root(j)
+    pieces: dict[int, list[int]] = {}
+    for j in infos:
+        pieces.setdefault(root(j), []).append(j)
+
+    def near(members):
+        return {i for j in members for _, others in edges[j] for i in others} - set(members)
+
     out: list[Bend] = []
     axes = set()
-    near = {j: neighbours(j) for j, _ in bend_faces}
-    for j, info in sorted(bend_faces, key=lambda b: len(near[b[0]]) < 2):
-        f = faces[j]
-        key = (tuple(round(c, 1) for c in f.axis_point), round(f.radius, 2))
-        key = (*key, tuple(round(abs(c), 3) for c in f.axis))
-        if len(near[j]) < 2 and key in axes:
+    for members in sorted(pieces.values(), key=lambda ms: len(near(ms)) < 2):
+        if len(near(members)) < 2 and key(members[0]) in axes:
             continue
-        axes.add(key)
+        axes.add(key(members[0]))
+        out.append(_bend(faces, members, infos))
+    return out
+
+
+def _bend(faces, members: list[int], infos: dict) -> Bend:
+    """One bend of one or more faces: its centre line is the faces' centre
+    lines' mean, weighted by their angles, as long as all of them."""
+    spans = [faces[j].u_span for j in members]
+    mids, ends = [], []
+    for j in members:
+        f, info = faces[j], infos[j]
         zs = [_dot(_sub(p, info["a3"]), info["e3"]) for e in _edges(f.face) for p in _sample(e)]
         s_mid = f.u_span / 2 * info["neutral"]
         a2, e2, w2 = info["a2"], info["e2"], info["w2"]
-        ends = tuple((a2[0] + z * e2[0] + s_mid * w2[0], a2[1] + z * e2[1] + s_mid * w2[1])
-                     for z in (min(zs), max(zs)))
-        out.append(Bend(math.degrees(f.u_span), round(info["inner"], 3), up=f.concave,
-                        line=ends))
-    return out
+        line = [(a2[0] + z * e2[0] + s_mid * w2[0], a2[1] + z * e2[1] + s_mid * w2[1])
+                for z in (min(zs), max(zs))]
+        mids.append(((line[0][0] + line[1][0]) / 2, (line[0][1] + line[1][1]) / 2))
+        ends += line
+    total = sum(spans)
+    centre = (sum(m[0] * w for m, w in zip(mids, spans)) / total,
+              sum(m[1] * w for m, w in zip(mids, spans)) / total)
+    e2 = infos[members[0]]["e2"]
+    along = [(p[0] - centre[0]) * e2[0] + (p[1] - centre[1]) * e2[1] for p in ends]
+    f, info = faces[members[0]], infos[members[0]]
+    line = tuple((centre[0] + z * e2[0], centre[1] + z * e2[1]) for z in (min(along), max(along)))
+    return Bend(math.degrees(total), round(info["inner"], 3), up=f.concave, line=line)
 
 
 # ── Edges ─────────────────────────────────────────────────────────────────────
