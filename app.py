@@ -7,12 +7,14 @@ from contextlib import nullcontext
 import streamlit as st
 
 from view import calculator_tab, dxf_tab, quote, sidebar
+from view.work import AUTO_VALUE_CSS
 
 st.set_page_config(
     page_title="Stremet Price Tool",
     layout="wide",
 )
 
+st.html(AUTO_VALUE_CSS)
 st.title("Stremet Price Tool")
 
 price_data = sidebar.render()

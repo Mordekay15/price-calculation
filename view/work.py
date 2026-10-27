@@ -73,14 +73,28 @@ def current_rates() -> WorkRates:
 # ── Part card: Työvaiheet ─────────────────────────────────────────────────────
 
 _METHODS = {LASER: "Laser", PUNCH: "Levari"}
-_AUTO_HELP = ("Harmaa arvo on laskettu automaattisesti. Kirjoita oma arvo "
+_AUTO_HELP = ("Kentän arvo on laskettu automaattisesti. Kirjoita oma arvo "
               "korvataksesi sen; tyhjennä kenttä palataksesi automaattiseen.")
+
+# The value an empty auto input uses is its placeholder: shown in the text
+# colour, not Streamlit's grey, so it reads as the number in use. (The copper
+# price's placeholder is a range, not a value: it stays grey.)
+AUTO_VALUE_CSS = """
+<style>
+.stElementContainer:not(.st-key-copper_price_kg) [data-testid="stNumberInput"] input::placeholder {
+    color: inherit !important;
+    -webkit-text-fill-color: currentColor !important;
+    opacity: 1 !important;
+}
+</style>
+"""
 
 
 def auto_input(col, label: str, key: str, auto: float | None, *, step: float,
           fmt: str = "%.2f", help: str | None = None) -> float | None:
     """A number input that is empty by default and then uses ``auto``; the
-    placeholder shows that value in grey. Clearing it goes back to ``auto``."""
+    placeholder shows that value (in the text colour, see ``AUTO_VALUE_CSS``).
+    Clearing it goes back to ``auto``."""
     shown = "ei tiedossa" if auto is None else f"{auto:.{fmt[2]}f}"
     help = " ".join(filter(None, (help, _AUTO_HELP)))
     value = col.number_input(label, min_value=0.0, value=None, step=step, format=fmt,
