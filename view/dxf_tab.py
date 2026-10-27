@@ -132,9 +132,6 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
             st.button(f"Kyllä, poista kaikki {len(parts)} osaa", key="dxf_del_all",
                       type="primary", on_click=evict_all)
     drawing_of = assemblies.drawings()          # assembly id: its drawing's card
-    if not is_headless():
-        attachments.render_checked_count([fid for fid, _ in parts
-                                          if fid not in drawing_of.values()])
     card_of = source_cards()
     index = {fid: idx for idx, (fid, _) in enumerate(parts)}
     per_assembly = per_unit(assemblies.current(card_of))  # card id: kpl in its assemblies
@@ -237,7 +234,7 @@ def _render_part_config(
     sizes and leaves its fasteners and welding to the assembly."""
     in_assembly = per_assembly > 0
     with st.container(border=True):
-        hdr = st.columns([5, 2, 2, 1], vertical_alignment="center")
+        hdr = st.columns([5, 3, 1], vertical_alignment="center")
         item = st.session_state.get(ITEMS, {}).get(fid)
         folders = sorted({f for f in map(folder_of, item.members if item else [fid]) if f})
         # Where it came from, and the text in the drawing (Mat=…, Thk=…) to
@@ -248,8 +245,7 @@ def _render_part_config(
              *_file_lines(item)] if item is not None and len(item.members) > 1 else []) + (
             ["Piirustuksen tekstit: " + " · ".join(dxf.texts)] if dxf.texts else [])
         hdr[0].markdown(f"**#{idx + 1}** · {dxf.name}", help="  \n".join(about) or None)
-        hdr[2].checkbox("Tarkastettu", key=attachments.CHECKED.format(fid))
-        hdr[3].button("Poista", key=f"dxf_del_{fid}", on_click=evict, args=(fid,))
+        hdr[2].button("Poista", key=f"dxf_del_{fid}", on_click=evict, args=(fid,))
         src_col, docs_col, model_col = st.columns(3)
         if item is not None and len(item.members) > 1:
             with src_col:

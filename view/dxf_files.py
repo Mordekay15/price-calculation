@@ -474,7 +474,7 @@ def evict(fid: str) -> None:
     cfg = ss.get(CONFIG, {}).pop(fid, {})
     ss.get(REPORTS, {}).pop(fid, None)
     for key in (*material_keys(fid, cfg), f"dxf_unit_ok_{fid}",
-                f"dxf_src_{fid}", attachments.CHECKED.format(fid),
+                f"dxf_src_{fid}",
                 *(f"dxf_angle_{a}_{fid}" for a in NESTING_ANGLES)):
         ss.pop(key, None)
     sync()

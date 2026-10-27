@@ -1,8 +1,7 @@
 """Supporting files on the DXF tab: PDF drawings (and STEP models) dropped
 with the DXFs are linked to the part cards by part number
 (``core.linking``), can be relinked by hand, and show on their card as a
-preview of the drawing. Each card also gets a "Tarkastettu" tick, counted
-above the cards."""
+preview of the drawing."""
 
 from __future__ import annotations
 
@@ -18,7 +17,6 @@ _MANUAL = "dxf_doc_links"    # {doc id: part id or "" (= no part)}, set by hand
 _PREVIEWS = "dxf_doc_previews"  # {doc id: PNG bytes of page 1}
 TEXTS = "dxf_doc_texts"      # {doc id: [(page, text)]}, see core.materials.pdf_text
 FIELDS = "dxf_doc_fields"    # {doc id: [(page, Material field)]}, see material_fields
-CHECKED = "dxf_checked_{}"   # widget key of a card's "Tarkastettu" tick
 
 DOC_TYPES = {"pdf": "pdf", "step": "step", "stp": "step"}
 
@@ -232,12 +230,3 @@ def pdf_first_page_png(data: bytes, scale: float = 1.5) -> bytes | None:
         return buf.getvalue()
     except Exception:  # noqa: BLE001 - a broken PDF just has no preview
         return None
-
-
-def render_checked_count(part_ids: list[str]) -> None:
-    """How many cards are ticked as checked."""
-    if not part_ids:
-        return
-    done = sum(bool(st.session_state.get(CHECKED.format(p))) for p in part_ids)
-    colour = "green" if done == len(part_ids) else "gray"
-    st.caption(f":{colour}[Tarkastettu {done} / {len(part_ids)} osaa]")

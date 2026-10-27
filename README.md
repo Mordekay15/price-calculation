@@ -116,8 +116,7 @@ or DXF, the STEP model and the PDF. They become **one card** (`core/items.py`):
 - **The rest of the card.** PDFs show their first page under
   **Piirustukset**; a PDF named otherwise links by the part number in its
   text. The material search reads the texts of all the card's files.
-  **Poista** removes the card and its files. The **Tarkastettu** tick is
-  counted above the cards. In laser mode a card also prices punching (Levari)
+  **Poista** removes the card and its files. In laser mode a card also prices punching (Levari)
   for comparison, and says which method would be cheaper.
 
 ## STEP models: BOM and unfolding
@@ -358,7 +357,7 @@ view/                   Streamlit UI
   sheet_usage.py        the sheet-size table, metrics and price breakdown
   work.py               the work rates (sidebar), Työvaiheet on the cards, work per product
   quote.py              the Tarjous header, prices per batch size and the downloads
-  attachments.py        PDF/STEP files on the DXF tab, links, previews, Tarkastettu
+  attachments.py        PDF/STEP files on the DXF tab, links, previews
   material_agent.py     materials filled in from each card's files
   bom.py                STEP-mallit: BOM, cards from unfolded parts, K factor, 3D view
   assemblies.py         Kokoonpanot: from STEP assemblies and assembly drawings, parts, bought parts, work

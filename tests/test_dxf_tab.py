@@ -396,7 +396,6 @@ def test_a_pdf_links_to_its_part_and_fills_its_material():
 
     at = AppTest.from_file("dxf_docs_page.py", default_timeout=30).run()
     assert not at.exception
-    assert "dxf_checked_f0" in [c.key for c in at.checkbox]
     assert any("100325-revA.pdf" in e.label for e in at.expander)     # on card #1
     assert at.session_state["materials"] == [("S355MC", "3"), (None, None)]
     assert not any("Materiaaliehdotukset" in e.label for e in at.expander)
