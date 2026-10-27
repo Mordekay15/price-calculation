@@ -5,7 +5,6 @@ DXF tab, the clean DXFs for production (see ``core.batches``, ``core.quote``).""
 
 from __future__ import annotations
 
-import time
 from contextlib import nullcontext
 from datetime import date
 
@@ -34,7 +33,6 @@ from core.sheet_cost import piece_costs
 from view.work import current_rates
 
 _SIZES_KEY = "quote_batch_sizes"
-_STARTED = "quote_started"            # when the first part could be priced
 _FIELDS = {                           # QuoteInfo field -> widget key
     "number": "quote_number", "customer": "quote_customer",
     "customer_address": "quote_customer_address", "contact": "quote_contact",
@@ -115,7 +113,6 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
     costs = [pc for pc in costs if pc.product["id"] in group_of]
     if not costs:
         return
-    st.session_state.setdefault(_STARTED, time.time())
 
     sizes = current_sizes()
     group_sheets = {}
@@ -172,14 +169,9 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
         + (" 🧩 Kokoonpanon └-rivit ovat sen osuuksia yhdestä kokoonpanosta "
            "(kpl / kokoonpano × €/kpl), ja niiden summa on kokoonpanon kpl-hinta."
            if assemblies and table else "")))
-    cols = st.columns(len(sizes) + 1)
-    for col, q, t in zip(cols, sizes, line_totals):
+    for col, q, t in zip(st.columns(len(sizes)), sizes, line_totals):
         col.metric(f"Yhteensä, {q} kpl/nimike", fmt_eur(t) or "–",
                    help=None if t is not None else "Osalta puuttuu hinta.")
-    started = st.session_state.get(_STARTED)
-    if started:
-        cols[-1].metric("Laskenta-aika", f"{(time.time() - started) / 60:.0f} min",
-                        help="Aika siitä, kun ensimmäinen osa oli hinnoiteltavissa.")
     if table:
         _render_table(lines, members, sizes, lead)
     _render_breakdown(costs, names, by_part, priced, sizes, rates, key, folded=table)

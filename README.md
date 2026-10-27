@@ -67,8 +67,7 @@ The folded **Tarjous** section above the tabs holds the quote's header:
 quote number, customer, contact, seller, date, validity, payment terms,
 delivery and notes. It also holds the **Eräkoot** (batch sizes, default
 `1 5 10`). Under each tab's results, **Eräkohtaiset hinnat** prices every
-part at every batch size and shows the quote's total at each one. It also
-shows **Laskenta-aika**, the time since the first part could be priced.
+part at every batch size and shows the quote's total at each one.
 
 - The table's **Määrä** shows the pieces at each batch size (`1 · 5 · 10`).
   An assembly's `└` rows are what each part, bought part and the assembly
