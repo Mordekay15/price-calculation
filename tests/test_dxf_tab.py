@@ -476,7 +476,8 @@ def test_a_unitless_dxf_is_confirmed_by_its_pdf_drawing():
     at = AppTest.from_function(page, default_timeout=30).run()
     assert not at.exception
     assert "dxf_unit_ok_f" not in [c.key for c in at.checkbox]
-    assert any("vahvistettu: PDF-piirustuksen mitta 516.4 mm" in c.proto.help for c in at.caption)
+    assert any("vahvistettu: PDF-piirustuksen mitta 516.4 mm" in m.proto.help
+               for m in at.markdown)   # on the size in the header
 
 
 def test_empty_cards_get_their_drawings_material_once_and_conflicts_wait():

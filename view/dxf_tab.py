@@ -578,8 +578,7 @@ def _checked_size(fid: str, dxf: DxfFile, report: DxfReport, badge,
     # gives and price only once the user confirms it. The warning goes above
     # the checkbox and only while it is unticked.
     if dxf.unit_guessed and confirmed:
-        st.caption(f"Yksikkö {report.unit_label} vahvistettu",
-                   help=f"Mittayksikkö puuttuu tiedostosta; vahvistettu: {confirmed}.")
+        pass   # said on the size in the header, below
     elif dxf.unit_guessed:
         note = st.empty()
         if not st.checkbox(f"Koko {width:g} × {height:g} mm on oikein",
@@ -594,7 +593,10 @@ def _checked_size(fid: str, dxf: DxfFile, report: DxfReport, badge,
 
     # The drawing's own unit only when it isn't mm ("… mm · mm" said nothing).
     drawn = "" if report.unit_label == "mm" else f" · piirretty: {report.unit_label}"
-    badge.markdown(f":gray[{width:g} × {height:g} mm{drawn}]")
+    badge.markdown(f":gray[{width:g} × {height:g} mm{drawn}]",
+                   help=f"Yksikkö {report.unit_label} vahvistettu: {confirmed}. "
+                        "Mittayksikkö puuttuu tiedostosta." if dxf.unit_guessed and confirmed
+                   else None)
     return width, height
 
 
@@ -612,17 +614,20 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict,
     cfg = st.session_state.setdefault(CONFIG, {}).setdefault(
         fid, {"material": None, "thickness": None})
     mat_key, thick_key, _ = material_keys(fid, cfg)
+    # Filled in automatically: said in the material box's tooltip, while the
+    # boxes (as they now stand) still hold what was filled in.
+    ss = st.session_state
+    note = material_agent.auto_note(fid, ss.get(mat_key, cfg["material"]),
+                                    ss.get(thick_key, cfg["thickness"]))
     material, thickness = render_material_thickness(
         materials, lookup,
         mat_key=mat_key, thick_key=thick_key,
         mat_default=cfg["material"], thick_default=cfg["thickness"],
+        help=f"Täytetty automaattisesti: {note}" if note else None,
     )
     cfg["material"] = material
     cfg["thickness"] = thickness
-    note = material_agent.auto_note(fid, material, thickness)
-    if note:
-        st.caption("Täytetty automaattisesti", help=note)
-    elif not material and (check := material_agent.check_note(fid)):
+    if not note and not material and (check := material_agent.check_note(fid)):
         st.warning(f"Piirustukset eivät ole yksimielisiä materiaalista ({check}). "
                    "Valitse materiaali itse.")
     batch = max(current_sizes())
