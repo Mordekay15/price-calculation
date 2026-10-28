@@ -299,13 +299,12 @@ class DxfFile:
         # hole (a countersink or thread drawn as concentric circles) and a thin
         # ¾-circle around a hole (the ISO thread symbol) are drawing marks of
         # that hole: drawn, not cut. Any other open line is a real gap.
-        # A closed line round a bend note is its box, drawn, not cut.
+        # A hole with a bend note written in it (a cut-out along the bend):
+        # the bend line runs on from it, see below.
         boxes = [c for c in inner if c.closed and any(point_in_polygon(n, c.points)
                                                       for n in notes)]
-        inner = [c for c in inner if not any(c is b for b in boxes)]
         report.holes = [c for c in inner if c.closed and c.depth == main.depth + 1]
         report.reference_lines = _lines_inside(main, [p.points for p in reference])
-        report.reference_lines += [b.points for b in boxes]
         report.bends = len(_lines_inside(main, [p.points for p in reference
                                                 if _is_bend_layer(p.layer)])) or len(notes)
         rings = [c for c in inner if c.closed]
@@ -318,7 +317,7 @@ class DxfFile:
             elif not c.closed:
                 report.open_lines.append(c.points)
 
-        # The bend line through a note's box, where it runs on outside it.
+        # The bend line, where it runs on from the note's cut-out: drawn, not cut.
         on_box = [ln for ln in report.open_lines
                   if any(_on_ring(end, b.points) for b in boxes for end in (ln[0], ln[-1]))]
         report.open_lines = [ln for ln in report.open_lines if not any(ln is o for o in on_box)]
