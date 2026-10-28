@@ -66,6 +66,7 @@ def render_material_thickness(
     mat_default: str | None = None,
     thick_default: str | None = None,
     cols=None,
+    help: str | None = None,
 ) -> tuple[str | None, str | None]:
     """Render the shared material + thickness selectboxes.
 
@@ -75,7 +76,8 @@ def render_material_thickness(
     ``mat_default`` / ``thick_default`` seed the initial selection — pass a
     card's stored values to keep its choice across reruns, or leave them None
     to start on the placeholder. ``cols`` are the two containers to draw the
-    boxes in (default: two new side-by-side columns). Returns
+    boxes in (default: two new side-by-side columns); ``help`` is the
+    material box's tooltip. Returns
     ``(material, thickness)``, each None when unset.
     """
     mat_col, thick_col = cols or st.columns(2)
@@ -86,6 +88,7 @@ def render_material_thickness(
         mat_opts,
         index=mat_opts.index(mat_default),
         key=mat_key,
+        help=help,
     )
     material = mat_raw if mat_raw != _PLACEHOLDER_MAT else None
 

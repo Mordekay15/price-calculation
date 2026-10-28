@@ -59,7 +59,6 @@ from view.dxf_files import (
 )
 from view.dxf_nesting import (
     ANGLE_MODE,
-    PER_PART,
     NestState,
     render_nesting,
     render_nesting_angles,
@@ -74,37 +73,23 @@ MENU = "dxf_menu"   # the screens' menu, under the file tab
 
 _ISSUES = "dxf_issues"      # {card id: what it still needs}, as of the last run
 _ROWS = "dxf_rows"          # {card id: its row in the parts table}, this run
-_ONLY_OPEN = "dxf_only_open"            # show only the cards that still need something
 _VIEW, CARDS, TABLE = "dxf_view", "Kortit", "Taulukko"
 _TABLE = "dxf_parts_table"
 
-# The keys of the widgets the screens draw, besides the cards'.
-_DRAWN_ON = [re.compile(p) for p in (
-    r"dxf_(doc_show_linked|doc_page|doc_link_.*|step_k_input|step_3d_.*|step_pick_.*)",  # BOM
-    r"dxf_card_page.*|dxf_(only_open|view|parts_table|bulk_.*)"
-    r"|asm_(name|fit_min|weld_m|setup_min|eur_per_h|other_eur)_.*",
-    r"dxf_(margin_pct|nest_mode|rankavali_mm|edge_.*|sparrow_t|angle_(0|90)|angle_mode"
-    r"|su_select::.*)",                                                      # Nestaus
-    r"quote_(breakdown_q|pdf_mat|dxf_name|dxf_marks)_dxf",                   # Hinnoittelu
-)]
-
-
-def _keep_inputs() -> None:
-    """Keep every screen's and card's inputs, on every run: a screen not
-    open draws none of them, and one opened again draws them anew in the
-    browser, from their defaults unless set through the session (see
-    ``view.ui.keep``). Run before anything is drawn; a card added on this
-    run has nothing to keep yet."""
-    ss = st.session_state
-    cards = ids_in({*ss.get(ITEMS, {}), *ss.get(CONFIG, {})})
-    keep(lambda key: any(p.fullmatch(key) for p in _DRAWN_ON) or bool(cards.search(key)))
+def keep_inputs() -> None:
+    """Keep every input of the page, on every run, until "Tyhjennä kaikki"
+    (``clear_all``): a screen or tab not open draws none of its inputs, and
+    one opened again draws them anew in the browser, from their defaults
+    unless set through the session (see ``view.ui.keep``). Every key is kept
+    but the menus' (which screen is open), so a new input needs no listing
+    here. Run first on the page, before anything is drawn."""
+    keep(lambda key: key not in (MENU, "menu"))
 
 
 def render(data: dict, screen: str | None):
     """One of ``SCREENS``; None when another tab is open (then only the
     inputs are kept). Returns the quote's totals for the bar
     (``quote.Totals``), or None."""
-    _keep_inputs()
     if screen is None:
         keep(lambda key: key == MENU)   # back on the same screen
         return None
@@ -127,8 +112,8 @@ def render(data: dict, screen: str | None):
     materials = materials_with_copper(lookup)
     if screen == BOM:
         auto_fill_materials(parts, materials, lookup)
-    # Per-part angles are chosen on the cards, by the Nestaus switch.
-    per_part = len(parts) > 1 and st.session_state.get(ANGLE_MODE) == PER_PART
+    # Per-part angles are chosen on the Nestaus step, by its switch.
+    per_part = len(parts) > 1 and bool(st.session_state.get(ANGLE_MODE))
     with headless(screen != BOM):
         products = _render_part_cards(parts, materials, lookup, per_part)
     with headless(screen != NESTING):
@@ -150,14 +135,17 @@ def render(data: dict, screen: str | None):
 
 
 def _render_next(screen: str) -> None:
-    """The next step's button, at the end of the step: where the work on it
-    ends."""
-    nxt = SCREENS.index(screen) + 1
-    if nxt < len(SCREENS):
-        st.divider()
-        _, col = st.columns([3, 1])
-        col.button(f"Seuraava: {SCREENS[nxt]} →", key="ui_go_next", type="primary",
-                   on_click=_go, args=(SCREENS[nxt],), width="stretch")
+    """The previous and next step's buttons, at the end of the step: where
+    the work on it ends."""
+    at = SCREENS.index(screen)
+    st.divider()
+    back, _, nxt = st.columns([1, 2, 1])
+    if at > 0:
+        back.button(f"← {SCREENS[at - 1]}", key="ui_go_back", on_click=_go,
+                    args=(SCREENS[at - 1],), width="stretch")
+    if at + 1 < len(SCREENS):
+        nxt.button(f"Seuraava: {SCREENS[at + 1]} →", key="ui_go_next", type="primary",
+                   on_click=_go, args=(SCREENS[at + 1],), width="stretch")
 
 
 # Kept by "Tyhjennä kaikki": the sidebar (price lists, copper, work rates),
@@ -177,13 +165,9 @@ def clear_all() -> None:
     ss[MENU] = BOM
 
 
-def _go(screen: str, only_open: bool = False) -> None:
-    """A status-strip button: open ``screen`` (and show only the unfinished
-    cards)."""
+def _go(screen: str) -> None:
+    """A step button: open ``screen``."""
     st.session_state[MENU] = screen
-    if only_open:
-        st.session_state[_ONLY_OPEN] = True
-        st.session_state[_VIEW] = CARDS
 
 
 def _render_start() -> None:
@@ -238,8 +222,8 @@ def _render_status(screen: str, nest: NestState, priced: bool) -> None:
             return ":green[valmis]" if nest.groups else ":gray[odottaa osia]"
         return ":green[hinta valmis]" if priced else ":gray[odottaa nestausta]"
 
-    with st.container(border=True):
-        flow, action = st.columns([5, 2], vertical_alignment="center")
+    flow = st.container(border=True)
+    with flow:
         flow.markdown("  →  ".join(
             (f"**{s}**" if s == screen else s) + " " + state(s) for s in SCREENS),
             help="Luettu: " + " · ".join(read))
@@ -248,9 +232,6 @@ def _render_status(screen: str, nest: NestState, priced: bool) -> None:
             what[reason] = what.get(reason, 0) + 1
         if what:
             flow.caption("Kesken: " + " · ".join(f"{r} ({n})" for r, n in what.items()))
-        if issues and not (screen == BOM and ss.get(_ONLY_OPEN)):
-            action.button(f"Näytä keskeneräiset ({len(issues)})", key="ui_go_open",
-                          on_click=_go, args=(BOM, True), width="stretch")
 
 
 def _render_part_cards(parts, materials: list[str], lookup: dict,
@@ -262,14 +243,10 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
     ss = st.session_state
     rows: dict[str, dict] = {}
     ss[_ROWS] = rows                            # filled by the cards below
-    unfinished = set(ss.get(_ISSUES, {}))       # as of the last run
-    only_open = bool(unfinished) and ss.get(_ONLY_OPEN, False)
-    title, view_col, open_col, clear = st.columns([3, 2, 3, 2], vertical_alignment="center")
+    title, view_col, _gap, clear = st.columns([3, 2, 3, 2], vertical_alignment="center")
     title.markdown("**Osat**")
     view = view_col.segmented_control("Näkymä", (CARDS, TABLE), default=CARDS, key=_VIEW,
                                       label_visibility="collapsed") or CARDS
-    if unfinished:
-        only_open = open_col.toggle(f"Vain keskeneräiset ({len(unfinished)})", key=_ONLY_OPEN)
     if len(parts) > 1:
         # Behind a popover: one stray click shouldn't drop every card's setup.
         with clear.popover("Poista kaikki", width="stretch"):
@@ -286,9 +263,9 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
     products: dict[int, dict | None] = {}
     fill = _FillOffer()
 
-    # The table lists the cards shown (every card, or the unfinished ones);
-    # a card picked in it opens below it, several get the bulk edit.
-    listed = [idx for idx, (fid, _) in enumerate(parts) if not only_open or fid in unfinished]
+    # The table lists every card; a card picked in it opens below it,
+    # several get the bulk edit.
+    listed = list(range(len(parts)))
     picked = [listed[r] for r in (ss.get(_TABLE) or {}).get("selection", {}).get("rows", [])
               if r < len(listed)] if view == TABLE else []
 
@@ -296,8 +273,7 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
         if view == TABLE:
             shown = set(picked[:1]) if len(picked) == 1 else set()
         else:
-            visible = [i for i in idxs if not only_open or parts[i][0] in unfinished]
-            shown = {visible[i] for i in _render_page_picker(len(visible), page_key)}
+            shown = {idxs[i] for i in _render_page_picker(len(idxs), page_key)}
         for idx in idxs:
             fid, part = parts[idx]
             offer = idx in shown
@@ -313,8 +289,6 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
              if fid not in per_assembly and fid not in drawing_of.values()]
     if not loose:
         st.caption("Kaikki osat ovat kokoonpanoissa.")
-    elif only_open and view == CARDS and not any(parts[i][0] in unfinished for i in loose):
-        st.caption("Kokoonpanoihin kuulumattomat osat ovat valmiita.")
     draw(loose, _PAGE)
 
     def draw_assembly(aid: str, cids: dict[str, int]) -> None:
@@ -432,7 +406,8 @@ def _render_part_config(
 ) -> dict | None:
     """Draw one part's card, preview left and inputs right; return its product
     dict, or None if not priceable. Its ``angles`` are None (set later from the
-    run row) unless ``per_part_angles``. ``fill`` carries the "same material?"
+    run row) unless ``per_part_angles`` (then its own, chosen on the run
+    row). ``fill`` carries the "same material?"
     question from card to card (see ``_offer_same_material``). ``doc_ids``
     are the supporting files linked to it (see ``view.attachments``). A card in
     an assembly (``per_assembly`` kpl in one) takes its quantity from the batch
@@ -496,20 +471,20 @@ def _render_part_config(
                                                              in_bom)
             if fill is not None:
                 _offer_same_material(fid, idx, material, thickness, fill)
-            angles = render_nesting_angles(fid) if per_part_angles else None
             work = render_work_inputs(fid, material=material, thickness=thickness, qty=qty,
                                       cut_length_m=report.cut_length_mm / 1000,
                                       bends=card_bends(report, item), threads=report.threads,
                                       fasteners=0 if in_assembly else card_fasteners(dxf, item),
                                       in_assembly=in_assembly)
-        status = ("✓ valmis" if material and thickness and angles != ()
-                  else f"{_OPEN} valitse nestauskulma" if material and thickness
+        # Chosen on the Nestaus step, next to the run button (see
+        # ``dxf_nesting._render_angle_controls``); read here for the product.
+        with headless():
+            angles = render_nesting_angles(fid) if per_part_angles else None
+        status = ("✓ valmis" if material and thickness
                   else f"{_OPEN} valitse paksuus" if material
                   else f"{_OPEN} valitse materiaali")
         _row(fid, idx, dxf, status, Materiaali=material or "", Paksuus=thickness or "", Määrä=qty,
              **{"Koko (mm)": f"{size[0]:g} × {size[1]:g}"})
-        if angles == ():
-            return None
 
     return {
         "id":        fid,
@@ -527,7 +502,7 @@ def _render_part_config(
 
 
 def _render_preview(report: DxfReport, bends: list | None = None) -> None:
-    """The part as it will be cut; shapes left outside it are greyed out.
+    """The part as it will be cut, alone (shapes outside it are left out).
     ``bends`` are the STEP model's bend lines placed on it."""
     preview = preview_svg(report, bends=bends)
     if preview:
@@ -538,10 +513,15 @@ def _render_preview(report: DxfReport, bends: list | None = None) -> None:
     if slits:
         st.caption(f"{slits} rakoa", help="Suorat leikkaukset osan sisällä ovat mukana "
                                          "leikkuupituudessa.")
+    if report.drawn_blank_mm:
+        st.caption(f":orange[Aihion leveys avattu profiilista "
+                   f"(piirustuksessa {report.drawn_blank_mm:.1f} mm)]",
+                   help="Piirustuksen aihio ei vastaa sen profiilia, joten leveys on "
+                        "laskettu profiilin poikkileikkauksesta (K = 0,44).")
     if report.dropped_count:
         st.caption(f"{report.dropped_count} kuviota ohitettu",
                    help="Osan ulkopuolella olevat kuviot (esim. lisäkuvat tai irralliset "
-                        "viivat) eivät ole osaa; ne ovat harmaalla esikatselussa.")
+                        "viivat) eivät ole osaa, eikä niitä näytetä esikatselussa.")
 
 
 def _unit_reason(dxf: DxfFile, report: DxfReport, item: Item | None, doc_ids) -> str | None:
@@ -575,8 +555,7 @@ def _checked_size(fid: str, dxf: DxfFile, report: DxfReport, badge,
     # gives and price only once the user confirms it. The warning goes above
     # the checkbox and only while it is unticked.
     if dxf.unit_guessed and confirmed:
-        st.caption(f"Yksikkö {report.unit_label} vahvistettu",
-                   help=f"Mittayksikkö puuttuu tiedostosta; vahvistettu: {confirmed}.")
+        pass   # said on the size in the header, below
     elif dxf.unit_guessed:
         note = st.empty()
         if not st.checkbox(f"Koko {width:g} × {height:g} mm on oikein",
@@ -591,7 +570,10 @@ def _checked_size(fid: str, dxf: DxfFile, report: DxfReport, badge,
 
     # The drawing's own unit only when it isn't mm ("… mm · mm" said nothing).
     drawn = "" if report.unit_label == "mm" else f" · piirretty: {report.unit_label}"
-    badge.markdown(f":gray[{width:g} × {height:g} mm{drawn}]")
+    badge.markdown(f":gray[{width:g} × {height:g} mm{drawn}]",
+                   help=f"Yksikkö {report.unit_label} vahvistettu: {confirmed}. "
+                        "Mittayksikkö puuttuu tiedostosta." if dxf.unit_guessed and confirmed
+                   else None)
     return width, height
 
 
@@ -609,17 +591,20 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict,
     cfg = st.session_state.setdefault(CONFIG, {}).setdefault(
         fid, {"material": None, "thickness": None})
     mat_key, thick_key, _ = material_keys(fid, cfg)
+    # Filled in automatically: said in the material box's tooltip, while the
+    # boxes (as they now stand) still hold what was filled in.
+    ss = st.session_state
+    note = material_agent.auto_note(fid, ss.get(mat_key, cfg["material"]),
+                                    ss.get(thick_key, cfg["thickness"]))
     material, thickness = render_material_thickness(
         materials, lookup,
         mat_key=mat_key, thick_key=thick_key,
         mat_default=cfg["material"], thick_default=cfg["thickness"],
+        help=f"Täytetty automaattisesti: {note}" if note else None,
     )
     cfg["material"] = material
     cfg["thickness"] = thickness
-    note = material_agent.auto_note(fid, material, thickness)
-    if note:
-        st.caption("Täytetty automaattisesti", help=note)
-    elif not material and (check := material_agent.check_note(fid)):
+    if not note and not material and (check := material_agent.check_note(fid)):
         st.warning(f"Piirustukset eivät ole yksimielisiä materiaalista ({check}). "
                    "Valitse materiaali itse.")
     batch = max(current_sizes())

@@ -108,7 +108,23 @@ def dwg_to_dxf(data: bytes, *, minimal: bool = False) -> bytes:
             _with_libredwg(exe, src, dst, minimal)
         if not dst.is_file():
             raise ConversionError("Muunnin ei tuottanut DXF-tiedostoa.")
-        return dst.read_bytes()
+        return _join_broken_values(dst.read_bytes())
+
+
+def _join_broken_values(dxf: bytes) -> bytes:
+    """LibreDWG writes a text with a line break in it (a title block's long
+    disclaimer) over two lines, and the DXF no longer reads (a code line that
+    isn't a number). Such a broken-off line is joined back to its value."""
+    lines = dxf.replace(b"\r\n", b"\n").split(b"\n")
+    out: list[bytes] = []
+    code = True    # the next line is a group code
+    for line in lines:
+        if code and out and not line.strip().lstrip(b"-").isdigit() and line.strip():
+            out[-1] += b" " + line     # the value went on: not a code
+            continue
+        out.append(line)
+        code = not code
+    return b"\n".join(out)
 
 
 _UNIT_VARS = (b"$INSUNITS", b"$MEASUREMENT")

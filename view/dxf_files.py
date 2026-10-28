@@ -20,7 +20,6 @@ from core.items import (Choice, Source, choose, group_sources, looks_like_drawin
                         score_dxf, STEP_CHOICE)
 from core.linking import base_key
 from core.linking import bom_quantities as _bom_quantities
-from core.sparrow import NESTING_ANGLES
 from core.step import available as step_available
 from core.step import bends_on
 from view import assemblies, attachments, bom, material_agent
@@ -501,7 +500,7 @@ def evict(fid: str) -> None:
     ss.get(REPORTS, {}).pop(fid, None)
     for key in (*material_keys(fid, cfg), f"dxf_unit_ok_{fid}",
                 f"dxf_src_{fid}",
-                *(f"dxf_angle_{a}_{fid}" for a in NESTING_ANGLES)):
+                f"dxf_turn_{fid}"):
         ss.pop(key, None)
     shown = ss.get(AUTO_SHOWN, {})
     for key in [k for k in shown if ids_in([fid]).search(k)]:

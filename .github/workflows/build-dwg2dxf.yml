@@ -14,7 +14,7 @@ permissions:
   contents: write
 
 env:
-  LIBREDWG_VERSION: "0.13.3"
+  LIBREDWG_VERSION: "0.14"
 
 jobs:
   build:

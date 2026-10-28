@@ -180,21 +180,22 @@ def dxf_page(n):
 
 def test_one_part_takes_its_nesting_angle_from_the_run_row():
     at = dxf_page(1)
-    assert [c.key for c in at.checkbox if c.key.startswith("dxf_angle")] == ["dxf_angle_0", "dxf_angle_90"]   # none on the card
-    assert not at.radio
-    at.checkbox(key="dxf_angle_90").uncheck().run()
+    assert [p.key for p in at.pills if p.key.startswith("dxf_turn")] == ["dxf_turn"]   # none on the card
+    assert at.session_state["angles"] == [(0, 90)]   # both: free, by default
+    at.pills(key="dxf_turn").set_value([0]).run()
     assert at.session_state["angles"] == [(0,)]
+    at.pills(key="dxf_turn").set_value([]).run()
+    assert at.session_state["angles"] == [()] and at.warning
 
 
 def test_several_parts_share_one_angle_or_choose_per_part():
     at = dxf_page(2)
-    assert at.radio(key="dxf_angle_mode").value == "Sama kaikille"
-    at.checkbox(key="dxf_angle_0").uncheck().run()
+    assert not at.toggle(key="dxf_angle_per_part").value
+    at.pills(key="dxf_turn").set_value([90]).run()
     assert at.session_state["angles"] == [(90,), (90,)]
-    at.radio(key="dxf_angle_mode").set_value("Osakohtainen").run()
-    assert {c.key for c in at.checkbox if c.key.startswith("dxf_angle")} == {"dxf_angle_0_f0", "dxf_angle_90_f0",
-                                            "dxf_angle_0_f1", "dxf_angle_90_f1"}
-    at.checkbox(key="dxf_angle_90_f1").uncheck().run()
+    at.toggle(key="dxf_angle_per_part").set_value(True).run()
+    assert {p.key for p in at.pills if p.key.startswith("dxf_turn_")} == {"dxf_turn_f0", "dxf_turn_f1"}
+    at.pills(key="dxf_turn_f1").set_value([0]).run()
     assert at.session_state["angles"] == [(0, 90), (0,)]
 
 
@@ -475,7 +476,8 @@ def test_a_unitless_dxf_is_confirmed_by_its_pdf_drawing():
     at = AppTest.from_function(page, default_timeout=30).run()
     assert not at.exception
     assert "dxf_unit_ok_f" not in [c.key for c in at.checkbox]
-    assert any("vahvistettu: PDF-piirustuksen mitta 516.4 mm" in c.proto.help for c in at.caption)
+    assert any("vahvistettu: PDF-piirustuksen mitta 516.4 mm" in m.proto.help
+               for m in at.markdown)   # on the size in the header
 
 
 def test_empty_cards_get_their_drawings_material_once_and_conflicts_wait():
@@ -661,3 +663,13 @@ def test_many_parts_are_drawn_a_page_at_a_time_and_all_priced():
     assert at.session_state["qtys"][21] == 10                  # the largest batch
     at.selectbox(key="dxf_card_page").set_value(1).run()      # and shown as set
     assert at.selectbox(key="dxf_mat_f21").value == "S235"
+
+
+def test_nesting_angle_tiles_show_the_part_turned_and_greyed_when_off():
+    from view.drawing import orientation_svg
+
+    strip = [[(0, 0), (100, 0), (100, 10), (0, 10)]]
+    along, across = orientation_svg(strip, 0, True), orientation_svg(strip, 90, False)
+    assert "#2563eb" in along and "dashed" in across
+    assert along != across
+    assert orientation_svg(None, 0, True)   # the run row's sample part

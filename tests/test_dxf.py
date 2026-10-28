@@ -338,3 +338,218 @@ def test_a_file_keeps_its_part_after_forgetting_its_lines(drawing):
     report = f.part()
     f.forget_lines()
     assert f.pieces == [] and f.part() is report
+
+
+def test_a_v_shaped_cut_modelled_as_a_hairline_hole_is_cut_once(drawing):
+    # A STEP flat's lance: both sides of a V cut 0.003 mm apart, crossing by
+    # round-off (FA26023_SUUN.14). It is a cut line, not a broken part.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    msp.add_lwpolyline([(163.8583, 129.16), (163.86, 129.1617), (145.1217, 110.4233),
+                        (126.385, 129.16), (126.385, 129.16), (145.1217, 110.42)], close=True)
+    report = part_of(doc)
+    assert report.problems == [] and len(report.holes) == 1
+    v = 2 * math.hypot(163.86 - 145.1217, 129.16 - 110.42)
+    assert math.isclose(report.cut_length_mm, 1000 + v, rel_tol=1e-3)
+    from core.dxf import is_sliver   # also with the tip's doubled point merged
+    assert is_sliver([(163.8583, 129.16), (163.86, 129.1617), (145.1217, 110.4233),
+                      (126.385, 129.16), (145.1217, 110.42)])
+    assert not is_sliver([(0, 0), (300, 200), (300, 0), (0, 200)])   # a real crossing
+
+
+def test_a_drawing_sheet_is_priced_from_its_flat_pattern_view(drawing):
+    # M3440809-00.dwg: the customer's whole sheet at 2:1 (frame, side views,
+    # title block); the flat pattern is the view with the bend note.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 386, 286)                          # the frame
+    rect(msp, 30, 70, 40, 100)                         # a side view
+    rect(msp, 300, 5, 80, 40)                          # the title block
+    msp.add_text("2:1", dxfattribs={"insert": (320, 20)})
+    rect(msp, 240, 70, 100, 104)                       # the flat pattern, 50 × 52
+    msp.add_circle((266, 160), 3.3)                    # Ø3.3 at 2:1
+    msp.add_circle((310, 160), 3.3)
+    rect(msp, 252, 126, 76, 17)                        # a cut-out along the bend
+    msp.add_line((290, 120), (290, 126))               # the bend line, on from it
+    msp.add_text("UP 90° R 1.5", dxfattribs={"insert": (270, 132)})
+    report = part_of(doc)
+    assert report.problems == [] and report.open_lines == []
+    assert sorted((round(report.outline.width_mm, 1), round(report.outline.height_mm, 1))) == [50, 52]
+    # The note is written in the cut-out: it is a hole all the same.
+    assert sorted(round(max(h.width_mm, h.height_mm), 1) for h in report.holes) == [3.3, 3.3, 38]
+    assert report.bends == 1
+    assert math.isclose(report.cut_length_mm,
+                        2 * (50 + 52) + 2 * math.pi * 3.3 + 2 * (38 + 8.5), rel_tol=0.01)
+
+
+def test_centre_mark_blocks_are_drawn_not_cut(drawing):
+    # WC-valaisimen asennuslevy (SolidWorks): a centre-mark block on each hole,
+    # with lines joining the holes across the part.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 100)
+    msp.add_circle((50, 20), 3)
+    msp.add_circle((50, 80), 3)
+    mark = doc.blocks.new("SW_CENTERMARKSYMBOL_3")
+    mark.add_line((0, 10), (0, 50))     # stops short of both holes
+    mark.add_line((-5, 0), (5, 0))
+    mark.add_line((-5, 60), (5, 60))
+    msp.add_blockref("SW_CENTERMARKSYMBOL_3", (50, 20))
+    report = part_of(doc)
+    assert report.problems == [] and report.open_lines == []
+    assert len(report.holes) == 2
+
+
+def test_dimension_arrowheads_and_doubled_lines_are_not_cuts(drawing):
+    # Exploded dimension arrowheads (SOLID) and every line drawn twice, on
+    # SLD-0 and SLD-0_0: the cut is the plate and its hole, once.
+    doc, msp = drawing()
+    for layer in ("SLD-0", "SLD-0_0"):
+        rect(msp, 0, 0, 200, 100, layer=layer)
+        msp.add_circle((100, 50), 10, dxfattribs={"layer": layer})
+    msp.add_solid([(50, 50), (55, 52), (55, 48)])
+    report = part_of(doc)
+    assert report.problems == [] and len(report.holes) == 1
+    assert math.isclose(report.cut_length_mm, 600 + 2 * math.pi * 10, rel_tol=0.01)
+
+
+def test_a_line_from_hole_to_hole_is_drawn_not_cut(drawing):
+    # WC-valaisimen holder: a construction line joining two holes.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 100, 60)
+    msp.add_circle((20, 20), 3)
+    msp.add_circle((80, 40), 3)
+    msp.add_line((22, 21), (78, 39))
+    report = part_of(doc)
+    assert report.problems == [] and report.open_lines == []
+
+
+def test_bend_notes_written_just_outside_the_part_count(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 100)
+    msp.add_line((0, 30), (300, 30), dxfattribs={"linetype": "PHANTOM"})
+    msp.add_line((0, 70), (300, 70), dxfattribs={"linetype": "PHANTOM"})
+    msp.add_text("UP 90° R 1", dxfattribs={"insert": (150, 35)})
+    msp.add_text("UP 90° R 1", dxfattribs={"insert": (150, -15)})   # under the edge
+    msp.add_text("UP 90° R 1", dxfattribs={"insert": (150, 400)})   # far away
+    assert part_of(doc).bends == 2
+
+
+def _u_section(msp, x, y, width, height, t):
+    """A U-profile's cross-section, ``t`` thick, square bends: 2 bends."""
+    msp.add_lwpolyline([(x, y + height), (x, y), (x + width, y), (x + width, y + height),
+                        (x + width - t, y + height), (x + width - t, y + t),
+                        (x + t, y + t), (x + t, y + height)], close=True)
+
+
+def test_a_profile_drawing_is_priced_from_its_blank_at_its_dimensions_scale(drawing):
+    # TSK14515020.dxf: a sheet with the profile's cross-section at 1:1 and its
+    # blank at 1:10, dimensioned in real size (2500 on a 250 line).
+    doc, msp = drawing()
+    rect(msp, 0, 0, 570, 390)                              # the frame
+    _u_section(msp, 300, 50, 200, 150, 2)
+    rect(msp, 20, 100, 250, 49.6)                          # the blank at 1:10
+    for p1, p2 in (((20, 149.6), (270, 149.6)), ((20, 100), (20, 149.6))):
+        msp.add_aligned_dim(p1, p2, distance=10, override={"dimlfac": 10}).render()
+    msp.add_image(doc.add_image_def("scan.tif", (200, 150)), (20, 250), (100, 75))
+    report = part_of(doc)
+    assert report.problems == [] and report.open_lines == []
+    assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (2500, 496)
+    assert report.bends == 2
+
+
+def test_a_plate_with_one_slot_is_not_a_profile_drawing(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    rect(msp, 50, 50, 100, 2)          # a slot as thin as sheet
+    msp.add_circle((200, 100), 10)
+    report = part_of(doc)
+    assert round(report.outline.width_mm) == 300 and len(report.holes) == 2
+
+
+def test_a_solid_linetype_under_another_name_is_cut(drawing):
+    # Vertex writes "Continuous" in Finnish: a linetype with no dashes.
+    doc, msp = drawing()
+    doc.linetypes.add("Yhtenäinen", pattern=[0.0])
+    rect(msp, 0, 0, 300, 200)
+    for e in msp:
+        e.dxf.linetype = "Yhtenäinen"
+    report = part_of(doc)
+    assert report.problems == [] and round(report.outline.width_mm) == 300
+
+
+def test_a_2007_file_is_read_as_utf8_whatever_its_code_page(drawing):
+    doc, msp = drawing()
+    doc.header["$DWGCODEPAGE"] = "ANSI_1252"
+    rect(msp, 0, 0, 300, 200, layer="Leikkausmerkinnät")
+    f = read_dxf(dxf_bytes(doc), "part.dxf")
+    assert f.available_layers() == ["Leikkausmerkinnät"]
+
+
+def test_a_blank_that_doesnt_fit_its_profile_is_unfolded_from_the_section(drawing):
+    # TSK14515020.dxf: the blank is drawn 557 wide for a profile that unfolds
+    # to about 537; a blank that fits its section is left as drawn.
+    from core.step import DEFAULT_K_FACTOR
+
+    def sheet(blank_w):
+        doc, msp = drawing()
+        rect(msp, 0, 0, 570, 390)
+        _u_section(msp, 300, 50, 30, 20, 2)                 # 66 through the middle
+        rect(msp, 20, 100, 250, blank_w)
+        return part_of(doc)
+
+    unfolded = 66 - math.pi * (0.5 - DEFAULT_K_FACTOR) * 2    # two 90° bends
+    report = sheet(80)
+    assert math.isclose(report.outline.height_mm, unfolded, abs_tol=0.1)
+    assert round(report.outline.width_mm) == 250 and round(report.drawn_blank_mm) == 80
+    report = sheet(65.8)
+    assert round(report.outline.height_mm, 1) == 65.8 and report.drawn_blank_mm == 0
+
+
+def test_dashed_lines_from_edge_to_edge_are_bends(drawing):
+    # A flat with its bend lines dashed on the part's own layer, and no notes.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 900, 120)
+    for y in (20, 100):
+        msp.add_line((0, y), (900, y), dxfattribs={"linetype": "DASHED"})
+    msp.add_line((50, 60), (850, 60), dxfattribs={"linetype": "DASHED"})   # stops short
+    report = part_of(doc)
+    assert report.problems == [] and report.bends == 2
+
+
+def test_a_profiles_broken_blank_is_its_dimensioned_length_by_its_unfolded_width(drawing):
+    # TSKD145150.dxf: the 2500 long blank is drawn shortened, in two halves
+    # either side of its break lines, so it is no one outline.
+    from core.step import DEFAULT_K_FACTOR
+
+    doc, msp = drawing()
+    rect(msp, 0, 0, 570, 390)
+    _u_section(msp, 300, 50, 30, 20, 1)                  # 68 through the middle
+    msp.add_lwpolyline([(70, 100), (20, 100), (20, 106.7), (70, 106.7)])
+    msp.add_lwpolyline([(76, 100), (126, 100), (126, 106.7), (76, 106.7)])
+    msp.add_line((73, 95), (73, 112), dxfattribs={"linetype": "DASHDOT"})   # the break
+    msp.add_aligned_dim((20, 106.7), (126, 106.7), distance=10,
+                        override={"dimlfac": 2500 / 106, "dimdec": 0}).render()
+    report = part_of(doc)
+    assert report.problems == []
+    assert round(report.outline.width_mm) == 2500
+    assert math.isclose(report.outline.height_mm, 68 - math.pi * (0.5 - DEFAULT_K_FACTOR),
+                        abs_tol=0.1)
+    assert report.bends == 2
+
+
+def test_a_part_drawn_at_another_scale_is_sized_by_its_own_dimensions(drawing):
+    # M58581.dxf: the flat drawn at 7:5 on a sheet that says 1:7; its
+    # dimensions show the real 1089 and 334.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 1524.6, 467.6)
+    msp.add_aligned_dim((0, 467.6), (1524.6, 467.6), distance=20,
+                        override={"dimlfac": 5 / 7}).render()
+    msp.add_aligned_dim((0, 0), (0, 467.6), distance=20, override={"dimlfac": 5 / 7}).render()
+    report = part_of(doc)
+    assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (1089, 334)
+
+
+def test_one_odd_dimension_does_not_rescale_a_part(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    msp.add_aligned_dim((0, 200), (300, 200), distance=20, override={"dimlfac": 2}).render()
+    assert round(part_of(doc).outline.width_mm) == 300

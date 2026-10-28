@@ -9,7 +9,7 @@ import streamlit as st
 from core.dxf import read_dxf
 from tests.conftest import dxf_bytes
 from view.dxf_files import FILES, STORE, ingest, sync
-from view.dxf_nesting import ANGLE_MODE, PER_PART, _render_angle_controls
+from view.dxf_nesting import ANGLE_MODE, _render_angle_controls
 from view.dxf_tab import _render_part_cards
 
 doc = ezdxf.new()
@@ -26,9 +26,9 @@ store = st.session_state.get(STORE, {})
 names = [f"p{len(store) + i}.dxf" for i in range(st.session_state.pop("add", 0))]
 ingest([SimpleNamespace(file_id=f"f{n[1:-4]}", name=n, getvalue=lambda: data) for n in names])
 parts = list(st.session_state.get(STORE, {}).items())
-per_part = len(parts) > 1 and st.session_state.get(ANGLE_MODE) == PER_PART
+per_part = len(parts) > 1 and bool(st.session_state.get(ANGLE_MODE))
 products = _render_part_cards(parts, ["S235"], {("2", "S235 | 1000x2000"): 900.0}, per_part)
-shared = _render_angle_controls(len(parts))
+shared = _render_angle_controls(len(parts), products)
 st.session_state["angles"] = [shared if shared is not None else p["angles"] for p in products]
 st.session_state["materials"] = [(p["material"], p["thickness"]) for p in products]
 st.session_state["qtys"] = [p["qty"] for p in products]
