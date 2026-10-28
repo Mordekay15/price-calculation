@@ -87,6 +87,10 @@ def render_drop_area() -> list[tuple[str, DxfFile]]:
         st.rerun()  # redraw with the drop area empty
     parts = sync()
     sync_assemblies()
+    if not step_available() and any(bom.is_step(d["name"]) for d in attachments.docs().values()):
+        st.warning("STEP-malleja ei voi lukea tällä palvelimella: Open CASCADE (cadquery-ocp) "
+                   "ei lataudu, yleensä koska libGL puuttuu (packages.txt). Osat hinnoitellaan "
+                   "DXF:stä ja piirustuksista ilman STEP-mallia.")
     skipped = st.session_state.get(_SKIPPED)
     if skipped:
         more = len(skipped) - _SKIPPED_SHOWN
