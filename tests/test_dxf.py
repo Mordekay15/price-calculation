@@ -513,3 +513,24 @@ def test_dashed_lines_from_edge_to_edge_are_bends(drawing):
     msp.add_line((50, 60), (850, 60), dxfattribs={"linetype": "DASHED"})   # stops short
     report = part_of(doc)
     assert report.problems == [] and report.bends == 2
+
+
+def test_a_profiles_broken_blank_is_its_dimensioned_length_by_its_unfolded_width(drawing):
+    # TSKD145150.dxf: the 2500 long blank is drawn shortened, in two halves
+    # either side of its break lines, so it is no one outline.
+    from core.step import DEFAULT_K_FACTOR
+
+    doc, msp = drawing()
+    rect(msp, 0, 0, 570, 390)
+    _u_section(msp, 300, 50, 30, 20, 1)                  # 68 through the middle
+    msp.add_lwpolyline([(70, 100), (20, 100), (20, 106.7), (70, 106.7)])
+    msp.add_lwpolyline([(76, 100), (126, 100), (126, 106.7), (76, 106.7)])
+    msp.add_line((73, 95), (73, 112), dxfattribs={"linetype": "DASHDOT"})   # the break
+    msp.add_aligned_dim((20, 106.7), (126, 106.7), distance=10,
+                        override={"dimlfac": 2500 / 106, "dimdec": 0}).render()
+    report = part_of(doc)
+    assert report.problems == []
+    assert round(report.outline.width_mm) == 2500
+    assert math.isclose(report.outline.height_mm, 68 - math.pi * (0.5 - DEFAULT_K_FACTOR),
+                        abs_tol=0.1)
+    assert report.bends == 2

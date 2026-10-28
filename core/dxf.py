@@ -216,7 +216,7 @@ class DxfFile:
     scale: float = 1.0
     # Each linear dimension's measured points and its shown value / drawn
     # length: a view drawn at 1:10 on a 1:1 sheet has its dimensions at 10.
-    dimensions: list[tuple[Point, Point, float]] = field(default_factory=list)
+    dimensions: list[tuple[Point, Point, float, float]] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)          # file-level
     unreadable: dict[str, dict[str, int]] = field(default_factory=dict)  # layer -> type -> n
     # The part from the default layers, once built (see ``part``).
@@ -295,6 +295,12 @@ class DxfFile:
         if section is not None:
             view = _blank_view(main, contours, section)
             if view is None:
+                # The blank drawn broken (a long strip shortened with break
+                # lines) or not at all: it is the dimensioned length by the
+                # unfolded width.
+                blank = _blank_from_dimensions(section, self.dimensions)
+                if blank is not None:
+                    return _profile_report(report, blank, section, contours)
                 section = None
         # Views drawn at the sheet's scale: a frame the size of a paper sheet
         # (a frame drawn at 1:1 round real-size views is the paper / scale).
@@ -407,10 +413,10 @@ def _blank_view(frame: Contour, contours: list[Contour], section: Contour) -> Co
     return views[0] if len(views) == 1 else None
 
 
-def _dimension_scale(view: Contour, dimensions: list[tuple[Point, Point, float]]) -> float:
+def _dimension_scale(view: Contour, dimensions: list[tuple[Point, Point, float, float]]) -> float:
     """Real size / drawn size of a view, from the dimensions measured on its
     edges (2500 shown on a 250 line: 10); 1 when they don't agree."""
-    found = [k for a, b, k in dimensions
+    found = [k for a, b, k, _value in dimensions
              if _near_ring(a, view.points, _JOIN_TOL_MM) and _near_ring(b, view.points, _JOIN_TOL_MM)]
     if not found or max(found) > min(found) * 1.01:
         return 1.0
@@ -422,6 +428,38 @@ def _dimension_scale(view: Contour, dimensions: list[tuple[Point, Point, float]]
             k = nice
             break
     return 1.0 if abs(k - 1.0) < 0.01 else k
+
+
+def _blank_from_dimensions(section: Contour,
+                           dimensions: list[tuple[Point, Point, float, float]]) -> Contour | None:
+    """A profile's blank when it isn't drawn as one outline: as long as the
+    longest dimension outside the cross-section, as wide as the section
+    unfolds. None without such a dimension."""
+    from core.step import DEFAULT_K_FACTOR
+
+    x0, y0, x1, y1 = bbox(section.points)
+    tol = _REFERENCE_BBOX_TOL_MM
+
+    def on_section(p: Point) -> bool:
+        return x0 - tol <= p[0] <= x1 + tol and y0 - tol <= p[1] <= y1 + tol
+
+    width = _unfolded_width(section, DEFAULT_K_FACTOR)
+    lengths = [v for a, b, _k, v in dimensions if not (on_section(a) or on_section(b))]
+    if not lengths or width <= 0 or max(lengths) <= width:
+        return None
+    long = max(lengths)
+    ring = [(0.0, 0.0), (long, 0.0), (long, width), (0.0, width)]
+    return Contour(ring, True, area_mm2=long * width)
+
+
+def _profile_report(report: DxfReport, blank: Contour, section: Contour,
+                    contours: list[Contour]) -> DxfReport:
+    """The part as a profile's plain blank; the drawing's lines are left out
+    (they are at other scales, and the blank is drawn broken)."""
+    report.outline = blank
+    report.bends = _section_bends(section.points)
+    report.problems += _part_problems(report)
+    return report
 
 
 def _section_bends(ring: list[Point]) -> int:
@@ -682,8 +720,9 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
 _NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)?")
 
 
-def _dimension(entity, factor: float) -> tuple[Point, Point, float] | None:
-    """A linear dimension's measured points and its shown value / drawn length."""
+def _dimension(entity, factor: float) -> tuple[Point, Point, float, float] | None:
+    """A linear dimension's measured points, its shown value / drawn length
+    and its shown value."""
     try:
         if entity.dimtype not in (0, 1):     # linear and aligned only
             return None
@@ -698,7 +737,7 @@ def _dimension(entity, factor: float) -> tuple[Point, Point, float] | None:
     if not m or not drawn:
         return None
     value = float(m.group().replace(",", "."))
-    return (a[0] * factor, a[1] * factor), (b[0] * factor, b[1] * factor), value / drawn
+    return (a[0] * factor, a[1] * factor), (b[0] * factor, b[1] * factor), value / drawn, value
 
 
 def _load(data: bytes):
