@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 from core.archive import ArchiveError, is_zip, unpack
 from core.dwg import read_drawing
-from core.dxf import DxfFile, DxfReport, fasteners_from_texts
+from core.dxf import DxfFile, DxfReport, fastener_lines, fasteners_from_texts
 from core.items import (Choice, Source, choose, group_sources, looks_like_drawing,
                         score_dxf, STEP_CHOICE)
 from core.linking import base_key
@@ -371,7 +371,26 @@ def sync_assemblies() -> None:
     def texts(cid: str) -> str:
         return "\n".join([*(attachments.text(d) for d in links.get(cid, [])),
                           *(store[cid].texts if cid in store else [])])
-    assemblies.sync_from_drawings(st.session_state.get(ITEMS, {}), texts)
+    items = st.session_state.get(ITEMS, {})
+    assemblies.sync_from_drawings(items, texts)
+    config = st.session_state.get(CONFIG, {})
+    assemblies.sync_from_fasteners(
+        {cid: card_fastener_lines(cid, item, links.get(cid, [])) for cid, item in items.items()},
+        {cid: store[cid].name for cid in items if cid in store}, source_cards(),
+        lambda cid: config.get(cid, {}).get("material"))
+
+
+def card_fastener_lines(cid: str, item: Item, docs: list[str]) -> list[tuple[str, int]]:
+    """The fasteners the card's drawings call out, ``(name, kpl / osa)``: of
+    its PDFs and files, the one that asks for the most (a flat and its drawing
+    repeat the same note)."""
+    files, store = st.session_state.get(FILES, {}), st.session_state.get(STORE, {})
+    sources = [[attachments.text(d)] for d in docs]
+    sources += [files[m].texts for m in item.members if m in files]
+    if cid in store:
+        sources.append(store[cid].texts)
+    return max((fastener_lines(t) for t in sources),
+               key=lambda ls: sum(n for _, n in ls), default=[])
 
 
 def source_cards() -> dict[str, str]:
