@@ -338,3 +338,20 @@ def test_a_file_keeps_its_part_after_forgetting_its_lines(drawing):
     report = f.part()
     f.forget_lines()
     assert f.pieces == [] and f.part() is report
+
+
+def test_a_v_shaped_cut_modelled_as_a_hairline_hole_is_cut_once(drawing):
+    # A STEP flat's lance: both sides of a V cut 0.003 mm apart, crossing by
+    # round-off (FA26023_SUUN.14). It is a cut line, not a broken part.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    msp.add_lwpolyline([(163.8583, 129.16), (163.86, 129.1617), (145.1217, 110.4233),
+                        (126.385, 129.16), (126.385, 129.16), (145.1217, 110.42)], close=True)
+    report = part_of(doc)
+    assert report.problems == [] and len(report.holes) == 1
+    v = 2 * math.hypot(163.86 - 145.1217, 129.16 - 110.42)
+    assert math.isclose(report.cut_length_mm, 1000 + v, rel_tol=1e-3)
+    from core.dxf import is_sliver   # also with the tip's doubled point merged
+    assert is_sliver([(163.8583, 129.16), (163.86, 129.1617), (145.1217, 110.4233),
+                      (126.385, 129.16), (145.1217, 110.42)])
+    assert not is_sliver([(0, 0), (300, 200), (300, 0), (0, 200)])   # a real crossing

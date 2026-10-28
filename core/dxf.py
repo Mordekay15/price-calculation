@@ -178,10 +178,12 @@ class DxfReport:
 
     @property
     def cut_length_mm(self) -> float:
-        """What the laser cuts: the outline, every hole and any open cut."""
+        """What the laser cuts: the outline, every hole and any open cut. A
+        hole that is only a cut line (``is_sliver``) is cut once, not round."""
         if self.outline is None:
             return 0.0
-        return (sum(length(c.points, closed=True) for c in (self.outline, *self.holes))
+        return (sum(length(c.points, closed=True) / (2 if is_sliver(c.points) else 1)
+                    for c in (self.outline, *self.holes))
                 + sum(length(line) for line in self.open_lines))
 
 
@@ -439,6 +441,32 @@ def is_slit(points: list[Point]) -> bool:
                for x, y in points)
 
 
+_SLIVER_MM = 0.05      # a ring whose sides are this close is a cut line
+_SLIVER_MAX_POINTS = 64
+
+
+def is_sliver(points: list[Point]) -> bool:
+    """A closed ring with next to no width: a cut line modelled as a hole,
+    such as a V-shaped lance in a STEP model's flat (both sides of the cut
+    0.003 mm apart), where the middle of every side lies on another side.
+    It is cut as a line, and its sides may cross by round-off without the
+    part being wrong."""
+    n = len(points)
+    if not 3 <= n <= _SLIVER_MAX_POINTS:
+        return False
+    segments = [(points[j], points[(j + 1) % n]) for j in range(n)]
+    return all(any(_point_segment_mm(((a[0] + b[0]) / 2, (a[1] + b[1]) / 2), c, d)
+                   <= _SLIVER_MM for j, (c, d) in enumerate(segments) if j != i)
+               for i, (a, b) in enumerate(segments))
+
+
+def _point_segment_mm(p: Point, a: Point, b: Point) -> float:
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    span = dx * dx + dy * dy
+    s = 0.0 if span == 0 else max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / span))
+    return math.hypot(p[0] - a[0] - s * dx, p[1] - a[1] - s * dy)
+
+
 def _part_problems(report: DxfReport) -> list[str]:
     """Why a built part cannot be priced — each reason in plain Finnish."""
     out = []
@@ -448,8 +476,8 @@ def _part_problems(report: DxfReport) -> list[str]:
         n = len(gaps)
         lines = "1 viiva osan sisällä ei" if n == 1 else f"{n} viivaa osan sisällä ei"
         out.append(f"{lines} sulkeudu ääriviivaksi — reiän ääriviivassa on aukko?")
-    if any(len(c.points) <= _SELF_INTERSECT_EDGE_CAP and _self_intersects(c.points)
-           for c in rings):
+    if any(len(c.points) <= _SELF_INTERSECT_EDGE_CAP and not is_sliver(c.points)
+           and _self_intersects(c.points) for c in rings):
         out.append("Ääriviiva leikkaa itseään.")
     if report.outline.area_mm2 < 1e-6:
         out.append("Ääriviivan pinta-ala on nolla (viallinen geometria).")

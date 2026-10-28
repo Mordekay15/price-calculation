@@ -13,7 +13,7 @@ from collections import Counter
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from core.dxf import DxfReport
+from core.dxf import DxfReport, is_sliver
 from core.geometry import (bbox, bbox_wh, net_area, rotate_translate, signed_area,
                            untangle)
 from core.cutting_stock import MixedSizes
@@ -80,8 +80,10 @@ class SparrowPart:
     def shape_dict(self) -> dict:
         """The jagua-rs ``shape`` object for this part."""
         outer = [list(p) for p in _simple_ring(self.outer, ccw=True)]
+        # A cut line modelled as a hole (``is_sliver``) has no room in it.
         inner = [[list(p) for p in ring] for ring in
-                 (_simple_ring(h, ccw=False) for h in self.holes) if len(ring) >= 3]
+                 (_simple_ring(h, ccw=False) for h in self.holes if not is_sliver(h))
+                 if len(ring) >= 3]
         if not inner:
             return {"type": "simple_polygon", "data": outer}
         return {"type": "polygon", "data": {"outer": outer, "inner": inner}}
