@@ -50,6 +50,7 @@ _ANNOTATION_TYPES = {
     "LARGE_RADIAL_DIMENSION", "LEADER", "MLEADER", "MULTILEADER", "TOLERANCE",
     "HATCH", "POINT", "VIEWPORT", "WIPEOUT",
     "SOLID", "TRACE",   # filled 2D shapes: a dimension's exploded arrowheads
+    "IMAGE",            # a raster picture (a scanned view): nothing to cut
 }
 
 # Layer-name fragments that mark a layer as drawing furniture or reference
@@ -210,6 +211,9 @@ class DxfFile:
     # sheet's flat pattern view is found by them (see ``_flat_view``).
     bend_notes: list[Point] = field(default_factory=list)
     scale: float = 1.0
+    # Each linear dimension's measured points and its shown value / drawn
+    # length: a view drawn at 1:10 on a 1:1 sheet has its dimensions at 10.
+    dimensions: list[tuple[Point, Point, float]] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)          # file-level
     unreadable: dict[str, dict[str, int]] = field(default_factory=dict)  # layer -> type -> n
     # The part from the default layers, once built (see ``part``).
@@ -282,9 +286,16 @@ class DxfFile:
         # scale.
         main = max(top, key=lambda c: c.width_mm * c.height_mm)
         view = _flat_view(main, contours, self.bend_notes)
+        # Or a profile's drawing: its cross-section and its blank (the one
+        # other view), the blank often drawn at a smaller scale.
+        section = _profile_section(main, contours) if view is None else None
+        if section is not None:
+            view = _blank_view(main, contours, section)
+            if view is None:
+                section = None
         # Views drawn at the sheet's scale: a frame the size of a paper sheet
         # (a frame drawn at 1:1 round real-size views is the paper / scale).
-        at_scale = view is not None and _paper_size(main)
+        at_scale = view is not None and section is None and _paper_size(main)
         if view is not None:
             main = view
         report.outline = main
@@ -337,6 +348,11 @@ class DxfFile:
         report.reference_lines += on_box
         if at_scale and self.scale != 1.0:
             _to_real_size(report, 1.0 / self.scale)
+        if section is not None:
+            k = _dimension_scale(main, self.dimensions)
+            if k != 1.0:
+                _to_real_size(report, k)
+            report.bends = report.bends or _section_bends(section.points)
         report.problems += _part_problems(report)
         _trim_dropped(report)
         _lay_along_length(report)
@@ -350,6 +366,81 @@ def _flat_view(frame: Contour, contours: list[Contour], notes: list[Point]) -> C
     views = [c for c in contours if c.closed and c.depth == frame.depth + 1
              and any(point_in_polygon(n, c.points) for n in notes)]
     return views[0] if len(views) == 1 else None
+
+
+_SECTION_MAX_T_MM = 6.0     # thicker than this is not a sheet-metal section
+
+
+def _strip_thickness(c: Contour) -> float:
+    """The width of a closed strip of even width (a sheet-metal profile's
+    cross-section): area = width × half the perimeter, near enough."""
+    n = len(c.points)
+    perimeter = sum(math.dist(c.points[i], c.points[(i + 1) % n]) for i in range(n))
+    return 2 * abs(c.area_mm2) / perimeter if perimeter else 0.0
+
+
+def _is_section(c: Contour) -> bool:
+    """A profile's cross-section: a strip of sheet thickness, bent, so it
+    spans far more than its thickness both ways (a slot doesn't)."""
+    t = _strip_thickness(c)
+    return 0 < t <= _SECTION_MAX_T_MM and min(c.width_mm, c.height_mm) >= 10 * t
+
+
+def _profile_section(frame: Contour, contours: list[Contour]) -> Contour | None:
+    """On a drawing sheet of a bent profile, the profile's cross-section: the
+    one view straight inside the frame drawn as a strip of sheet thickness."""
+    found = [c for c in contours if c.closed and c.depth == frame.depth + 1 and _is_section(c)]
+    return found[0] if len(found) == 1 else None
+
+
+def _blank_view(frame: Contour, contours: list[Contour], section: Contour) -> Contour | None:
+    """The profile's blank: the one other view straight inside the frame."""
+    views = [c for c in contours if c.closed and c.depth == frame.depth + 1 and c is not section]
+    return views[0] if len(views) == 1 else None
+
+
+def _dimension_scale(view: Contour, dimensions: list[tuple[Point, Point, float]]) -> float:
+    """Real size / drawn size of a view, from the dimensions measured on its
+    edges (2500 shown on a 250 line: 10); 1 when they don't agree."""
+    found = [k for a, b, k in dimensions
+             if _near_ring(a, view.points, _JOIN_TOL_MM) and _near_ring(b, view.points, _JOIN_TOL_MM)]
+    if not found or max(found) > min(found) * 1.01:
+        return 1.0
+    k = sum(found) / len(found)
+    # Dimensions are shown rounded (479 for 47.86 at 1:10): the scale is a
+    # round one, 10 or 1/2, when one is that close.
+    for nice in (round(k), 1 / max(round(1 / k), 1)):
+        if nice and abs(k / nice - 1) < 0.01:
+            k = nice
+            break
+    return 1.0 if abs(k - 1.0) < 0.01 else k
+
+
+def _section_bends(ring: list[Point]) -> int:
+    """The bends of a profile from its cross-section: each bend turns its
+    outline twice (outside and inside), each end turns it by 180°."""
+    ring = [q for i, q in enumerate(ring) if math.dist(q, ring[i - 1]) > 1e-6]
+    t = _strip_thickness(Contour(ring, True, area_mm2=area(ring)))
+    n = len(ring)
+    turns = []   # (turn in degrees, length of the side after it)
+    for i in range(n):
+        a, b, c = ring[i - 1], ring[i], ring[(i + 1) % n]
+        turn = math.degrees(math.atan2((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]),
+                                       (b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1])))
+        if abs(turn) > 1.0:
+            turns.append((turn, math.dist(b, c)))
+    # A corner: turns the same way along sides shorter than a few thicknesses
+    # (an arc flattened to segments, a square end).
+    corners: list[float] = []
+    for i, (turn, _side) in enumerate(turns):
+        if corners and turns[i - 1][1] < 5 * t and (turn > 0) == (corners[-1] > 0):
+            corners[-1] += turn
+        else:
+            corners.append(turn)
+    if len(corners) > 1 and turns[-1][1] < 5 * t and (corners[0] > 0) == (corners[-1] > 0):
+        corners[0] += corners.pop()
+    bent = [c for c in corners if 10.0 < abs(c) < 150.0]
+    return len(bent) // 2
 
 
 def _distinct(pieces: list[_Piece]) -> list[_Piece]:
@@ -509,6 +600,8 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
         at = getattr(entity.dxf, "insert", None)
         if at is not None and _BEND_NOTE_RE.match(text):
             f.bend_notes.append((at[0] * factor, at[1] * factor))
+    f.dimensions = [d for d in (_dimension(e, factor) for e in entities
+                                if e.dxftype() == "DIMENSION") if d]
     for entity in entities:
         etype = entity.dxftype()
         if etype in _ANNOTATION_TYPES:
@@ -538,6 +631,28 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
     return f
 
 
+_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)?")
+
+
+def _dimension(entity, factor: float) -> tuple[Point, Point, float] | None:
+    """A linear dimension's measured points and its shown value / drawn length."""
+    try:
+        if entity.dimtype not in (0, 1):     # linear and aligned only
+            return None
+        a, b = entity.dxf.defpoint2, entity.dxf.defpoint3
+        drawn = entity.get_measurement() * factor
+        block = entity.get_geometry_block()
+        shown = [t for t in (_text_of(x) for x in block or ()
+                             if x.dxftype() in ("TEXT", "MTEXT")) if t]
+    except Exception:  # noqa: BLE001 — a broken dimension is only a drawing mark
+        return None
+    m = _NUMBER_RE.search(shown[0]) if len(shown) == 1 else None
+    if not m or not drawn:
+        return None
+    value = float(m.group().replace(",", "."))
+    return (a[0] * factor, a[1] * factor), (b[0] * factor, b[1] * factor), value / drawn
+
+
 def _load(data: bytes):
     """The DXF document: read the usual way and checked (``audit``), which is
     several times faster than ezdxf's ``recover``; a file that can't be read
@@ -547,7 +662,10 @@ def _load(data: bytes):
             from ezdxf.lldxf.validator import dxf_info
 
             head = io.StringIO(data[:1 << 16].decode("cp1252", errors="ignore"), newline=None)
-            text = data.decode(dxf_info(head).encoding, errors="surrogateescape")
+            info = dxf_info(head)
+            # R2007 and later are always UTF-8, whatever the header's code page.
+            encoding = "utf-8" if info.version >= "AC1021" else info.encoding
+            text = data.decode(encoding, errors="surrogateescape")
             doc = ezdxf.read(io.StringIO(text, newline=None))   # CRLF files too
             doc.audit()
             return doc
@@ -732,7 +850,17 @@ def _is_dashed(entity, doc) -> bool:
             ltype = (doc.layers.get(layer_name).dxf.linetype or "").upper()
         except Exception:  # noqa: BLE001 — missing layer table entry: assume solid
             return False
-    return ltype not in _SOLID_LINETYPES
+    return ltype not in _SOLID_LINETYPES and _dash_count(doc, ltype) != 0
+
+
+def _dash_count(doc, name: str) -> int | None:
+    """The number of dashes in a linetype's pattern: 0 for a solid line under
+    another name (e.g. Finnish "Yhtenäinen"), None for an unknown linetype."""
+    try:
+        tags = doc.linetypes.get(name).pattern_tags.tags
+    except Exception:  # noqa: BLE001 — missing or broken table entry
+        return None
+    return next((t.value for t in tags if t.code == 73), None)
 
 
 def _text_of(entity) -> str:

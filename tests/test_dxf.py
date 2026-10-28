@@ -431,3 +431,54 @@ def test_bend_notes_written_just_outside_the_part_count(drawing):
     msp.add_text("UP 90° R 1", dxfattribs={"insert": (150, -15)})   # under the edge
     msp.add_text("UP 90° R 1", dxfattribs={"insert": (150, 400)})   # far away
     assert part_of(doc).bends == 2
+
+
+def _u_section(msp, x, y, width, height, t):
+    """A U-profile's cross-section, ``t`` thick, square bends: 2 bends."""
+    msp.add_lwpolyline([(x, y + height), (x, y), (x + width, y), (x + width, y + height),
+                        (x + width - t, y + height), (x + width - t, y + t),
+                        (x + t, y + t), (x + t, y + height)], close=True)
+
+
+def test_a_profile_drawing_is_priced_from_its_blank_at_its_dimensions_scale(drawing):
+    # TSK14515020.dxf: a sheet with the profile's cross-section at 1:1 and its
+    # blank at 1:10, dimensioned in real size (2500 on a 250 line).
+    doc, msp = drawing()
+    rect(msp, 0, 0, 570, 390)                              # the frame
+    _u_section(msp, 300, 50, 200, 150, 2)
+    rect(msp, 20, 100, 250, 55)                            # the blank at 1:10
+    for p1, p2 in (((20, 155), (270, 155)), ((20, 100), (20, 155))):
+        msp.add_aligned_dim(p1, p2, distance=10, override={"dimlfac": 10}).render()
+    msp.add_image(doc.add_image_def("scan.tif", (200, 150)), (20, 250), (100, 75))
+    report = part_of(doc)
+    assert report.problems == [] and report.open_lines == []
+    assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (2500, 550)
+    assert report.bends == 2
+
+
+def test_a_plate_with_one_slot_is_not_a_profile_drawing(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    rect(msp, 50, 50, 100, 2)          # a slot as thin as sheet
+    msp.add_circle((200, 100), 10)
+    report = part_of(doc)
+    assert round(report.outline.width_mm) == 300 and len(report.holes) == 2
+
+
+def test_a_solid_linetype_under_another_name_is_cut(drawing):
+    # Vertex writes "Continuous" in Finnish: a linetype with no dashes.
+    doc, msp = drawing()
+    doc.linetypes.add("Yhtenäinen", pattern=[0.0])
+    rect(msp, 0, 0, 300, 200)
+    for e in msp:
+        e.dxf.linetype = "Yhtenäinen"
+    report = part_of(doc)
+    assert report.problems == [] and round(report.outline.width_mm) == 300
+
+
+def test_a_2007_file_is_read_as_utf8_whatever_its_code_page(drawing):
+    doc, msp = drawing()
+    doc.header["$DWGCODEPAGE"] = "ANSI_1252"
+    rect(msp, 0, 0, 300, 200, layer="Leikkausmerkinnät")
+    f = read_dxf(dxf_bytes(doc), "part.dxf")
+    assert f.available_layers() == ["Leikkausmerkinnät"]
