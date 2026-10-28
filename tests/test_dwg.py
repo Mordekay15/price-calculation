@@ -70,3 +70,14 @@ def test_the_unit_is_carried_into_libredwgs_minimal_dxf():
     assert b"$INSUNITS\n 70\n     4" in out and b"$MEASUREMENT\n 70\n     1" in out
     assert out.index(b"$INSUNITS") < out.index(b"$ACADVER")
     assert dwg._with_units(minimal, b"no units here") == minimal
+
+
+def test_a_text_broken_over_two_lines_by_libredwg_is_joined_back():
+    # M3440809-00.dwg: the title block's disclaimer came out over two lines,
+    # and the DXF no longer read ("Invalid group code").
+    from core.dwg import _join_broken_values
+
+    broken = b"  0\r\nTEXT\r\n  1\r\nnot to be reproduced without the\r\nrepresentative thereof.\r\n  7\r\nSTYLE\r\n"
+    assert _join_broken_values(broken).split(b"\n") == [
+        b"  0", b"TEXT", b"  1", b"not to be reproduced without the representative thereof.",
+        b"  7", b"STYLE", b""]
