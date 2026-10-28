@@ -517,7 +517,7 @@ def _render_part_config(
 
 
 def _render_preview(report: DxfReport, bends: list | None = None) -> None:
-    """The part as it will be cut; shapes left outside it are greyed out.
+    """The part as it will be cut, alone (shapes outside it are left out).
     ``bends`` are the STEP model's bend lines placed on it."""
     preview = preview_svg(report, bends=bends)
     if preview:
@@ -531,7 +531,7 @@ def _render_preview(report: DxfReport, bends: list | None = None) -> None:
     if report.dropped_count:
         st.caption(f"{report.dropped_count} kuviota ohitettu",
                    help="Osan ulkopuolella olevat kuviot (esim. lisäkuvat tai irralliset "
-                        "viivat) eivät ole osaa; ne ovat harmaalla esikatselussa.")
+                        "viivat) eivät ole osaa, eikä niitä näytetä esikatselussa.")
 
 
 def _unit_reason(dxf: DxfFile, report: DxfReport, item: Item | None, doc_ids) -> str | None:

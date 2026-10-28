@@ -307,12 +307,12 @@ def preview_svg(report: DxfReport, px: int = 260, bends: list | None = None) -> 
 
     The part is filled (holes cut out), reference lines are dashed, slits
     (straight cuts inside the part) are drawn like the outline, other open
-    lines inside the part are red, and geometry dropped outside it is grey.
+    lines inside the part are red; geometry outside it is left out.
     ``bends`` are bend lines from elsewhere (the STEP model), ``[(line, up)]``:
     dashed, green up and orange down.
     """
     rings = ([report.outline.points] if report.outline else []) + [h.points for h in report.holes]
-    groups = (rings, report.reference_lines, report.open_lines, report.dropped)
+    groups = (rings, report.reference_lines, report.open_lines)
     pts = [p for group in groups for ring in group for p in ring]
     if not pts:
         return ""
@@ -339,9 +339,6 @@ def preview_svg(report: DxfReport, px: int = 260, bends: list | None = None) -> 
         f'style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:4px;'
         f'max-width:100%;height:auto;margin:4px 0 2px;">'
     ]
-    if report.dropped:
-        out.append(f'<path d="{d(report.dropped, False)}" fill="none" stroke="#cbd5e1" '
-                   f'stroke-width="{stroke:.2f}"/>')
     if rings:
         out.append(f'<path d="{d(rings, True)}" fill="#3b82f6" fill-opacity="0.12" '
                    f'fill-rule="evenodd" stroke="#2563eb" stroke-width="{stroke:.2f}"/>')
