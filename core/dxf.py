@@ -172,6 +172,9 @@ class DxfReport:
     # For the work price: threads drawn with the ISO mark, and bend lines.
     threads: int = 0
     bends: int = 0
+    # A profile drawing's blank as the customer drew it, when its width was
+    # replaced by the cross-section unfolded (0: not replaced).
+    drawn_blank_mm: float = 0.0
 
     @property
     def dropped_count(self) -> int:
@@ -353,6 +356,7 @@ class DxfFile:
             if k != 1.0:
                 _to_real_size(report, k)
             report.bends = report.bends or _section_bends(section.points)
+            _blank_from_section(report, section)
         report.problems += _part_problems(report)
         _trim_dropped(report)
         _lay_along_length(report)
@@ -372,11 +376,13 @@ _SECTION_MAX_T_MM = 6.0     # thicker than this is not a sheet-metal section
 
 
 def _strip_thickness(c: Contour) -> float:
-    """The width of a closed strip of even width (a sheet-metal profile's
-    cross-section): area = width × half the perimeter, near enough."""
+    """The width t of a closed strip of even width (a sheet-metal profile's
+    cross-section): its sides run the strip's length L twice and its ends t
+    twice, so perimeter = 2L + 2t and area = L·t."""
     n = len(c.points)
-    perimeter = sum(math.dist(c.points[i], c.points[(i + 1) % n]) for i in range(n))
-    return 2 * abs(c.area_mm2) / perimeter if perimeter else 0.0
+    half = sum(math.dist(c.points[i], c.points[(i + 1) % n]) for i in range(n)) / 2
+    disc = half * half - 4 * abs(c.area_mm2)
+    return (half - math.sqrt(disc)) / 2 if half and disc >= 0 else 0.0
 
 
 def _is_section(c: Contour) -> bool:
@@ -419,6 +425,47 @@ def _dimension_scale(view: Contour, dimensions: list[tuple[Point, Point, float]]
 def _section_bends(ring: list[Point]) -> int:
     """The bends of a profile from its cross-section: each bend turns its
     outline twice (outside and inside), each end turns it by 180°."""
+    return len(_bend_turns(ring)) // 2
+
+
+def _unfolded_width(section: Contour, k: float) -> float:
+    """The width of a profile's blank, unfolded from its cross-section: the
+    middle of the sheet (area / thickness) less what each bend gains there
+    over the neutral axis, at r + K·t."""
+    t = _strip_thickness(section)
+    angle = sum(abs(a) for a in _bend_turns(section.points)) / 2   # each bend twice
+    return abs(section.area_mm2) / t - math.radians(angle) * (0.5 - k) * t
+
+
+_BLANK_DIFFERS = 0.005    # a drawn blank this much off the unfolded one is replaced
+
+
+def _blank_from_section(report: DxfReport, section: Contour) -> None:
+    """Give a rectangular blank the width unfolded from the cross-section:
+    customers' blanks can be left from an older profile (557 drawn for 532.8)."""
+    from core.step import DEFAULT_K_FACTOR
+
+    blank = report.outline
+    x0, y0, x1, y1 = bbox(blank.points)
+    w, h = x1 - x0, y1 - y0
+    if report.holes or abs(blank.area_mm2) < 0.99 * w * h:
+        return    # not a plain rectangle: leave it as drawn
+    width = _unfolded_width(section, DEFAULT_K_FACTOR)
+    drawn = min(w, h)
+    if width <= 0 or abs(width / drawn - 1) < _BLANK_DIFFERS:
+        return
+    if w >= h:
+        y1 = y0 + width
+    else:
+        x1 = x0 + width
+    blank.points = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    blank.area_mm2 = (x1 - x0) * (y1 - y0)
+    report.reference_lines = []    # the drawn blank's bend lines no longer fit
+    report.drawn_blank_mm = drawn
+
+
+def _bend_turns(ring: list[Point]) -> list[float]:
+    """The turns of a cross-section's outline at its bends, in degrees."""
     ring = [q for i, q in enumerate(ring) if math.dist(q, ring[i - 1]) > 1e-6]
     t = _strip_thickness(Contour(ring, True, area_mm2=area(ring)))
     n = len(ring)
@@ -439,8 +486,7 @@ def _section_bends(ring: list[Point]) -> int:
             corners.append(turn)
     if len(corners) > 1 and turns[-1][1] < 5 * t and (corners[0] > 0) == (corners[-1] > 0):
         corners[0] += corners.pop()
-    bent = [c for c in corners if 10.0 < abs(c) < 150.0]
-    return len(bent) // 2
+    return [c for c in corners if 10.0 < abs(c) < 150.0]
 
 
 def _distinct(pieces: list[_Piece]) -> list[_Piece]:

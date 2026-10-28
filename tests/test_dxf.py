@@ -446,13 +446,13 @@ def test_a_profile_drawing_is_priced_from_its_blank_at_its_dimensions_scale(draw
     doc, msp = drawing()
     rect(msp, 0, 0, 570, 390)                              # the frame
     _u_section(msp, 300, 50, 200, 150, 2)
-    rect(msp, 20, 100, 250, 55)                            # the blank at 1:10
-    for p1, p2 in (((20, 155), (270, 155)), ((20, 100), (20, 155))):
+    rect(msp, 20, 100, 250, 49.6)                          # the blank at 1:10
+    for p1, p2 in (((20, 149.6), (270, 149.6)), ((20, 100), (20, 149.6))):
         msp.add_aligned_dim(p1, p2, distance=10, override={"dimlfac": 10}).render()
     msp.add_image(doc.add_image_def("scan.tif", (200, 150)), (20, 250), (100, 75))
     report = part_of(doc)
     assert report.problems == [] and report.open_lines == []
-    assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (2500, 550)
+    assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (2500, 496)
     assert report.bends == 2
 
 
@@ -482,3 +482,23 @@ def test_a_2007_file_is_read_as_utf8_whatever_its_code_page(drawing):
     rect(msp, 0, 0, 300, 200, layer="Leikkausmerkinnät")
     f = read_dxf(dxf_bytes(doc), "part.dxf")
     assert f.available_layers() == ["Leikkausmerkinnät"]
+
+
+def test_a_blank_that_doesnt_fit_its_profile_is_unfolded_from_the_section(drawing):
+    # TSK14515020.dxf: the blank is drawn 557 wide for a profile that unfolds
+    # to about 537; a blank that fits its section is left as drawn.
+    from core.step import DEFAULT_K_FACTOR
+
+    def sheet(blank_w):
+        doc, msp = drawing()
+        rect(msp, 0, 0, 570, 390)
+        _u_section(msp, 300, 50, 30, 20, 2)                 # 66 through the middle
+        rect(msp, 20, 100, 250, blank_w)
+        return part_of(doc)
+
+    unfolded = 66 - math.pi * (0.5 - DEFAULT_K_FACTOR) * 2    # two 90° bends
+    report = sheet(80)
+    assert math.isclose(report.outline.height_mm, unfolded, abs_tol=0.1)
+    assert round(report.outline.width_mm) == 250 and round(report.drawn_blank_mm) == 80
+    report = sheet(65.8)
+    assert round(report.outline.height_mm, 1) == 65.8 and report.drawn_blank_mm == 0

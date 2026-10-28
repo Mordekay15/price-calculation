@@ -528,6 +528,11 @@ def _render_preview(report: DxfReport, bends: list | None = None) -> None:
     if slits:
         st.caption(f"{slits} rakoa", help="Suorat leikkaukset osan sisällä ovat mukana "
                                          "leikkuupituudessa.")
+    if report.drawn_blank_mm:
+        st.caption(f":orange[Aihion leveys avattu profiilista "
+                   f"(piirustuksessa {report.drawn_blank_mm:.1f} mm)]",
+                   help="Piirustuksen aihio ei vastaa sen profiilia, joten leveys on "
+                        "laskettu profiilin poikkileikkauksesta (K = 0,44).")
     if report.dropped_count:
         st.caption(f"{report.dropped_count} kuviota ohitettu",
                    help="Osan ulkopuolella olevat kuviot (esim. lisäkuvat tai irralliset "
