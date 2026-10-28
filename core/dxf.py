@@ -932,7 +932,7 @@ def _explode_blocks(entities):
             yield e
 
 
-_FASTENERS = re.compile(r"(?:MUTTER|RUUV|PULT|NIIT|HOLK|TAPP)\w*\D*?(\d+)\s*KPL",
+_FASTENERS = re.compile(r"(?:MUTTER|RUUV|PULT|NIIT|HOLK|TAPP)\w*\D*?(\d+)\s*(?:KPL|PCS)",
                         re.IGNORECASE)
 
 

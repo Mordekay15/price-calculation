@@ -142,6 +142,15 @@ def test_the_drawing_notes_give_each_fastener_line():
     assert fasteners_from_texts(texts) == 9
 
 
+def test_a_drawing_pdf_gives_each_fastener_with_its_pcs_count():
+    from core.fasteners import pdf_fasteners
+    from tests.fastener_pdf import drawing_pdf
+
+    assert sorted(pdf_fasteners(drawing_pdf())) == [
+        ("M5 KALEI NUT", 4), ("M6 KALEI NUT", 6), ("PEM-FH-M4-12", 25),
+        ("PEM-FH-M4-8", 2), ("PEM-FH-M6-12", 2)]
+
+
 def test_a_part_with_fasteners_is_an_assembly_of_it_and_them():
     from streamlit.testing.v1 import AppTest
 
@@ -192,9 +201,13 @@ def test_on_the_page_a_part_with_fasteners_and_parts_joined_by_hand_are_assembli
     at = AppTest.from_file("fastener_page.py", default_timeout=60).run()
     assert not at.exception
     store = at.session_state[ASSEMBLIES]
-    assert list(store) == ["fasteners:f0"]
+    assert sorted(store) == ["fasteners:f0", "fasteners:f3"]
     assert [(r["Nimike"], r["Kpl / kokoonpano"]) for r in store["fasteners:f0"]["bought"]] \
         == [("M5-PURISTEMUTTERIT", 4)]
+    assert sorted((r["Nimike"], r["Kpl / kokoonpano"])
+                  for r in store["fasteners:f3"]["bought"]) == [
+        ("M5 KALEI NUT", 4), ("M6 KALEI NUT", 6), ("PEM-FH-M4-12", 25),
+        ("PEM-FH-M4-8", 2), ("PEM-FH-M6-12", 2)]
     # The card in it has no fastener inputs: its assembly prices them.
     keys = {n.key for n in at.number_input}
     assert "work_bends_f0" in keys and "work_fasteners_f1" in keys
@@ -205,12 +218,12 @@ def test_on_the_page_a_part_with_fasteners_and_parts_joined_by_hand_are_assembli
     at.button(key="asm_new_go").click().run()
     assert not at.exception
     store = at.session_state[ASSEMBLIES]
-    (aid, a), = store.items()
+    (aid, a), = ((k, v) for k, v in store.items() if v.get("hand"))
     assert aid.startswith("hand:") and a["name"] == "Runko"
     assert a["members"] == {"f0": 1, "f1": 1}
     assert [r["Nimike"] for r in a["bought"]] == ["M5-PURISTEMUTTERIT"]
     # "Pura" leaves the parts loose, the plate with its fasteners again.
     at.button(key=f"asm_del_{aid}").click().run()
     assert not at.exception
-    assert list(at.session_state[ASSEMBLIES]) == ["fasteners:f0"]
-    assert sorted(at.session_state["ids"]) == ["f0", "f1", "f2"]
+    assert sorted(at.session_state[ASSEMBLIES]) == ["fasteners:f0", "fasteners:f3"]
+    assert sorted(at.session_state["ids"]) == ["f0", "f1", "f2", "f3"]

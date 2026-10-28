@@ -385,11 +385,11 @@ def card_fastener_lines(cid: str, item: Item, docs: list[str]) -> list[tuple[str
     its PDFs and files, the one that asks for the most (a flat and its drawing
     repeat the same note)."""
     files, store = st.session_state.get(FILES, {}), st.session_state.get(STORE, {})
-    sources = [[attachments.text(d)] for d in docs]
-    sources += [files[m].texts for m in item.members if m in files]
+    sources = [attachments.fasteners(d) for d in docs]
+    sources += [fastener_lines(files[m].texts) for m in item.members if m in files]
     if cid in store:
-        sources.append(store[cid].texts)
-    return max((fastener_lines(t) for t in sources),
+        sources.append(fastener_lines(store[cid].texts))
+    return max(sources,
                key=lambda ls: sum(n for _, n in ls), default=[])
 
 

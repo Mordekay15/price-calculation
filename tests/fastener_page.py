@@ -1,11 +1,13 @@
-"""A page for test_assemblies: three part cards, the first one's drawing
-calling out press nuts."""
+"""A page for test_assemblies: four part cards: the first one's DXF calls out
+press nuts, the last one's PDF KALEI nuts and PEMs."""
 
 import ezdxf
 import streamlit as st
 
 from core.dxf import read_dxf
 from tests.conftest import dxf_bytes
+from tests.fastener_pdf import drawing_pdf
+from view import attachments
 from view.dxf_files import FILES, STORE, sync, sync_assemblies
 from view.dxf_tab import _render_part_cards
 
@@ -25,7 +27,9 @@ if "seeded" not in st.session_state:
     st.session_state[FILES] = {
         "f0": read_dxf(part("M5-PURISTEMUTTERIT X4KPL", 100), "levy.dxf"),
         "f1": read_dxf(part(None, 120), "kulma.dxf"),
-        "f2": read_dxf(part(None, 140), "kansi.dxf")}
+        "f2": read_dxf(part(None, 140), "kansi.dxf"),
+        "f3": read_dxf(part(None, 160), "kotelo.dxf")}
+    attachments.add_doc("d3", "kotelo.pdf", drawing_pdf())     # its fasteners on its PDF
 sync()
 sync_assemblies()
 products = _render_part_cards(list(st.session_state[STORE].items()), ["S235"],
