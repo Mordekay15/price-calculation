@@ -330,7 +330,9 @@ class DxfFile:
         report.holes = [c for c in inner if c.closed and c.depth == main.depth + 1]
         report.reference_lines = _lines_inside(main, [p.points for p in reference])
         report.bends = len(_lines_inside(main, [p.points for p in reference
-                                                if _is_bend_layer(p.layer)])) or len(near)
+                                                if _is_bend_layer(p.layer)])) or len(near) \
+            or _edge_to_edge(main, [p.points for p in _distinct(reference)
+                                    if not p.solid and len(p.points) == 2])
         rings = [c for c in inner if c.closed]
         hole_rings = [c.points for c in report.holes]
         for c in inner:
@@ -825,6 +827,19 @@ def _circle_through(a: Point, b: Point, c: Point) -> tuple[Point, float] | None:
     cx = (sa * (b[1] - c[1]) + sb * (c[1] - a[1]) + sc * (a[1] - b[1])) / d
     cy = (sa * (c[0] - b[0]) + sb * (a[0] - c[0]) + sc * (b[0] - a[0])) / d
     return (cx, cy), ((a[0] - cx) ** 2 + (a[1] - cy) ** 2) ** 0.5
+
+
+_EDGE_TOL_MM = 1.0   # a dashed line ending this close to the outline ends on it
+
+
+def _edge_to_edge(main: Contour, lines: list[list[Point]]) -> int:
+    """Dashed straight lines across the part, from edge to edge: its bend
+    lines, when no bend layer or bend note says so (a hidden edge or centre
+    line stops short of the edges)."""
+    return sum(1 for a, b in lines
+               if _near_ring(a, main.points, _EDGE_TOL_MM) and _near_ring(b, main.points, _EDGE_TOL_MM)
+               and point_in_polygon(((a[0] + b[0]) / 2, (a[1] + b[1]) / 2), main.points)
+               and math.dist(a, b) > 2 * _EDGE_TOL_MM)
 
 
 def _lines_inside(main: Contour, lines: list[list[Point]]) -> list[list[Point]]:

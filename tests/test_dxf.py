@@ -502,3 +502,14 @@ def test_a_blank_that_doesnt_fit_its_profile_is_unfolded_from_the_section(drawin
     assert round(report.outline.width_mm) == 250 and round(report.drawn_blank_mm) == 80
     report = sheet(65.8)
     assert round(report.outline.height_mm, 1) == 65.8 and report.drawn_blank_mm == 0
+
+
+def test_dashed_lines_from_edge_to_edge_are_bends(drawing):
+    # A flat with its bend lines dashed on the part's own layer, and no notes.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 900, 120)
+    for y in (20, 100):
+        msp.add_line((0, y), (900, y), dxfattribs={"linetype": "DASHED"})
+    msp.add_line((50, 60), (850, 60), dxfattribs={"linetype": "DASHED"})   # stops short
+    report = part_of(doc)
+    assert report.problems == [] and report.bends == 2
