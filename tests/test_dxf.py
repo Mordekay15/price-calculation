@@ -534,3 +534,22 @@ def test_a_profiles_broken_blank_is_its_dimensioned_length_by_its_unfolded_width
     assert math.isclose(report.outline.height_mm, 68 - math.pi * (0.5 - DEFAULT_K_FACTOR),
                         abs_tol=0.1)
     assert report.bends == 2
+
+
+def test_a_part_drawn_at_another_scale_is_sized_by_its_own_dimensions(drawing):
+    # M58581.dxf: the flat drawn at 7:5 on a sheet that says 1:7; its
+    # dimensions show the real 1089 and 334.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 1524.6, 467.6)
+    msp.add_aligned_dim((0, 467.6), (1524.6, 467.6), distance=20,
+                        override={"dimlfac": 5 / 7}).render()
+    msp.add_aligned_dim((0, 0), (0, 467.6), distance=20, override={"dimlfac": 5 / 7}).render()
+    report = part_of(doc)
+    assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (1089, 334)
+
+
+def test_one_odd_dimension_does_not_rescale_a_part(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    msp.add_aligned_dim((0, 200), (300, 200), distance=20, override={"dimlfac": 2}).render()
+    assert round(part_of(doc).outline.width_mm) == 300

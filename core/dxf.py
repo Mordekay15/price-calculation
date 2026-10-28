@@ -357,7 +357,12 @@ class DxfFile:
                   if any(_on_ring(end, b.points) for b in boxes for end in (ln[0], ln[-1]))]
         report.open_lines = [ln for ln in report.open_lines if not any(ln is o for o in on_box)]
         report.reference_lines += on_box
-        if at_scale and self.scale != 1.0:
+        # The part's own dimensions tell its scale best: a view's scale can
+        # differ from the title block's (M58581: drawn 7:5, sheet "1:7").
+        k = _dimension_scale(main, self.dimensions, at_least=2) if section is None else 1.0
+        if k != 1.0:
+            _to_real_size(report, k)
+        elif at_scale and self.scale != 1.0:
             _to_real_size(report, 1.0 / self.scale)
         if section is not None:
             k = _dimension_scale(main, self.dimensions)
@@ -413,12 +418,14 @@ def _blank_view(frame: Contour, contours: list[Contour], section: Contour) -> Co
     return views[0] if len(views) == 1 else None
 
 
-def _dimension_scale(view: Contour, dimensions: list[tuple[Point, Point, float, float]]) -> float:
+def _dimension_scale(view: Contour, dimensions: list[tuple[Point, Point, float, float]],
+                     at_least: int = 1) -> float:
     """Real size / drawn size of a view, from the dimensions measured on its
-    edges (2500 shown on a 250 line: 10); 1 when they don't agree."""
+    edges (2500 shown on a 250 line: 10); 1 when they don't agree, or fewer
+    than ``at_least`` are measured on it."""
     found = [k for a, b, k, _value in dimensions
              if _near_ring(a, view.points, _JOIN_TOL_MM) and _near_ring(b, view.points, _JOIN_TOL_MM)]
-    if not found or max(found) > min(found) * 1.01:
+    if len(found) < max(at_least, 1) or max(found) > min(found) * 1.01:
         return 1.0
     k = sum(found) / len(found)
     # Dimensions are shown rounded (479 for 47.86 at 1:10): the scale is a
@@ -721,13 +728,18 @@ _NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)?")
 
 
 def _dimension(entity, factor: float) -> tuple[Point, Point, float, float] | None:
-    """A linear dimension's measured points, its shown value / drawn length
-    and its shown value."""
+    """A linear, aligned or ordinate dimension's measured points, its shown
+    value / drawn length and its shown value."""
     try:
-        if entity.dimtype not in (0, 1):     # linear and aligned only
+        if entity.dimtype in (0, 1):
+            a, b = entity.dxf.defpoint2, entity.dxf.defpoint3
+            drawn = entity.get_measurement() * factor
+        elif entity.dimtype == 6:            # ordinate: from the origin, along x or y
+            a, b = entity.dxf.defpoint, entity.dxf.defpoint2
+            axis = 0 if entity.dxf.dimtype & 64 else 1
+            drawn = abs(b[axis] - a[axis]) * factor
+        else:
             return None
-        a, b = entity.dxf.defpoint2, entity.dxf.defpoint3
-        drawn = entity.get_measurement() * factor
         block = entity.get_geometry_block()
         shown = [t for t in (_text_of(x) for x in block or ()
                              if x.dxftype() in ("TEXT", "MTEXT")) if t]
@@ -737,6 +749,8 @@ def _dimension(entity, factor: float) -> tuple[Point, Point, float, float] | Non
     if not m or not drawn:
         return None
     value = float(m.group().replace(",", "."))
+    if not value:
+        return None
     return (a[0] * factor, a[1] * factor), (b[0] * factor, b[1] * factor), value / drawn, value
 
 
