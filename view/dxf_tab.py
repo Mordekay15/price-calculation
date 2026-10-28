@@ -73,7 +73,6 @@ MENU = "dxf_menu"   # the screens' menu, under the file tab
 
 _ISSUES = "dxf_issues"      # {card id: what it still needs}, as of the last run
 _ROWS = "dxf_rows"          # {card id: its row in the parts table}, this run
-_ONLY_OPEN = "dxf_only_open"            # show only the cards that still need something
 _VIEW, CARDS, TABLE = "dxf_view", "Kortit", "Taulukko"
 _TABLE = "dxf_parts_table"
 
@@ -166,13 +165,9 @@ def clear_all() -> None:
     ss[MENU] = BOM
 
 
-def _go(screen: str, only_open: bool = False) -> None:
-    """A status-strip button: open ``screen`` (and show only the unfinished
-    cards)."""
+def _go(screen: str) -> None:
+    """A step button: open ``screen``."""
     st.session_state[MENU] = screen
-    if only_open:
-        st.session_state[_ONLY_OPEN] = True
-        st.session_state[_VIEW] = CARDS
 
 
 def _render_start() -> None:
@@ -227,8 +222,8 @@ def _render_status(screen: str, nest: NestState, priced: bool) -> None:
             return ":green[valmis]" if nest.groups else ":gray[odottaa osia]"
         return ":green[hinta valmis]" if priced else ":gray[odottaa nestausta]"
 
-    with st.container(border=True):
-        flow, action = st.columns([5, 2], vertical_alignment="center")
+    flow = st.container(border=True)
+    with flow:
         flow.markdown("  →  ".join(
             (f"**{s}**" if s == screen else s) + " " + state(s) for s in SCREENS),
             help="Luettu: " + " · ".join(read))
@@ -237,9 +232,6 @@ def _render_status(screen: str, nest: NestState, priced: bool) -> None:
             what[reason] = what.get(reason, 0) + 1
         if what:
             flow.caption("Kesken: " + " · ".join(f"{r} ({n})" for r, n in what.items()))
-        if issues and not (screen == BOM and ss.get(_ONLY_OPEN)):
-            action.button(f"Näytä keskeneräiset ({len(issues)})", key="ui_go_open",
-                          on_click=_go, args=(BOM, True), width="stretch")
 
 
 def _render_part_cards(parts, materials: list[str], lookup: dict,
@@ -251,14 +243,10 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
     ss = st.session_state
     rows: dict[str, dict] = {}
     ss[_ROWS] = rows                            # filled by the cards below
-    unfinished = set(ss.get(_ISSUES, {}))       # as of the last run
-    only_open = bool(unfinished) and ss.get(_ONLY_OPEN, False)
-    title, view_col, open_col, clear = st.columns([3, 2, 3, 2], vertical_alignment="center")
+    title, view_col, _gap, clear = st.columns([3, 2, 3, 2], vertical_alignment="center")
     title.markdown("**Osat**")
     view = view_col.segmented_control("Näkymä", (CARDS, TABLE), default=CARDS, key=_VIEW,
                                       label_visibility="collapsed") or CARDS
-    if unfinished:
-        only_open = open_col.toggle(f"Vain keskeneräiset ({len(unfinished)})", key=_ONLY_OPEN)
     if len(parts) > 1:
         # Behind a popover: one stray click shouldn't drop every card's setup.
         with clear.popover("Poista kaikki", width="stretch"):
@@ -275,9 +263,9 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
     products: dict[int, dict | None] = {}
     fill = _FillOffer()
 
-    # The table lists the cards shown (every card, or the unfinished ones);
-    # a card picked in it opens below it, several get the bulk edit.
-    listed = [idx for idx, (fid, _) in enumerate(parts) if not only_open or fid in unfinished]
+    # The table lists every card; a card picked in it opens below it,
+    # several get the bulk edit.
+    listed = list(range(len(parts)))
     picked = [listed[r] for r in (ss.get(_TABLE) or {}).get("selection", {}).get("rows", [])
               if r < len(listed)] if view == TABLE else []
 
@@ -285,8 +273,7 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
         if view == TABLE:
             shown = set(picked[:1]) if len(picked) == 1 else set()
         else:
-            visible = [i for i in idxs if not only_open or parts[i][0] in unfinished]
-            shown = {visible[i] for i in _render_page_picker(len(visible), page_key)}
+            shown = {idxs[i] for i in _render_page_picker(len(idxs), page_key)}
         for idx in idxs:
             fid, part = parts[idx]
             offer = idx in shown
@@ -302,8 +289,6 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
              if fid not in per_assembly and fid not in drawing_of.values()]
     if not loose:
         st.caption("Kaikki osat ovat kokoonpanoissa.")
-    elif only_open and view == CARDS and not any(parts[i][0] in unfinished for i in loose):
-        st.caption("Kokoonpanoihin kuulumattomat osat ovat valmiita.")
     draw(loose, _PAGE)
 
     def draw_assembly(aid: str, cids: dict[str, int]) -> None:
