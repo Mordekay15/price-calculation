@@ -379,3 +379,55 @@ def test_a_drawing_sheet_is_priced_from_its_flat_pattern_view(drawing):
     assert report.bends == 1
     assert math.isclose(report.cut_length_mm,
                         2 * (50 + 52) + 2 * math.pi * 3.3 + 2 * (38 + 8.5), rel_tol=0.01)
+
+
+def test_centre_mark_blocks_are_drawn_not_cut(drawing):
+    # WC-valaisimen asennuslevy (SolidWorks): a centre-mark block on each hole,
+    # with lines joining the holes across the part.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 100)
+    msp.add_circle((50, 20), 3)
+    msp.add_circle((50, 80), 3)
+    mark = doc.blocks.new("SW_CENTERMARKSYMBOL_3")
+    mark.add_line((0, 10), (0, 50))     # stops short of both holes
+    mark.add_line((-5, 0), (5, 0))
+    mark.add_line((-5, 60), (5, 60))
+    msp.add_blockref("SW_CENTERMARKSYMBOL_3", (50, 20))
+    report = part_of(doc)
+    assert report.problems == [] and report.open_lines == []
+    assert len(report.holes) == 2
+
+
+def test_dimension_arrowheads_and_doubled_lines_are_not_cuts(drawing):
+    # Exploded dimension arrowheads (SOLID) and every line drawn twice, on
+    # SLD-0 and SLD-0_0: the cut is the plate and its hole, once.
+    doc, msp = drawing()
+    for layer in ("SLD-0", "SLD-0_0"):
+        rect(msp, 0, 0, 200, 100, layer=layer)
+        msp.add_circle((100, 50), 10, dxfattribs={"layer": layer})
+    msp.add_solid([(50, 50), (55, 52), (55, 48)])
+    report = part_of(doc)
+    assert report.problems == [] and len(report.holes) == 1
+    assert math.isclose(report.cut_length_mm, 600 + 2 * math.pi * 10, rel_tol=0.01)
+
+
+def test_a_line_from_hole_to_hole_is_drawn_not_cut(drawing):
+    # WC-valaisimen holder: a construction line joining two holes.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 100, 60)
+    msp.add_circle((20, 20), 3)
+    msp.add_circle((80, 40), 3)
+    msp.add_line((22, 21), (78, 39))
+    report = part_of(doc)
+    assert report.problems == [] and report.open_lines == []
+
+
+def test_bend_notes_written_just_outside_the_part_count(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 100)
+    msp.add_line((0, 30), (300, 30), dxfattribs={"linetype": "PHANTOM"})
+    msp.add_line((0, 70), (300, 70), dxfattribs={"linetype": "PHANTOM"})
+    msp.add_text("UP 90° R 1", dxfattribs={"insert": (150, 35)})
+    msp.add_text("UP 90° R 1", dxfattribs={"insert": (150, -15)})   # under the edge
+    msp.add_text("UP 90° R 1", dxfattribs={"insert": (150, 400)})   # far away
+    assert part_of(doc).bends == 2

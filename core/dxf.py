@@ -49,6 +49,7 @@ _ANNOTATION_TYPES = {
     "TEXT", "MTEXT", "ATTDEF", "ATTRIB", "DIMENSION", "ARC_DIMENSION",
     "LARGE_RADIAL_DIMENSION", "LEADER", "MLEADER", "MULTILEADER", "TOLERANCE",
     "HATCH", "POINT", "VIEWPORT", "WIPEOUT",
+    "SOLID", "TRACE",   # filled 2D shapes: a dimension's exploded arrowheads
 }
 
 # Layer-name fragments that mark a layer as drawing furniture or reference
@@ -259,7 +260,7 @@ class DxfFile:
 
         if self.problems and not self.pieces:
             return report  # the file couldn't be read: its own problem says why
-        cut = [p for p in self.pieces if p.layer in chosen and p.solid]
+        cut = _distinct([p for p in self.pieces if p.layer in chosen and p.solid])
         reference = [p for p in self.pieces if not (p.layer in chosen and p.solid)]
         contours = [Contour(p.points, True) for p in cut if p.closed]
         contours += _chain_open_segments([p.points for p in cut if not p.closed], _JOIN_TOL_MM)
@@ -281,10 +282,19 @@ class DxfFile:
         # scale.
         main = max(top, key=lambda c: c.width_mm * c.height_mm)
         view = _flat_view(main, contours, self.bend_notes)
+        # Views drawn at the sheet's scale: a frame the size of a paper sheet
+        # (a frame drawn at 1:1 round real-size views is the paper / scale).
+        at_scale = view is not None and _paper_size(main)
         if view is not None:
             main = view
         report.outline = main
         notes = [n for n in self.bend_notes if point_in_polygon(n, main.points)]
+        # A note on a bend at the part's edge is often written just outside it.
+        others = [c.points for c in contours if c.closed and c is not main
+                  and c.depth == main.depth]
+        near = notes + [n for n in self.bend_notes if n not in notes
+                        and _near_ring(n, main.points, _NOTE_NEAR_MM)
+                        and not any(point_in_polygon(n, o) for o in others)]
 
         inner = []
         for c in contours:
@@ -306,11 +316,14 @@ class DxfFile:
         report.holes = [c for c in inner if c.closed and c.depth == main.depth + 1]
         report.reference_lines = _lines_inside(main, [p.points for p in reference])
         report.bends = len(_lines_inside(main, [p.points for p in reference
-                                                if _is_bend_layer(p.layer)])) or len(notes)
+                                                if _is_bend_layer(p.layer)])) or len(near)
         rings = [c for c in inner if c.closed]
+        hole_rings = [c.points for c in report.holes]
         for c in inner:
             if not c.closed and _is_thread_mark(c.points, rings):
                 report.threads += 1
+                report.reference_lines.append(c.points)
+            elif not c.closed and _is_drawing_line(c.points, main.points, hole_rings):
                 report.reference_lines.append(c.points)
             elif c.closed and c.depth >= main.depth + 2:
                 report.reference_lines.append(c.points)
@@ -322,7 +335,7 @@ class DxfFile:
                   if any(_on_ring(end, b.points) for b in boxes for end in (ln[0], ln[-1]))]
         report.open_lines = [ln for ln in report.open_lines if not any(ln is o for o in on_box)]
         report.reference_lines += on_box
-        if view is not None and self.scale != 1.0:
+        if at_scale and self.scale != 1.0:
             _to_real_size(report, 1.0 / self.scale)
         report.problems += _part_problems(report)
         _trim_dropped(report)
@@ -337,6 +350,51 @@ def _flat_view(frame: Contour, contours: list[Contour], notes: list[Point]) -> C
     views = [c for c in contours if c.closed and c.depth == frame.depth + 1
              and any(point_in_polygon(n, c.points) for n in notes)]
     return views[0] if len(views) == 1 else None
+
+
+def _distinct(pieces: list[_Piece]) -> list[_Piece]:
+    """The pieces less any drawn twice (the same points either way round):
+    a SolidWorks DWG can carry every line on two layers (SLD-0 and SLD-0_0),
+    and a doubled line chains into a back-and-forth gap, not the cut-out."""
+    seen, out = set(), []
+    for p in pieces:
+        key = tuple((round(x, 3), round(y, 3)) for x, y in p.points)
+        if key in seen or key[::-1] in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+    return out
+
+
+def _is_drawing_line(line: list[Point], outline: list[Point], holes: list[list[Point]]) -> bool:
+    """An open line inside the part that can't be a cut: one into or across
+    a hole (a centre mark), one from hole to hole (both ends at a hole), or a
+    straight line from edge to edge (it would cut the part in two: a bend
+    line drawn solid)."""
+    if any(point_in_polygon(p, h) for p in line for h in holes):
+        return True
+    ends = (line[0], line[-1])
+    if all(any(_near_ring(end, h, _AT_HOLE_MM) for h in holes) for end in ends):
+        return True
+    return is_slit(line) and all(_on_ring(end, outline) for end in ends)
+
+
+_AT_HOLE_MM = 5.0   # a line ending this close to a hole ends at the hole
+_NOTE_NEAR_MM = 25.0  # a bend note this close outside the part is its note
+
+
+def _near_ring(p: Point, ring: list[Point], tol: float) -> bool:
+    x0, y0, x1, y1 = bbox(ring)
+    if not (x0 - tol <= p[0] <= x1 + tol and y0 - tol <= p[1] <= y1 + tol):
+        return False
+    return _on_ring(p, ring, tol)
+
+
+def _paper_size(frame: Contour) -> bool:
+    """A frame the size of an ISO paper sheet, or a little inside one."""
+    w, h = sorted((frame.width_mm, frame.height_mm))
+    return any(0.85 * b <= w <= b * 1.01 and 0.85 * a <= h <= a * 1.01
+               for a, b in _ISO_SHEETS.values())
 
 
 def _on_ring(p: Point, ring: list[Point], tol: float = _JOIN_TOL_MM) -> bool:
@@ -623,11 +681,19 @@ def _lines_inside(main: Contour, lines: list[list[Point]]) -> list[list[Point]]:
 
 # ── Entity helpers ───────────────────────────────────────────────────────────
 
+# Blocks a CAD program draws as annotation, e.g. SolidWorks' centre marks
+# (SW_CENTERMARKSYMBOL_3): a cross on each hole with lines joining the holes.
+_ANNOTATION_BLOCK_RE = re.compile(r"CENT(?:ER|RE)_?MARK", re.IGNORECASE)
+
+
 def _explode_blocks(entities):
     """Yield the entities with every block reference (INSERT) replaced by its
-    content, recursively. Dimensions stay whole (they are annotation)."""
+    content, recursively. Dimensions stay whole (they are annotation), and
+    centre-mark blocks are left out."""
     for e in entities:
         if e.dxftype() == "INSERT":
+            if _ANNOTATION_BLOCK_RE.search(e.dxf.name):
+                continue
             yield from _explode_blocks(e.virtual_entities())
             yield from e.attribs
         else:
