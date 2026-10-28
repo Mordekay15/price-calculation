@@ -932,7 +932,7 @@ def _explode_blocks(entities):
             yield e
 
 
-_FASTENERS = re.compile(r"(?:MUTTER|RUUV|PULT|NIIT|HOLK|TAPP)\w*\D*?(\d+)\s*KPL",
+_FASTENERS = re.compile(r"(?:MUTTER|RUUV|PULT|NIIT|HOLK|TAPP)\w*\D*?(\d+)\s*(?:KPL|PCS)",
                         re.IGNORECASE)
 
 
@@ -940,7 +940,19 @@ def fasteners_from_texts(texts: list[str]) -> int:
     """Fasteners the drawing's notes ask for (nuts, screws, bolts, rivets,
     bushes, studs), e.g. "M5-PURISTEMUTTERIT X4KPL" and "M4-PURISTEMUTTERIT
     5KPL" make 9."""
-    return sum(int(n) for t in texts for n in _FASTENERS.findall(t))
+    return sum(n for _, n in fastener_lines(texts))
+
+
+def fastener_lines(texts: list[str]) -> list[tuple[str, int]]:
+    """The drawing's fastener notes one by one, ``(name, kpl)``: e.g.
+    "M5-PURISTEMUTTERIT X4KPL" is ("M5-PURISTEMUTTERIT", 4)."""
+    out = []
+    for t in texts:
+        for m in _FASTENERS.finditer(t):
+            start = max(t.rfind(c, 0, m.start()) for c in " \t\n,;(") + 1
+            name = re.sub(r"[\s:=,(-]*X?$", "", t[start:m.start(1)].strip(), flags=re.IGNORECASE)
+            out.append((name.upper(), int(m.group(1))))
+    return out
 
 
 def _is_bend_layer(name: str) -> bool:

@@ -304,7 +304,9 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
             st.caption(f"#{i + 1} · {parts[i][1].name}: kortti on toisessa kokoonpanossa.")
         draw([i for i in mine if i not in products], f"{_PAGE}_{aid}")
 
-    assemblies.render(card_of, draw_assembly, evict)
+    assemblies.render(card_of, draw_assembly, evict,
+                      {fid: f"#{i + 1} · {part.name}" for i, (fid, part) in enumerate(parts)
+                       if fid not in drawing_of.values()})
     for idx, (fid, dxf) in enumerate(parts):
         rows.setdefault(fid, {"#": idx + 1, "Osa": dxf.name, "Tila": _DRAWING})
     ss[_ISSUES] = {fid: r["Tila"] for fid, r in rows.items()
