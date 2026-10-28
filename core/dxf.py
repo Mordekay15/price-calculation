@@ -553,14 +553,15 @@ def _distinct(pieces: list[_Piece]) -> list[_Piece]:
 def _is_drawing_line(line: list[Point], outline: list[Point], holes: list[list[Point]]) -> bool:
     """An open line inside the part that can't be a cut: one into or across
     a hole (a centre mark), one from hole to hole (both ends at a hole), or a
-    straight line from edge to edge (it would cut the part in two: a bend
-    line drawn solid)."""
+    line from edge to edge: it would cut the part in two, so it is a bend
+    line drawn solid, or, bent or curved, the edge of a pressed form (the
+    ribs of 68877644's cable clamp, drawn from its long edge and back)."""
     if any(point_in_polygon(p, h) for p in line for h in holes):
         return True
     ends = (line[0], line[-1])
     if all(any(_near_ring(end, h, _AT_HOLE_MM) for h in holes) for end in ends):
         return True
-    return is_slit(line) and all(_on_ring(end, outline) for end in ends)
+    return all(_on_ring(end, outline) for end in ends)
 
 
 _AT_HOLE_MM = 5.0   # a line ending this close to a hole ends at the hole

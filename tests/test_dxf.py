@@ -422,6 +422,20 @@ def test_a_line_from_hole_to_hole_is_drawn_not_cut(drawing):
     assert report.problems == [] and report.open_lines == []
 
 
+def test_a_pressed_forms_edges_from_edge_to_edge_are_drawn_not_cut(drawing):
+    # 68877644 (cable clamp): a rib pressed in the strip, its edges drawn
+    # solid from the long edge into the part and back.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 64, 14)
+    msp.add_circle((6, 7), 3)
+    msp.add_circle((58, 7), 3)
+    msp.add_lwpolyline([(10, 14), (20, 10), (32, 8), (44, 10), (54, 14)])
+    msp.add_lwpolyline([(10, 0), (20, 4), (32, 6), (44, 4), (54, 0)])
+    report = part_of(doc)
+    assert report.problems == [] and report.open_lines == []
+    assert len(report.holes) == 2 and len(report.reference_lines) == 2
+
+
 def test_bend_notes_written_just_outside_the_part_count(drawing):
     doc, msp = drawing()
     rect(msp, 0, 0, 300, 100)
