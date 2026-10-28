@@ -91,6 +91,12 @@ _UNITS: dict[int, tuple[float, str]] = {
     14: (100.0, "dm"),
 }
 
+# A bend note on a drawing's flat pattern view, e.g. "UP 90° R 1.5" or
+# "YLÖS 90°": it marks that view as the flat pattern among the sheet's views.
+_BEND_NOTE_RE = re.compile(r"^\s*(?:up|down|yl[oö]s|alas)\b.*\d", re.IGNORECASE)
+# A drawing's scale in its title block, e.g. "2:1" or "1:2".
+_SCALE_TEXT_RE = re.compile(r"^\s*(\d+(?:[.,]\d+)?)\s*:\s*(\d+(?:[.,]\d+)?)\s*$")
+
 # A unit written in the drawing's text, e.g.  Un="mm"  or  Units=inch.
 _UNIT_TEXT_RE = re.compile(
     r'\b(?:un|unit|units|yksikk[oö])\s*=\s*"?([a-z]+|")', re.IGNORECASE)
@@ -198,6 +204,11 @@ class DxfFile:
     unit_guessed: bool = False
     pieces: list[_Piece] = field(default_factory=list)
     texts: list[str] = field(default_factory=list)
+    # Where bend notes ("UP 90° R 1.5") are written, and the drawing's scale
+    # (drawn size / real size, from a "2:1" in the title block): a drawing
+    # sheet's flat pattern view is found by them (see ``_flat_view``).
+    bend_notes: list[Point] = field(default_factory=list)
+    scale: float = 1.0
     problems: list[str] = field(default_factory=list)          # file-level
     unreadable: dict[str, dict[str, int]] = field(default_factory=dict)  # layer -> type -> n
     # The part from the default layers, once built (see ``part``).
@@ -265,8 +276,15 @@ class DxfFile:
 
         # The main part is the largest outline; everything inside it belongs to
         # it, everything outside is dropped (detail views, sketches, stray lines).
+        # On a drawing sheet (the largest outline is its frame), the part is
+        # the view with the bend note: its flat pattern, drawn at the sheet's
+        # scale.
         main = max(top, key=lambda c: c.width_mm * c.height_mm)
+        view = _flat_view(main, contours, self.bend_notes)
+        if view is not None:
+            main = view
         report.outline = main
+        notes = [n for n in self.bend_notes if point_in_polygon(n, main.points)]
 
         inner = []
         for c in contours:
@@ -281,24 +299,75 @@ class DxfFile:
         # hole (a countersink or thread drawn as concentric circles) and a thin
         # ¾-circle around a hole (the ISO thread symbol) are drawing marks of
         # that hole: drawn, not cut. Any other open line is a real gap.
-        report.holes = [c for c in inner if c.closed and c.depth == 1]
+        # A closed line round a bend note is its box, drawn, not cut.
+        boxes = [c for c in inner if c.closed and any(point_in_polygon(n, c.points)
+                                                      for n in notes)]
+        inner = [c for c in inner if not any(c is b for b in boxes)]
+        report.holes = [c for c in inner if c.closed and c.depth == main.depth + 1]
         report.reference_lines = _lines_inside(main, [p.points for p in reference])
+        report.reference_lines += [b.points for b in boxes]
         report.bends = len(_lines_inside(main, [p.points for p in reference
-                                                if _is_bend_layer(p.layer)]))
+                                                if _is_bend_layer(p.layer)])) or len(notes)
         rings = [c for c in inner if c.closed]
         for c in inner:
             if not c.closed and _is_thread_mark(c.points, rings):
                 report.threads += 1
                 report.reference_lines.append(c.points)
-            elif c.closed and c.depth >= 2:
+            elif c.closed and c.depth >= main.depth + 2:
                 report.reference_lines.append(c.points)
             elif not c.closed:
                 report.open_lines.append(c.points)
 
+        # The bend line through a note's box, where it runs on outside it.
+        on_box = [ln for ln in report.open_lines
+                  if any(_on_ring(end, b.points) for b in boxes for end in (ln[0], ln[-1]))]
+        report.open_lines = [ln for ln in report.open_lines if not any(ln is o for o in on_box)]
+        report.reference_lines += on_box
+        if view is not None and self.scale != 1.0:
+            _to_real_size(report, 1.0 / self.scale)
         report.problems += _part_problems(report)
         _trim_dropped(report)
         _lay_along_length(report)
         return report
+
+
+def _flat_view(frame: Contour, contours: list[Contour], notes: list[Point]) -> Contour | None:
+    """On a drawing sheet, the view of the flat pattern: the one outline
+    straight inside the largest (the frame) with a bend note written in it.
+    None when no outline, or more than one, has."""
+    views = [c for c in contours if c.closed and c.depth == frame.depth + 1
+             and any(point_in_polygon(n, c.points) for n in notes)]
+    return views[0] if len(views) == 1 else None
+
+
+def _on_ring(p: Point, ring: list[Point], tol: float = _JOIN_TOL_MM) -> bool:
+    n = len(ring)
+    return any(_point_segment_mm(p, ring[i], ring[(i + 1) % n]) <= tol for i in range(n))
+
+
+def _drawing_scale(texts: list[str]) -> float:
+    """The drawing's scale (drawn / real) from its title block's "2:1", when
+    the drawing gives one scale; else 1."""
+    found = set()
+    for text in texts:
+        m = _SCALE_TEXT_RE.match(text)
+        if m:
+            a, b = (float(g.replace(",", ".")) for g in m.groups())
+            if a > 0 and b > 0:
+                found.add(a / b)
+    return found.pop() if len(found) == 1 else 1.0
+
+
+def _to_real_size(report: DxfReport, k: float) -> None:
+    """Scale the part's geometry by ``k`` (a view drawn at 2:1 by 1/2)."""
+    def scaled(points):
+        return [(x * k, y * k) for x, y in points]
+
+    for c in (report.outline, *report.holes):
+        c.points = scaled(c.points)
+        c.area_mm2 *= k * k
+    for lines in (report.reference_lines, report.open_lines, report.dropped):
+        lines[:] = [scaled(line) for line in lines]
 
 
 _DROPPED_POINTS = 5000   # points kept of the shapes outside the part
@@ -367,8 +436,10 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
         return f
 
     entities = list(_explode_blocks(doc.modelspace()))
-    f.texts = [t for t in (_text_of(e) for e in entities
-                           if e.dxftype() in ("TEXT", "MTEXT", "ATTRIB")) if t]
+    written = [(t, e) for t, e in ((_text_of(e), e) for e in entities
+                                   if e.dxftype() in ("TEXT", "MTEXT", "ATTRIB")) if t]
+    f.texts = [t for t, _ in written]
+    f.scale = _drawing_scale(f.texts)
 
     unit_code = int(getattr(doc, "units", 0) or 0)
     if unit_code not in _UNITS:
@@ -377,6 +448,10 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
     # still show they are millimetres.
     factor, f.unit_label = _UNITS.get(unit_code, (1.0, "ei yksikköä"))
 
+    for text, entity in written:
+        at = getattr(entity.dxf, "insert", None)
+        if at is not None and _BEND_NOTE_RE.match(text):
+            f.bend_notes.append((at[0] * factor, at[1] * factor))
     for entity in entities:
         etype = entity.dxftype()
         if etype in _ANNOTATION_TYPES:

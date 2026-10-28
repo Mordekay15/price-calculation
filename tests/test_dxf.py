@@ -355,3 +355,25 @@ def test_a_v_shaped_cut_modelled_as_a_hairline_hole_is_cut_once(drawing):
     assert is_sliver([(163.8583, 129.16), (163.86, 129.1617), (145.1217, 110.4233),
                       (126.385, 129.16), (145.1217, 110.42)])
     assert not is_sliver([(0, 0), (300, 200), (300, 0), (0, 200)])   # a real crossing
+
+
+def test_a_drawing_sheet_is_priced_from_its_flat_pattern_view(drawing):
+    # M3440809-00.dwg: the customer's whole sheet at 2:1 (frame, side views,
+    # title block); the flat pattern is the view with the bend note.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 386, 286)                          # the frame
+    rect(msp, 30, 70, 40, 100)                         # a side view
+    rect(msp, 300, 5, 80, 40)                          # the title block
+    msp.add_text("2:1", dxfattribs={"insert": (320, 20)})
+    rect(msp, 240, 70, 100, 104)                       # the flat pattern, 50 × 52
+    msp.add_circle((266, 160), 3.3)                    # Ø3.3 at 2:1
+    msp.add_circle((310, 160), 3.3)
+    rect(msp, 252, 126, 76, 17)                        # the bend note's box
+    msp.add_line((290, 120), (290, 126))               # the bend line, on from it
+    msp.add_text("UP 90° R 1.5", dxfattribs={"insert": (270, 132)})
+    report = part_of(doc)
+    assert report.problems == [] and report.open_lines == []
+    assert sorted((round(report.outline.width_mm, 1), round(report.outline.height_mm, 1))) == [50, 52]
+    assert len(report.holes) == 2 and round(report.holes[0].width_mm, 1) == 3.3
+    assert report.bends == 1
+    assert math.isclose(report.cut_length_mm, 2 * (50 + 52) + 2 * math.pi * 3.3, rel_tol=0.01)
