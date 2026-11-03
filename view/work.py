@@ -4,6 +4,7 @@ per-sheet cutting minimum applied by group (see ``core.work``)."""
 
 from core.pricing import parse_thickness_mm
 from core.work import (
+    FASTENER_INSERT_EUR,
     LASER,
     PUNCH,
     BoughtPart,
@@ -14,10 +15,9 @@ from core.work import (
     apply_sheet_minimum,
     cheaper_method,
     default_setup,
+    fastener_price,
     laser_family,
     laser_speed,
-    fastener_price,
-    FASTENER_INSERT_EUR,
     work_cost,
 )
 from view.ui import is_headless, st

@@ -7,8 +7,14 @@ import ezdxf
 import pytest
 
 from core import dwg, step
-from core.model import (BoughtPart, FlatShape, InputFile, Value, file_kind)
-from core.readers import read_dwg_file, read_dxf_file, read_file, read_pdf_file, read_step_file
+from core.model import BoughtPart, FlatShape, InputFile, Value, file_kind
+from core.readers import (
+    read_dwg_file,
+    read_dxf_file,
+    read_file,
+    read_pdf_file,
+    read_step_file,
+)
 from tests.conftest import dxf_bytes, rect
 
 needs_ocp = pytest.mark.skipif(not step.available(), reason="cadquery-ocp not installed")

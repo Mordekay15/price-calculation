@@ -18,8 +18,9 @@ Pure: no Streamlit, no I/O beyond the ``load`` callables given in."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Generic, TypeVar
+from typing import Generic, TypeVar
 
 from core.geometry import bbox_wh, length, net_area
 
