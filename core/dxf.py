@@ -279,14 +279,22 @@ class DxfFile:
 
         # The main part is the largest outline; everything inside it belongs to
         # it, everything outside is dropped (detail views, sketches, stray lines).
-        # On a drawing sheet (the largest outline is its frame), the part is
-        # the view with the bend note: its flat pattern, drawn at the sheet's
-        # scale.
         main = max(top, key=lambda c: c.width_mm * c.height_mm)
-        view = _flat_view(main, contours, self.bend_notes)
+        # On a drawing sheet the largest outline is its frame, never the part:
+        # the frame and title block are set aside and the part is one of the
+        # views left on the sheet (see ``_sheet_views`` and ``_pick_view``).
+        # A frame without a title block joined to it is found by the bend
+        # note alone, as before.
+        views = _sheet_views(main, contours, reference)
+        view, section = None, None
+        if views is None:
+            view = _flat_view(main, contours, self.bend_notes)
+        else:
+            view = _pick_view(views, self.bend_notes, last=False)
         # Or a profile's drawing: its cross-section and its blank (the one
         # other view), the blank often drawn at a smaller scale.
-        section = _profile_section(main, contours) if view is None else None
+        if view is None:
+            section = _profile_section(main, contours)
         if section is not None:
             view = _blank_view(main, contours, section)
             if view is None:
@@ -297,6 +305,16 @@ class DxfFile:
                 if blank is not None:
                     return _profile_report(report, blank, section, contours)
                 section = None
+        if view is None and views is not None:
+            view = _pick_view(views, self.bend_notes, last=True)
+            if view is None:
+                report.problems.append(
+                    f"Piirustuksessa on {len(views)} näkymää, eikä mikään niistä erotu "
+                    "osan aihioksi (ei taivutusmerkintää eikä -viivoja). Lataa osan "
+                    "aukikeritty DXF.")
+                report.dropped = [c.points for c in contours]
+                _trim_dropped(report)
+                return report
         # Views drawn at the sheet's scale: a frame the size of a paper sheet
         # (a frame drawn at 1:1 round real-size views is the paper / scale).
         at_scale = view is not None and section is None and _paper_size(main)
@@ -378,6 +396,121 @@ def _flat_view(frame: Contour, contours: list[Contour], notes: list[Point]) -> C
     views = [c for c in contours if c.closed and c.depth == frame.depth + 1
              and any(point_in_polygon(n, c.points) for n in notes)]
     return views[0] if len(views) == 1 else None
+
+
+_ON_FRAME_MM = 0.5     # a title block line ending this close to the frame is joined to it
+_VIEW_GAP_MM = 2.0     # lines this close together belong to the same view
+
+
+@dataclass
+class _View:
+    """One view left on a drawing sheet once its frame and title block are
+    set aside: its largest closed outline and the lines around it."""
+
+    outline: Contour | None
+    cut: list[Contour]
+    reference: list[list[Point]]
+
+
+def _box_in(b, r, tol: float = _ON_FRAME_MM) -> bool:
+    return b[0] >= r[0] - tol and b[1] >= r[1] - tol and b[2] <= r[2] + tol and b[3] <= r[3] + tol
+
+
+def _sheet_views(frame: Contour, contours: list[Contour],
+                 reference: list[_Piece]) -> list[_View] | None:
+    """The views on a drawing sheet, or None when ``frame`` isn't a sheet's
+    frame: a rectangle with lines joined to it from inside (its title block
+    and revision table). A plain plate's outline has none, so it stays the
+    part. The title block is every line joined to the frame, through each
+    other, and whatever is drawn inside their boxes (the projection
+    symbol); what is left is grouped into views by lines within 2 mm."""
+    w, h = frame.width_mm, frame.height_mm
+    if abs(frame.area_mm2) < 0.98 * w * h:
+        return None
+    rest = [c for c in contours if c is not frame]
+
+    def ends(c: Contour) -> list[Point]:
+        return c.points[::max(1, len(c.points) // 8)] if c.closed else [c.points[0], c.points[-1]]
+
+    joined: set[int] = set()
+    todo = [frame]
+    while todo:
+        ring = todo.pop()
+        for c in rest:
+            if id(c) not in joined and any(_near_ring(p, ring.points, _ON_FRAME_MM) for p in ends(c)):
+                joined.add(id(c))
+                todo.append(c)
+    if not joined:
+        return None
+    boxes = [bbox(c.points) for c in rest if id(c) in joined and max(bbox_wh(c.points)) > 5]
+    boxes = [b for b in boxes if (b[2] - b[0]) * (b[3] - b[1]) < 0.5 * w * h]
+    frame_box = bbox(frame.points)
+    cut = [c for c in rest if id(c) not in joined
+           and not any(_box_in(bbox(c.points), b) for b in boxes)]
+    ref = [p.points for p in reference if _box_in(bbox(p.points), frame_box)
+           and not any(_box_in(bbox(p.points), b) for b in boxes)]
+
+    things = [(c, bbox(c.points)) for c in cut] + [(r, bbox(r)) for r in ref]
+    parent = list(range(len(things)))
+
+    def root(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    g = _VIEW_GAP_MM
+    order = sorted(range(len(things)), key=lambda i: things[i][1][0])
+    for n, i in enumerate(order):            # sweep along x: only overlapping boxes meet
+        a = things[i][1]
+        for j in order[n + 1:]:
+            b = things[j][1]
+            if b[0] > a[2] + g:
+                break
+            if not (b[1] > a[3] + g or a[1] > b[3] + g):
+                parent[root(i)] = root(j)
+    groups: dict[int, list[int]] = defaultdict(list)
+    for i in range(len(things)):
+        groups[root(i)].append(i)
+    views = []
+    for members in groups.values():
+        view_cut = [things[i][0] for i in members if isinstance(things[i][0], Contour)]
+        rings = [c for c in view_cut if c.closed and len(c.points) >= 3]
+        if not rings:
+            continue                         # loose lines: a leader, a note's strokes
+        views.append(_View(max(rings, key=lambda c: c.width_mm * c.height_mm), view_cut,
+                           [things[i][0] for i in members if not isinstance(things[i][0], Contour)]))
+    return views
+
+
+def _pick_view(views: list[_View], notes: list[Point], last: bool) -> Contour | None:
+    """The part among a sheet's views, by the first rule that picks exactly
+    one: the only view; the view with a bend note in it; the view with
+    dashed bend lines from edge to edge. With ``last`` (after a profile's
+    drawing was looked for): the only view whose outline stands alone, with
+    holes in it. A projected view's outline goes on into its other edges, so
+    other lines start at its corners; a flat pattern's outline is the part."""
+    def alone(v: _View) -> bool:
+        corners = v.outline.points
+
+        def at_corner(p: Point) -> bool:
+            return any(math.dist(p, q) <= _JOIN_TOL_MM for q in corners)
+        if any(at_corner(c.points[0]) or at_corner(c.points[-1]) for c in v.cut if not c.closed):
+            return False
+        return any(c is not v.outline and c.closed
+                   and point_in_polygon(representative_point(c.points), v.outline.points)
+                   for c in v.cut)
+
+    rules = [lambda v: alone(v)] if last else [
+        lambda v: len(views) == 1,
+        lambda v: any(point_in_polygon(n, v.outline.points) for n in notes),
+        lambda v: _edge_to_edge(v.outline, [r for r in v.reference if len(r) == 2]) > 0,
+    ]
+    for rule in rules:
+        hits = [v for v in views if rule(v)]
+        if len(hits) == 1:
+            return hits[0].outline
+    return None
 
 
 _SECTION_MAX_T_MM = 6.0     # thicker than this is not a sheet-metal section

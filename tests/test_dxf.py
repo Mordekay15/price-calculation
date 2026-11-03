@@ -553,3 +553,81 @@ def test_one_odd_dimension_does_not_rescale_a_part(drawing):
     rect(msp, 0, 0, 300, 200)
     msp.add_aligned_dim((0, 200), (300, 200), distance=20, override={"dimlfac": 2}).render()
     assert round(part_of(doc).outline.width_mm) == 300
+
+
+def _sheet(msp):
+    """An A3 frame with a title block joined to it (M3440659-00.dwg's
+    layout) and a projected side view whose outline goes on into its other
+    edges."""
+    rect(msp, 0, 0, 420, 297)                                # the frame
+    msp.add_line((220, 0), (220, 50))                        # the title block
+    msp.add_line((220, 50), (420, 50))
+    msp.add_line((320, 0), (320, 50))
+    msp.add_circle((370, 25), 4)                             # its projection symbol
+    msp.add_text("1:1", dxfattribs={"insert": (330, 20)})
+    rect(msp, 60, 150, 25, 30)                               # the side view
+    msp.add_lwpolyline([(60, 150), (60, 100), (85, 100), (85, 150)])
+
+
+def _flat(msp, x=240, y=200):
+    rect(msp, x, y, 100, 25)
+    msp.add_circle((x + 10, y + 12.5), 2.25)
+    msp.add_circle((x + 90, y + 12.5), 2.25)
+
+
+def test_a_sheet_with_one_view_is_priced_from_that_view(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 420, 297)
+    msp.add_line((220, 0), (220, 50))
+    msp.add_line((220, 50), (420, 50))
+    _flat(msp)
+    report = part_of(doc)
+    assert report.problems == [] and len(report.holes) == 2
+    assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (100, 25)
+
+
+def test_on_a_sheet_the_bend_note_picks_the_view(drawing):
+    doc, msp = drawing()
+    _sheet(msp)
+    _flat(msp)
+    msp.add_text("UP 90° R 2", dxfattribs={"insert": (280, 210)})
+    report = part_of(doc)
+    assert round(report.outline.width_mm) == 100 and report.bends == 1
+
+
+def test_on_a_sheet_dashed_bend_lines_pick_the_view(drawing):
+    doc, msp = drawing()
+    _sheet(msp)
+    _flat(msp)
+    msp.add_line((290, 200), (290, 225), dxfattribs={"linetype": "DASHED"})
+    report = part_of(doc)
+    assert report.problems == [] and round(report.outline.width_mm) == 100
+    assert report.bends == 1 and len(report.reference_lines) == 1
+
+
+def test_on_a_sheet_without_bends_the_outline_that_stands_alone_is_the_part(drawing):
+    # The frame used to be taken as the part here, with the views as holes.
+    doc, msp = drawing()
+    _sheet(msp)
+    _flat(msp)
+    report = part_of(doc)
+    assert report.problems == [] and len(report.holes) == 2
+    assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (100, 25)
+
+
+def test_a_sheet_whose_part_cant_be_told_is_never_priced_as_its_frame(drawing):
+    doc, msp = drawing()
+    _sheet(msp)
+    _flat(msp)
+    _flat(msp, 240, 100)                # a second part just like it
+    report = part_of(doc)
+    assert report.outline is None and "näkymää" in report.problems[0]
+
+
+def test_a_plate_with_holes_is_not_taken_for_a_frame(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 400, 280)
+    for x in (50, 150, 250, 350):
+        msp.add_circle((x, 140), 10)
+    report = part_of(doc)
+    assert report.problems == [] and len(report.holes) == 4

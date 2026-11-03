@@ -521,6 +521,18 @@ the price all use the same result.
 - **The part** is the largest closed outline. Outlines directly inside it are
   its holes, and anything outside it (detail views, sketches, stray lines) is
   dropped.
+- **Drawing sheets**: the frame is never the part. A frame is the largest
+  outline when it is a rectangle with lines joined to it from inside (its
+  title block). The frame, the title block and whatever is drawn in its boxes
+  are set aside, and the lines left are grouped into views (lines within
+  2 mm are one view). The part is the first view one of these picks out:
+  the only view; the view with a bend note in it ("UP 90° R 2"); the view
+  with dashed bend lines from edge to edge; a profile's blank (see below);
+  the only view whose outline stands alone with holes in it (a projected
+  view's outline goes on into its other edges). When none does, the card
+  says the drawing has several views and asks for the part's DXF. The view
+  then goes through the same checks as any part: holes, bends, threads,
+  scale and cut length.
 - **Laid along its length**: the part is turned so its smallest bounding
   rectangle lies straight, long side horizontal, as a designer lays it before
   nesting. A curved strip drawn diagonally (2120 × 2061 mm as drawn) is then
