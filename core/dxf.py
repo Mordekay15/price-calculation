@@ -442,7 +442,27 @@ def _sheet_views(frame: Contour, contours: list[Contour],
                 todo.append(c)
     if not joined:
         return None
-    boxes = [bbox(c.points) for c in rest if id(c) in joined and max(bbox_wh(c.points)) > 5]
+    # The title block's boxes: each group of joined lines that meet each
+    # other (the title block, the revision table) spans one box.
+    block = [c for c in rest if id(c) in joined]
+    up = list(range(len(block)))
+
+    def top(i: int) -> int:
+        while up[i] != i:
+            up[i] = up[up[i]]
+            i = up[i]
+        return i
+
+    for i, a in enumerate(block):
+        for j in range(i + 1, len(block)):
+            b = block[j]
+            if (any(_near_ring(p, b.points, _ON_FRAME_MM) for p in ends(a))
+                    or any(_near_ring(p, a.points, _ON_FRAME_MM) for p in ends(b))):
+                up[top(i)] = top(j)
+    spans: dict[int, list[Point]] = defaultdict(list)
+    for i, c in enumerate(block):
+        spans[top(i)] += c.points
+    boxes = [bbox(pts) for pts in spans.values()]
     boxes = [b for b in boxes if (b[2] - b[0]) * (b[3] - b[1]) < 0.5 * w * h]
     frame_box = bbox(frame.points)
     cut = [c for c in rest if id(c) not in joined

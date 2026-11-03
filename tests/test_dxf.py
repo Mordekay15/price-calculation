@@ -631,3 +631,24 @@ def test_a_plate_with_holes_is_not_taken_for_a_frame(drawing):
         msp.add_circle((x, 140), 10)
     report = part_of(doc)
     assert report.problems == [] and len(report.holes) == 4
+
+
+def test_the_title_blocks_projection_symbol_is_never_the_part(drawing):
+    # Re91931A.dwg: a plain 440 × 162 PVC plate and its 1.5 mm edge, on a
+    # sheet. The projection symbol (two circles in a box) sits in the title
+    # block between its lines; it had a "hole", so it was taken for the part.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 800, 550)                                # the frame
+    msp.add_line((420, 0), (420, 100))                       # the title block, its lines
+    msp.add_line((420, 80), (800, 80))                       # meeting in Ts, not end to end
+    msp.add_line((520, 0), (520, 80))
+    msp.add_circle((505, 15), 5.7)                           # the projection symbol
+    msp.add_circle((505, 15), 3.9)
+    msp.add_line((498, 15), (512, 15))
+    msp.add_line((505, 8), (505, 22))
+    rect(msp, 140, 200, 440, 162)                            # the plate
+    msp.add_line((580, 281), (580, 362))                     # part of its edge, drawn twice
+    msp.add_lwpolyline([(140, 140), (580, 140), (580, 141.5), (140, 141.5)])   # its edge
+    report = part_of(doc)
+    assert report.problems == [] and report.holes == []
+    assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (440, 162)
