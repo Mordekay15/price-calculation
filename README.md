@@ -503,6 +503,33 @@ With Sparrow each kit check is a solver run, so at most four are made per sheet
 size (`_KIT_BUDGET` in `core/sparrow.py`). The rectangle packer is instant and
 has no limit.
 
+## Data model
+
+`core/model.py` holds what is kept from every dropped file, and
+`core/readers.py` one reader per file type. Data flows one way:
+
+1. **InputFile**: every dropped file and every file in a ZIP (name, folder,
+   kind, size, status, and a way to read its bytes; they are not copied).
+   Files of other kinds are left out unread.
+2. **Readers**, each returning a `ReadResult` of shapes and facts:
+   - DXF: the sheet is analysed and the part handed on as a FlatShape.
+   - DWG: only converted (`DwgConversion`: converter, full or minimal DXF,
+     problems); its DXF goes through the DXF reader.
+   - STEP: each sheet body is unfolded straight into a FlatShape, bends with
+     their angle, radius and direction; bodies that aren't sheet are
+     `bought_body` facts.
+   - PDF: facts only.
+3. **FlatShape** (geometry only: outline, holes, cuts, markings, bends,
+   threads; size, area and cut length worked out from them) and **Fact**
+   (`material`, `thickness`, `part_number`, `bom_qty`, `fastener`,
+   `called_out`, `bought_body`, each with its file, page and the line it was
+   read from).
+4. **Part** (one per part number; its files are `PartSource`s; each value a
+   `Value`: auto, where from, typed) and **Assembly** (one per part number, a
+   tree of `Child`ren). Ostetut osat are `BoughtPart`s, on a part (its
+   fasteners) or on an assembly.
+5. Nesting and price, computed.
+
 ## How a DXF file is read
 
 `core/dxf.py` reads each file once. The card preview, the Sparrow nesting and
