@@ -150,13 +150,14 @@ def test_an_unpriced_part_leaves_the_money_columns_numeric():
     import pandas as pd
 
     def page():
+        from core.model import Product
         from core.work import WorkInputs, WorkRates, work_cost
         from view.common import render_pieces_summary
 
         RATES = WorkRates()
 
-        prods = [{"id": i, "name": f"p{i}", "material": "S235", "thickness": "2",
-                  "width": 100.0, "height": 50.0, "qty": 2, "work": WorkInputs()}
+        prods = [Product(id=i, name=f"p{i}", material="S235", thickness="2", width=100.0,
+                         height=50.0, qty=2, work=WorkInputs())
                  for i in ("a", "b")]
         render_pieces_summary(prods, {"a": 900.0}, weight_label="kg", lead="Osa",
                               work={"a": work_cost(WorkInputs(), 2, RATES),

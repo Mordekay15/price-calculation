@@ -2,7 +2,7 @@
 inputs on every part card (both tabs), and each product's work cost with the
 per-sheet cutting minimum applied by group (see ``core.work``)."""
 
-from core.model import BoughtPart, Part
+from core.model import BoughtPart, Part, Product
 from core.pricing import parse_thickness_mm
 from core.work import (
     FASTENER_INSERT_EUR,
@@ -263,14 +263,14 @@ def _card_summary(inp: WorkInputs, cost: WorkCost) -> str:
 
 # ── Costs for the pieces summary ──────────────────────────────────────────────
 
-def work_costs(products: list[dict], groups: dict[tuple, list[dict]],
+def work_costs(products: list[Product], groups: dict[tuple, list[Product]],
                sheets: dict[tuple, int]) -> dict[str, WorkCost]:
     """Each product's work cost by id, the cutting raised to the per-sheet
     minimum over its group's sheets (groups not yet calculated get none)."""
     rates = current_rates()
-    out = {p["id"]: work_cost(p["work"], p["qty"], rates) for p in products if "work" in p}
+    out = {p.id: work_cost(p.work, p.qty, rates) for p in products if p.work is not None}
     for key, prods in groups.items():
-        ids = [p["id"] for p in prods if p["id"] in out]
+        ids = [p.id for p in prods if p.id in out]
         if key in sheets and ids:
             for pid, c in zip(ids, apply_sheet_minimum([out[i] for i in ids],
                                                        sheets[key], rates)):

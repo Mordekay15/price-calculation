@@ -4,7 +4,7 @@ one table), 2 · Nestaus (the settings, the nesting and every group's sheets,
 ``view.dxf_nesting``) and 3 · Hinnoittelu (the totals, the breakdown by
 batch size and the downloads). Above each, a status strip says what is still
 missing and where, and leads to the next step. A card shows a part's preview, measured size,
-material, thickness, quantity and work, and returns the product dict the
+material, thickness, quantity and work, and returns the ``Product`` the
 pricing uses, or None (with the reasons shown) when the part cannot be
 priced. The card and the pricing share the same FlatShape, so what the card
 shows is exactly what Sparrow nests.
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from core.assemblies import per_unit
 from core.dxf import is_slit
 from core.items import LINKED_BY, NO_BLANK, confirm_unit
-from core.model import FlatShape, Part
+from core.model import FlatShape, Part, Product
 from core.pricing import build_lookup
 from core.sheet_cost import is_ready
 from view import assemblies, attachments, bom
@@ -234,8 +234,8 @@ def _render_status(screen: str, nest: NestState, priced: bool) -> None:
 
 
 def _render_part_cards(parts, materials: list[str], lookup: dict,
-                       per_part_angles: bool = False) -> list[dict]:
-    """One card per uploaded part; returns the configured product dicts. The
+                       per_part_angles: bool = False) -> list[Product]:
+    """One card per uploaded part; returns the configured Products. The
     loose parts come first, then each assembly with its cards in it. The
     nesting angle is on the cards only when it is chosen per part. A card
     draws its material and work on BOM."""
@@ -259,7 +259,7 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
     per_assembly = per_unit(assemblies.current(card_of))  # card id: kpl in its assemblies
     doc_links = card_docs()
     in_boms = bom_quantities()                  # card id: (kpl, BOMs)
-    products: dict[int, dict | None] = {}
+    products: dict[int, Product | None] = {}
     fill = _FillOffer()
 
     # The table lists every card; a card picked in it opens below it,
@@ -402,7 +402,7 @@ def _render_part_config(
     doc_ids: list[str] = (),
     per_assembly: int = 0,
     in_bom: tuple[int, list[str]] | None = None,
-) -> dict | None:
+) -> Product | None:
     """Draw one part's card, preview left and inputs right; return its product
     dict, or None if not priceable. Its ``angles`` are None (set later from the
     run row) unless ``per_part_angles`` (then its own, chosen on the run
@@ -487,19 +487,9 @@ def _render_part_config(
         _row(fid, idx, shape, status, Materiaali=material or "", Paksuus=thickness or "", Määrä=qty,
              **{"Koko (mm)": f"{size[0]:g} × {size[1]:g}"})
 
-    return {
-        "id":        fid,
-        "name":      shape.name,
-        "material":  item.material.value,
-        "thickness": item.thickness.value,
-        "width":     size[0],
-        "height":    size[1],
-        "qty":       item.qty.value,
-        "angles":    angles,
-        "shape":     shape,
-        "work":      item.work,
-        "source":    item.chosen if item is not None else fid,
-    }
+    return Product(fid, item.material.value, item.thickness.value, size[0], size[1],
+                   item.qty.value, item.work, name=shape.name, shape=shape, angles=angles,
+                   source=item.chosen)
 
 
 def _render_preview(shape: FlatShape, bends: list | None = None) -> None:

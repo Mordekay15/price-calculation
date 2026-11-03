@@ -236,8 +236,8 @@ def test_a_card_takes_its_bends_from_the_model_and_its_material_from_the_pdf():
         lookup = {("2", "S235 | 1000x2000"): 900.0, ("3", "S235 | 1000x2000"): 950.0}
         auto_fill_materials(["S235"], lookup)
         products = _render_part_cards(parts, ["S235"], lookup, False)
-        st.session_state["cards"] = [(p["name"], p["material"], p["thickness"],
-                                      len(p["shape"].bends), p["work"].bends) for p in products]
+        st.session_state["cards"] = [(p.name, p.material, p.thickness,
+                                      len(p.shape.bends), p.work.bends) for p in products]
 
     at = AppTest.from_function(page, default_timeout=60).run()
     assert not at.exception

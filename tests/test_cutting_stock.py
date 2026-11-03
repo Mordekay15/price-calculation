@@ -8,11 +8,18 @@ from collections import Counter
 import pytest
 
 from core.cutting_stock import _trim, best_plan, candidate_sheets
+from core.model import Product
 from core.programs import sheets_used
 from core.rect_nesting import box_candidates, fewest_sheets, rect_options
 from core.sheet_cost import cheapest_index
-from core.sparrow import (PackedSheet, Placed, SparrowPart, _candidates, _plan_sheets,
-                          sparrow_options)
+from core.sparrow import (
+    PackedSheet,
+    Placed,
+    SparrowPart,
+    _candidates,
+    _plan_sheets,
+    sparrow_options,
+)
 
 
 def _fewest(parts, seeds, sheet_w, sheet_h, separation):
@@ -27,7 +34,7 @@ LOOKUP = {("2", "S235 | 1250x2500"): 900.0}
 
 
 def plates(qty=10):
-    return [{"id": str(i), "width": s, "height": s, "qty": qty, "_global_idx": i}
+    return [Product(id=str(i), width=s, height=s, qty=qty, index=i)
             for i, s in enumerate(PLATES)]
 
 
@@ -85,12 +92,11 @@ def test_never_more_sheets_than_filling_one_at_a_time_and_quantities_stay_exact(
     rng = random.Random(1)
     for _ in range(12):
         n = rng.randint(2, 6)
-        products = [{"id": str(i), "width": rng.randint(150, 1200),
-                     "height": rng.randint(150, 1000), "qty": rng.choice([1, 3, 5, 8, 12]),
-                     "_global_idx": i} for i in range(n)]
+        products = [Product(id=str(i), width=rng.randint(150, 1200), height=rng.randint(150, 1000),
+                            qty=rng.choice([1, 3, 5, 8, 12]), index=i) for i in range(n)]
         options = rect_options(LOOKUP, "S235", "2", 2.0, products).options
         for o in options:
-            assert made(o, n) == [p["qty"] for p in products]
+            assert made(o, n) == [p.qty for p in products]
         fewest = min(o.sheets_needed for o in options)
         greedy = options[0].sheets_needed      # the fewest-sheets greedy plan comes first
         assert fewest <= greedy
@@ -156,8 +162,8 @@ TWO_SIZES = {("2", "S235 | 1000x2000"): 900.0, ("2", "S235 | 1500x3000"): 850.0}
 def test_the_big_part_on_a_big_sheet_and_the_rest_on_a_small_one():
     # A only fits the big sheet, which holds A and one B. The other B would
     # take a second big sheet (122.40 €); a small sheet does (90 €).
-    products = [{"id": "a", "width": 1400, "height": 1200, "qty": 1, "_global_idx": 0},
-                {"id": "b", "width": 950, "height": 950, "qty": 2, "_global_idx": 1}]
+    products = [Product(id="a", width=1400, height=1200, qty=1, index=0),
+                Product(id="b", width=950, height=950, qty=2, index=1)]
     options = rect_options(TWO_SIZES, "S235", "2", 2.0, products).options
     small, big, mixed = options[0], options[1], options[-1]
     assert not small.ok and big.sheets_needed == 2          # A doesn't fit the small one
@@ -171,7 +177,7 @@ def test_the_big_part_on_a_big_sheet_and_the_rest_on_a_small_one():
 
 
 def test_no_mixed_row_when_one_size_is_cheapest():
-    products = [{"id": "a", "width": 900, "height": 900, "qty": 4, "_global_idx": 0}]
+    products = [Product(id="a", width=900, height=900, qty=4, index=0)]
     options = rect_options(TWO_SIZES, "S235", "2", 2.0, products).options
     assert not any(o.mix for o in options)
 

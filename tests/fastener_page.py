@@ -35,5 +35,5 @@ sync()
 sync_assemblies()
 products = _render_part_cards(list(cards().items()), ["S235"],
                               {("2", "S235 | 1000x2000"): 900.0})
-st.session_state["ids"] = [p["id"] for p in products]
-st.session_state["work"] = {p["id"]: p["work"] for p in products}
+st.session_state["ids"] = [p.id for p in products]
+st.session_state["work"] = {p.id: p.work for p in products}

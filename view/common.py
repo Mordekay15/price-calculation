@@ -14,6 +14,7 @@ from core.pricing import (
 from core.cutting_stock import have_solver
 from core.sheet_cost import EdgeGaps, piece_costs
 from core.work import WorkCost
+from core.model import Product
 from view.drawing import edge_gaps_svg
 from view.ui import st
 
@@ -235,7 +236,7 @@ def _render_nesting_inputs(*, key_prefix: str) -> SheetSettings:
 
 # ── The per-group loop ────────────────────────────────────────────────────────
 
-def render_groups(groups: dict[tuple, list[dict]], render_one):
+def render_groups(groups: dict[tuple, list[Product]], render_one):
     """Render every group and collect the prices for the pieces summary.
 
     ``render_one(key, products)`` renders one group and returns
@@ -274,14 +275,14 @@ def render_groups(groups: dict[tuple, list[dict]], render_one):
             totals[key] = total
         if ppt is not None:
             for p in prods:
-                prices[p["id"]] = ppt
+                prices[p.id] = ppt
     return prices, grand_total, missing, sheets, totals
 
 
 # ── Pieces summary ────────────────────────────────────────────────────────────
 
 def render_pieces_summary(
-    products: list[dict],
+    products: list[Product],
     prices: dict[str, float],
     *,
     weight_label: str,
@@ -301,12 +302,12 @@ def render_pieces_summary(
         return None if value is None else round(value, digits)
 
     rows = [{
-        lead:             pc.product.get("name", pc.index + 1),
-        "Materiaali":     pc.product["material"] or "",
-        "Paksuus":        pc.product["thickness"] or "",
-        "Leveys (mm)":    pc.product["width"],
-        "Korkeus (mm)":   pc.product["height"],
-        "Määrä (kpl)":    pc.product["qty"],
+        lead:             pc.product.name or pc.index + 1,
+        "Materiaali":     pc.product.material or "",
+        "Paksuus":        pc.product.thickness or "",
+        "Leveys (mm)":    pc.product.width,
+        "Korkeus (mm)":   pc.product.height,
+        "Määrä (kpl)":    pc.product.qty,
         "kg/kpl":         round(pc.kg, 3),
         "Yhteensä kg":    round(pc.batch_kg, 3),
         "€/kpl":          money(pc.eur, 4),
@@ -321,7 +322,7 @@ def render_pieces_summary(
     m2.metric(weight_label, f"{sum(pc.batch_kg for pc in costs):.3f}")
     st.dataframe(rows, width="stretch", hide_index=True)
 
-    priced = [(pc, work[pc.product["id"]]) for pc in costs if pc.product["id"] in work]
+    priced = [(pc, work[pc.product.id]) for pc in costs if pc.product.id in work]
     if priced:
         _render_piece_prices(priced, lead, total_cost_eur)
 
@@ -336,14 +337,14 @@ def _render_piece_prices(priced: list, lead: str, material_total: float) -> None
     for pc, wc in priced:
         unit = None if pc.eur is None or not wc.priced else pc.eur + wc.per_piece
         rows.append({
-            lead:                     pc.product.get("name", pc.index + 1),
-            "Määrä (kpl)":            pc.product["qty"],
+            lead:                     pc.product.name or pc.index + 1,
+            "Määrä (kpl)":            pc.product.qty,
             "Materiaali €/kpl":       None if pc.eur is None else r(pc.eur),
             **{f"{phase} €/kpl": r(eur) if wc.priced or phase != "Leikkaus" else None
                for phase, eur in wc.breakdown().items()},
             "Asetus ym. €/kpl":       r(wc.batch_fixed / wc.qty),
             "Kpl-hinta €":            None if unit is None else r(unit),
-            "Yhteensä €":             None if unit is None else r(unit * pc.product["qty"]),
+            "Yhteensä €":             None if unit is None else r(unit * pc.product.qty),
         })
     work_total = sum(wc.batch for _, wc in priced if wc.priced)
     complete = all(pc.eur is not None and wc.priced for pc, wc in priced)

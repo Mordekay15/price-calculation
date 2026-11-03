@@ -310,3 +310,26 @@ class Assembly:
     @property
     def described(self) -> bool:
         return bool(self.step_file or self.drawing or self.by_hand)
+
+
+# ── 5 · Nesting and price ───────────────────────────────────────────────────
+
+@dataclass
+class Product:
+    """One part as nesting and the price take it: a card's ``Part`` as it
+    now stands (its FlatShape, material, thickness, quantity and work), or a
+    rectangle typed on the Pikalaskuri tab (no shape, no name)."""
+
+    id: str
+    material: str | None = None
+    thickness: str | None = None
+    width: float = 0.0                          # mm
+    height: float = 0.0                         # mm
+    qty: int = 1
+    work: WorkInputs | None = None
+    name: str = ""
+    shape: FlatShape | None = field(default=None, repr=False, compare=False)
+    angles: tuple[int, ...] | None = None       # its own nesting angles, None = the run's
+    source: str = ""                            # the file priced (its Part's ``chosen``)
+    index: int = 0                              # its place among all products (colour, #N)
+

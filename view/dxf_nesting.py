@@ -5,9 +5,9 @@ parts and the sheet sizes) and priced again when only the prices change."""
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
-from core.model import FlatShape
+from core.model import FlatShape, Product
 from core.pricing import parse_thickness_mm
 from core.quote import CleanPart
 from core.sheet_cost import (
@@ -69,7 +69,7 @@ class NestState:
     ready: bool = True      # False: Sparrow is missing, or no nesting angle
 
 
-def render_nesting(products: list[dict], n_parts: int, lookup: dict, nest_mode: str,
+def render_nesting(products: list[Product], n_parts: int, lookup: dict, nest_mode: str,
                    sheet: SheetSettings, margin_pct: float, *, nesting: bool = True,
                    prices: bool = False):
     """The run row and every group's result (drawn when ``nesting``), then
@@ -100,7 +100,7 @@ def _render_nesting(products, n_parts, lookup, nest_mode, sheet, margin_pct):
     # Two rows above the button they apply to: the nesting angle, then the
     # search time with the buttons.
     shared = _render_angle_controls(n_parts, products)
-    if shared == () or shared is None and any(p["angles"] == () for p in products):
+    if shared == () or shared is None and any(p.angles == () for p in products):
         return None, NestState(ready=False)  # no direction chosen: the warning says so
     c_time, c_run, c_update = st.columns([1, 2, 2], vertical_alignment="bottom")
     time_limit = c_time.number_input(
@@ -109,7 +109,7 @@ def _render_nesting(products, n_parts, lookup, nest_mode, sheet, margin_pct):
              "yksi tai useampi). Pidempi aika voi löytää tiiviimmän sijoittelun, "
              "mutta laskenta kestää kauemmin.")
     if shared is not None:
-        products = [{**p, "angles": shared} for p in products]
+        products = [replace(p, angles=shared) for p in products]
     groups = group_products(products, nest_mode)
     settings = _Settings(nest_mode, sheet, int(time_limit), margin_pct, lookup)
     cache: dict = st.session_state.setdefault(_CACHE, {})
@@ -192,7 +192,7 @@ def _run_label(n_new: int, n_stale: int, n_groups: int) -> str:
     return f"{base} — " + (f"{n_new} uusi" if n_new == 1 else f"{n_new} uutta")
 
 
-def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
+def _sig(key: tuple, products: list[Product], settings: _Settings) -> str:
     """Stable cache key: what decides the nesting — the parts (quantity,
     nesting angles) and the sheet sizes they are nested on (those with a price
     for the material and thickness).
@@ -204,8 +204,8 @@ def _sig(key: tuple, products: list[dict], settings: _Settings) -> str:
     in either mode. The Sparrow settings are saved with the result
     (``entry["nesting"]``), so changing one doesn't drop every result.
     """
-    prod_sig = ",".join(f"{p['id']}:{p.get('source', p['id'])}:{p['qty']}:"
-                        f"{'/'.join(map(str, p['angles']))}" for p in products)
+    prod_sig = ",".join(f"{p.id}:{p.source or p.id}:{p.qty}:"
+                        f"{'/'.join(map(str, p.angles))}" for p in products)
     sizes = sorted(price_by_size(settings.lookup, key[0], key[1]))
     return f"{prod_sig}|{sizes}"
 
@@ -237,12 +237,12 @@ def _priced(entry: dict, now: dict):
                    base_ppt=now["prices"], margin_pct=now["margin_pct"])
 
 
-def _group_label(key: tuple, prods: list[dict]) -> str:
+def _group_label(key: tuple, prods: list[Product]) -> str:
     """The group's heading, e.g. ``S235 · 2 mm``, plus the part's name when it
     is nested on its own."""
     label = f"{key[0]} · {key[1]} mm"
     if len(key) > 2:
-        label += " · " + ", ".join(p["name"] for p in prods)
+        label += " · " + ", ".join(p.name for p in prods)
     return label
 
 
@@ -288,7 +288,7 @@ def _nester(lookup: dict, settings: _Settings, exe, *, remembered_only: bool = F
             raise _NotRemembered
         return runs[key]
 
-    def nest(key: tuple, prods: list[dict]) -> dict | None:
+    def nest(key: tuple, prods: list[Product]) -> dict | None:
         material, thickness = key[0], key[1]
         thickness_mm = parse_thickness_mm(thickness)
         if thickness_mm is None:
@@ -386,7 +386,7 @@ def _show(groups, settings: _Settings, cache: dict, nest, replan,
     return bool(replanned), (groups, areas, out)
 
 
-def _render_prices(products: list[dict], priced: tuple | None, margin_pct: float):
+def _render_prices(products: list[Product], priced: tuple | None, margin_pct: float):
     """The batch prices, from what ``_show`` priced; returns their totals
     (``quote.Totals``), or None."""
     if priced is None:
@@ -409,8 +409,8 @@ def _render_prices(products: list[dict], priced: tuple | None, margin_pct: float
 
 def _clean_part(product: dict) -> CleanPart:
     """A part's cut geometry for the clean-DXF export, as the card shows it."""
-    shape: FlatShape = product["shape"]
-    return CleanPart(product["name"], product["material"] or "", product["thickness"] or "",
+    shape: FlatShape = product.shape
+    return CleanPart(product.name, product.material or "", product.thickness or "",
                      shape.outline, list(shape.holes), list(shape.open_cuts),
                      list(shape.markings))
 
@@ -424,16 +424,16 @@ def _settings_of(entry: dict, settings: _Settings) -> _Settings:
                      settings.lookup)
 
 
-def _parts_for_group(products: list[dict]) -> tuple[list, dict[str, float]]:
+def _parts_for_group(products: list[Product]) -> tuple[list, dict[str, float]]:
     """Sparrow parts for a group, plus each product's real area (mm²/piece).
 
     The parts come from the same read result the card showed; the area is the
     outline minus its holes.
     """
     parts = [
-        part_from_shape(p["shape"], int(p["qty"]), p["angles"]) for p in products
+        part_from_shape(p.shape, int(p.qty), p.angles) for p in products
     ]
-    areas = {p["id"]: p["shape"].net_area_mm2 for p in products}
+    areas = {p.id: p.shape.net_area_mm2 for p in products}
     return parts, areas
 
 
@@ -487,7 +487,7 @@ _PER_ROW = 3
 _ROWS_SHOWN = 4   # more parts than this many rows scroll in their own box
 
 
-def _render_angle_controls(n_parts: int, products: list[dict]) -> tuple[int, ...] | None:
+def _render_angle_controls(n_parts: int, products: list[Product]) -> tuple[int, ...] | None:
     """The nesting-angle row above the run button: the angles every part gets,
     or None when each part has its own (a switch offered only for several
     parts, before the shared choice); then every part's choice is drawn here, a
@@ -495,7 +495,7 @@ def _render_angle_controls(n_parts: int, products: list[dict]) -> tuple[int, ...
     where they are used. One part is drawn beside its choices."""
     if n_parts == 1:
         with st.columns([1, 2])[0]:
-            return render_nesting_angles(shape=products[0]["shape"] if products else None)
+            return render_nesting_angles(shape=products[0].shape if products else None)
     # The switch first, so it stays put when the shared choice goes.
     switch, shared, _ = st.columns([1, 1, 2], vertical_alignment="bottom")
     if not switch.toggle("Osakohtainen", key=ANGLE_MODE,
@@ -508,5 +508,5 @@ def _render_angle_controls(n_parts: int, products: list[dict]) -> tuple[int, ...
     for start in range(0, len(products), _PER_ROW):
         for p, col in zip(products[start:start + _PER_ROW], box.columns(_PER_ROW)):
             with col:
-                render_nesting_angles(p["id"], p["shape"], p["name"], px=64)
+                render_nesting_angles(p.id, p.shape, p.name, px=64)
     return None

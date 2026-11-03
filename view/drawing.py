@@ -5,7 +5,7 @@ import streamlit as st
 
 from core.dxf import is_slit
 from core.geometry import rotate_translate
-from core.model import FlatShape
+from core.model import FlatShape, Product
 from core.sheet_cost import SheetOption, fmt_m, product_label, utilization
 
 # ── Shared pieces ─────────────────────────────────────────────
@@ -184,19 +184,19 @@ def edge_gaps_svg(edges_mm: tuple[int, int, int, int]) -> str:
 
 # ── Manual calculator: rectangles ─────────────────────────────────────────────
 
-def draw_rect_layout(option: SheetOption, products: list[dict], rankavali_mm: int) -> None:
+def draw_rect_layout(option: SheetOption, products: list[Product], rankavali_mm: int) -> None:
     """Each sheet layout of the chosen size, each piece a labelled rectangle.
 
     ``products`` is the group's product list (placements index into it); each
-    product's ``_global_idx`` picks its colour and ``#N`` label.
+    product's ``index`` picks its colour and ``#N`` label.
     """
     _render_legend([
-        (p["_global_idx"], f"{product_label(p)} ({p['width']:g}×{p['height']:g})")
+        (p.index, f"{product_label(p)} ({p.width:g}×{p.height:g})")
         for p in products
     ])
 
     def used_area(sheet):
-        return sum(products[p.product_idx]["width"] * products[p.product_idx]["height"]
+        return sum(products[p.product_idx].width * products[p.product_idx].height
                    for p in sheet.placements)
 
     _render_each_size(option, lambda o, scale, start: _render_layouts(
@@ -210,7 +210,7 @@ def _rect_sheet_svg(sheet, packing, scale, products, rankavali_mm) -> str:
            _usable_group(packing)]
     for pl in sheet.placements:
         prod = products[pl.product_idx]
-        idx = prod["_global_idx"]
+        idx = prod.index
         # Strip the rankaväli padding so the drawn footprint is the real piece.
         dw = max(1, pl.w - rankavali_mm)
         dh = max(1, pl.h - rankavali_mm)
@@ -229,7 +229,7 @@ def _rect_sheet_svg(sheet, packing, scale, products, rankavali_mm) -> str:
             f'<text x="{cx}" y="{cy + fs}" text-anchor="middle" '
             f'dominant-baseline="middle" font-family="sans-serif" '
             f'font-size="{fs * 0.65:.0f}" fill="#0f172a">'
-            f'{prod["width"]:g}×{prod["height"]:g}</text>'
+            f'{prod.width:g}×{prod.height:g}</text>'
         )
     out.append("</g></svg>")
     return "".join(out)

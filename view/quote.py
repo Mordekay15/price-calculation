@@ -18,7 +18,7 @@ from core.batches import (
     batch_prices,
     parse_batch_sizes,
 )
-from core.model import Assembly
+from core.model import Assembly, Product
 from core.quote import (
     DEFAULT_DXF_NAME,
     CleanPart,
@@ -139,8 +139,8 @@ def current_info() -> QuoteInfo:
 
 # ── Prices per batch size ─────────────────────────────────────────────────────
 
-def render_batch_prices(products: list[dict], prices: dict[str, float],
-                        groups: dict[tuple, list[dict]], sheets: dict[tuple, int],
+def render_batch_prices(products: list[Product], prices: dict[str, float],
+                        groups: dict[tuple, list[Product]], sheets: dict[tuple, int],
                         totals: dict[tuple, float], *, lead: str, key: str,
                         areas_mm2: dict[str, float] | None = None,
                         clean_parts: list[CleanPart] | None = None,
@@ -156,8 +156,8 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
     for the bar (None when nothing is priced); headless, only that, without
     making the downloads."""
     costs = piece_costs(products, prices, areas_mm2)
-    group_of = {p["id"]: k for k, prods in groups.items() for p in prods}
-    costs = [pc for pc in costs if pc.product["id"] in group_of]
+    group_of = {p.id: k for k, prods in groups.items() for p in prods}
+    costs = [pc for pc in costs if pc.product.id in group_of]
     if not costs:
         return None
 
@@ -165,29 +165,29 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
     group_sheets = {}
     for k, prods in groups.items():
         if k in totals and k in sheets:
-            kg = sum(pc.kg * pc.product["qty"] for pc in costs
-                     if group_of[pc.product["id"]] == k)
+            kg = sum(pc.kg * pc.product.qty for pc in costs
+                     if group_of[pc.product.id] == k)
             group_sheets[k] = GroupSheets(totals[k], sheets[k], kg)
     assemblies = [a for a in assemblies or [] if a.parts or a.bought or a.children]
     in_assembly = per_unit(assemblies)
-    parts = [BatchPart(pc.product["id"], group_of[pc.product["id"]], pc.kg,
-                       pc.product.get("work"), in_assembly.get(pc.product["id"], 1))
+    parts = [BatchPart(pc.product.id, group_of[pc.product.id], pc.kg,
+                       pc.product.work, in_assembly.get(pc.product.id, 1))
              for pc in costs]
     rates = current_rates()
     by_part = batch_prices(parts, group_sheets, sizes, rates)
 
     def name(pc) -> str:
-        return str(pc.product.get("name", pc.index + 1))
+        return str(pc.product.name or pc.index + 1)
 
-    lines = [QuoteLine(name(pc), pc.product["material"] or "", pc.product["thickness"] or "",
-                       tuple(by_part[pc.product["id"]]))
-             for pc in costs if pc.product["id"] not in in_assembly]
-    names = {pc.product["id"]: name(pc) for pc in costs}
-    works = {pc.product["id"]: pc.product.get("work") for pc in costs}
+    lines = [QuoteLine(name(pc), pc.product.material or "", pc.product.thickness or "",
+                       tuple(by_part[pc.product.id]))
+             for pc in costs if pc.product.id not in in_assembly]
+    names = {pc.product.id: name(pc) for pc in costs}
+    works = {pc.product.id: pc.product.work for pc in costs}
     # Each line's └ rows in the table: a loose part's own bought parts, an
     # assembly's parts (each with its own bought parts), bought parts and work.
-    subs: list[list[dict]] = [_bought_rows(works[pc.product["id"]], 1, 1, len(sizes))
-                              for pc in costs if pc.product["id"] not in in_assembly]
+    subs: list[list[dict]] = [_bought_rows(works[pc.product.id], 1, 1, len(sizes))
+                              for pc in costs if pc.product.id not in in_assembly]
     priced: list[tuple[Assembly, dict, tuple]] = []     # for the breakdown
     units = {pid: [p.unit for p in by_part[pid]] for pid in by_part}
     tree = tree_prices(assemblies, units, sizes, rates)
@@ -377,7 +377,7 @@ def _render_breakdown(costs, names: dict[str, str], by_part: dict[str, list],
             "laskurien asetus ovat €/erä, ja ne jaetaan erän kappaleille."))
         rows = []
         for pc in costs:
-            pid = pc.product["id"]
+            pid = pc.product.id
             bp = by_part[pid][i]
             w = bp.work
             row = {"Osa": names[pid], "Kpl erässä": bp.qty, "Levyjä": bp.sheets,

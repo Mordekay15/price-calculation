@@ -1,6 +1,9 @@
 """The DXF tab's result cache: Sparrow settings are saved with a result, not
 part of its key, so changing one keeps every result for per-group re-nesting."""
 
+from dataclasses import replace
+
+from core.model import Product
 from view.common import SheetSettings
 from view.dxf_nesting import _nesting_diff, _run_label, _Settings, _sig
 
@@ -10,7 +13,7 @@ def settings(**kw) -> _Settings:
     return _Settings(**{**base, **kw})
 
 
-PRODS = [{"id": "a", "qty": 2, "angles": (0, 90)}]
+PRODS = [Product(id="a", qty=2, angles=(0, 90))]
 KEY = ("S235", "2", "a")
 
 
@@ -22,18 +25,18 @@ def test_sparrow_settings_do_not_change_the_cache_key():
 def test_a_single_part_keeps_its_result_when_the_nesting_mode_changes():
     combined, separate = ("S235", "2"), ("S235", "2", "a")
     assert _sig(combined, PRODS, settings()) == _sig(separate, PRODS, settings())
-    two = PRODS + [{"id": "b", "qty": 1, "angles": (0, 90)}]
+    two = PRODS + [Product(id="b", qty=1, angles=(0, 90))]
     assert _sig(combined, two, settings()) != _sig(separate, PRODS, settings())
 
 
 def test_a_quantity_changes_the_cache_key_the_margin_does_not():
     # The margin only prices a nesting: the result is kept and priced again.
     assert _sig(KEY, PRODS, settings()) == _sig(KEY, PRODS, settings(margin_pct=20.0))
-    assert _sig(KEY, PRODS, settings()) != _sig(KEY, [{**PRODS[0], "qty": 3}], settings())
+    assert _sig(KEY, PRODS, settings()) != _sig(KEY, [replace(PRODS[0], qty=3)], settings())
 
 
 def test_a_nesting_angle_change_re_nests_the_group():
-    fixed = [{**PRODS[0], "angles": (0,)}]
+    fixed = [replace(PRODS[0], angles=(0,))]
     assert _sig(KEY, PRODS, settings()) != _sig(KEY, fixed, settings())
 
 
@@ -295,6 +298,7 @@ def test_a_margin_change_reprices_without_running_sparrow_again():
         import streamlit as st
 
         import view.dxf_nesting as tab
+        from core.model import Product
         from core.readers import read_dxf_file
         from tests.conftest import dxf_bytes
         from tests.test_sparrow import fake_solver
@@ -310,7 +314,7 @@ def test_a_margin_change_reprices_without_running_sparrow_again():
         doc.header["$INSUNITS"] = 4
         doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 50), (0, 50)], close=True)
         shape = read_dxf_file(dxf_bytes(doc), "p", "p.dxf").shapes[0]
-        prods = [{"id": "p", "name": "p.dxf", "shape": shape, "qty": 30, "angles": (0, 90)}]
+        prods = [Product(id="p", name="p.dxf", shape=shape, qty=30, angles=(0, 90))]
         lookup = {("2", "S235 | 1000x2000"): 900.0}
         totals = st.session_state.setdefault("totals", [])
         real, tab.run_sparrow = tab.run_sparrow, counting
@@ -341,6 +345,7 @@ def test_price_only_changes_update_without_the_calculate_button():
         import streamlit as st
 
         import view.dxf_nesting as tab
+        from core.model import Product
         from core.readers import read_dxf_file
         from core.sheet_cost import group_products
         from tests.conftest import dxf_bytes
@@ -362,9 +367,9 @@ def test_price_only_changes_update_without_the_calculate_button():
         for t in ("2", "3"):
             lookup[(t, "S235 | 1000x2000")] = 900.0
             lookup[(t, "S235 | 1250x2500")] = step.get("price", 870.0)
-        prods = [{"id": "p", "name": "p.dxf", "material": "S235",
-                  "thickness": step.get("thickness", "2"), "width": 300, "height": 200,
-                  "qty": step.get("qty", 40), "angles": (0, 90), "shape": shape}]
+        prods = [Product(id="p", name="p.dxf", material="S235",
+                         thickness=step.get("thickness", "2"), width=300, height=200,
+                         qty=step.get("qty", 40), angles=(0, 90), shape=shape)]
         settings = tab._Settings("combined", SheetSettings(), 4, step.get("margin", 15.0), lookup)
         cache = st.session_state.setdefault(tab._CACHE, {})
         real, tab.run_sparrow = tab.run_sparrow, counting

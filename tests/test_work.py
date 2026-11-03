@@ -153,7 +153,7 @@ def test_manual_tab_prices_work_per_piece(tmp_path, monkeypatch):
     json.dump({"data": {"levyt": rows}, "source_file": "t.pdf", "updated_at": "x"},
               open(tmp_path / suppliers.SUPPLIERS[0].path, "w"))
     at = AppTest.from_file("../app.py", default_timeout=60).run()
-    pid = at.session_state["calc_products"][0]["id"]
+    pid = at.session_state["calc_products"][0].id
     at.selectbox(key=f"mat_{pid}").select("S235").run()
     at.selectbox(key=f"th_{pid}").select("2").run()
     for key, value in (("w", 300.0), ("h", 200.0), ("q", 10), ("work_bends", 2.0)):
@@ -209,7 +209,7 @@ def test_a_missing_pdf_package_hides_its_download_not_the_page(tmp_path, monkeyp
               open(tmp_path / suppliers.SUPPLIERS[0].path, "w"))
     monkeypatch.setattr(builtins, "__import__", no_reportlab)
     at = AppTest.from_file("../app.py", default_timeout=60).run()
-    pid = at.session_state["calc_products"][0]["id"]
+    pid = at.session_state["calc_products"][0].id
     at.selectbox(key=f"mat_{pid}").select("S235").run()
     at.selectbox(key=f"th_{pid}").select("2").run()
     for key, value in (("w", 300.0), ("h", 200.0), ("q", 10)):

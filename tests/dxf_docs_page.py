@@ -30,4 +30,4 @@ materials = ["S235", "S355MC"]
 lookup = {("2", "S235 | 1000x2000"): 900.0, ("3", "S355MC | 1000x2000"): 950.0}
 auto_fill_materials(materials, lookup)
 products = _render_part_cards(parts, materials, lookup, False)
-st.session_state["materials"] = [(p["material"], p["thickness"]) for p in products]
+st.session_state["materials"] = [(p.material, p.thickness) for p in products]

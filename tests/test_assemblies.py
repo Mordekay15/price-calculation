@@ -70,18 +70,17 @@ def test_the_quote_table_shows_an_assembly_line_with_its_parts():
     from streamlit.testing.v1 import AppTest
 
     def page():
-
-        from core.model import Assembly, BoughtPart
+        from core.model import Assembly, BoughtPart, Product
         from core.work import LaserSpeed, WorkInputs
         from view.quote import render_batch_prices
 
         work = WorkInputs(cut_length_m=1.0, laser=LaserSpeed(10, 0.05), setup_eur=0.0)
-        products = [{"id": i, "name": f"{i}.dxf", "material": "S235", "thickness": "2",
-                     "width": 100.0, "height": 50.0, "qty": q, "work": work}
+        products = [Product(id=i, name=f"{i}.dxf", material="S235", thickness="2", width=100.0,
+                            height=50.0, qty=q, work=work)
                     for i, q in (("a", 2), ("b", 4), ("c", 1))]
         group = ("S235", "2")
         render_batch_prices(
-            products, {p["id"]: 1000.0 for p in products}, {group: products},
+            products, {p.id: 1000.0 for p in products}, {group: products},
             {group: 1}, {group: 50.0}, lead="Osa", key="t",
             assemblies=[Assembly("x", "Runko", {"a": 1, "b": 2},
                                  [BoughtPart("Tappi", 6, 0.5)])])
@@ -110,16 +109,16 @@ def test_the_quote_table_shows_a_subassembly_inside_its_parent_only():
     from streamlit.testing.v1 import AppTest
 
     def page():
-        from core.model import Assembly, BoughtPart
+        from core.model import Assembly, BoughtPart, Product
         from core.work import LaserSpeed, WorkInputs
         from view.quote import render_batch_prices
 
         work = WorkInputs(cut_length_m=1.0, laser=LaserSpeed(10, 0.05), setup_eur=0.0)
-        products = [{"id": i, "name": f"{i}.dxf", "material": "S235", "thickness": "2",
-                     "width": 100.0, "height": 50.0, "qty": 1, "work": work} for i in "ab"]
+        products = [Product(id=i, name=f"{i}.dxf", material="S235", thickness="2", width=100.0,
+                            height=50.0, qty=1, work=work) for i in "ab"]
         group = ("S235", "2")
         render_batch_prices(
-            products, {p["id"]: 1000.0 for p in products}, {group: products},
+            products, {p.id: 1000.0 for p in products}, {group: products},
             {group: 1}, {group: 50.0}, lead="Osa", key="t",
             assemblies=[Assembly("s", "Kehys", {"a": 2}, [BoughtPart("Tappi", 1, 0.5)]),
                         Assembly("t", "Runko", {"b": 1}, children={"s": 3})])
