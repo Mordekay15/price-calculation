@@ -134,7 +134,7 @@ and in the whole model. Each body is checked for sheet metal:
   and cylindrical bends. One skin is laid flat face by face, with every bend
   at its neutral radius `inner radius + K × thickness` (the **K-kerroin**,
   default 0.44). The flat outline, holes and bend lines become a part card
-  straight from the unfolded body (a `FlatShape`, see `core.readers.dxf_file_of`):
+  straight from the unfolded body (`core.step.flat_file`):
   no DXF is written and read back, so nothing is guessed again from lines.
   Its quantity is the model's total, its bends (with angle, radius and
   direction) price the bending, and its thickness (`t = 2 mm`) is the
@@ -361,12 +361,12 @@ core/                   pure logic, no Streamlit
   work.py               work: laser table, cutting / bends / threads / welding / setup, sheet minimum
   batches.py            prices per batch size from one nesting
   quote.py              quote PDF, Excel export, clean DXFs and their ZIP
-  assemblies.py         assemblies: parts × kpl/kokoonpano + bought parts + assembly work
+  assemblies.py         assemblies: parts × kpl/kokoonpano, subassemblies, bought parts, work
   linking.py            part numbers from file names; files → parts by name or text
   archive.py            dropped ZIPs: files folder by folder, nested ZIPs, Finnish names
-  items.py              one card per part: grouping its files, choosing the shape
+  items.py              one card per part (Item, PartSource): grouping its files, choosing the shape
   materials.py          material/thickness hints, the Material field, proposals
-  step.py               STEP: BOM with quantities, sheet unfolding, flat DXF, 3D mesh
+  step.py               STEP: BOM with quantities, sheet unfolding, a flat's card file, 3D mesh
   programs.py           repeatable programs: the kit search both packers share
   cutting_stock.py      the fewest-sheets plan: candidate sheets + integer program
   rect_nesting.py       bounding-box packer (manual tab)
@@ -388,6 +388,7 @@ view/                   Streamlit UI
   common.py             inputs, the per-group loop, totals, pieces summary
   sheet_usage.py        the sheet-size table, metrics and price breakdown
   work.py               the work rates (sidebar), Työvaiheet on the cards, work per product
+  bought.py             Ostetut osat: the one bought-parts table of cards and assemblies
   quote.py              the Tarjous header, prices per batch size and the downloads
   attachments.py        PDF/STEP files on the DXF tab, links, previews
   material_agent.py     materials filled in from each card's files
@@ -522,36 +523,27 @@ has no limit.
 
 ## Data model
 
-`core/model.py` holds what is kept from every dropped file, and
-`core/readers.py` one reader per file type. Data flows one way:
+What is kept for a quote, one sitting, nothing saved. Every structure has
+one home and is built one way.
 
-1. **InputFile**: every dropped file and every file in a ZIP (name, folder,
-   kind, size, status, and a way to read its bytes; they are not copied).
-   Files of other kinds are left out unread.
-2. **Readers**, each returning a `ReadResult` of shapes and facts:
-   - DXF: the sheet is analysed and the part handed on as a FlatShape.
-   - DWG: only converted (`DwgConversion`: converter, full or minimal DXF,
-     problems); its DXF goes through the DXF reader.
-   - STEP: each sheet body is unfolded straight into a FlatShape, bends with
-     their angle, radius and direction; bodies that aren't sheet are
-     `bought_body` facts.
-   - PDF: facts only.
-3. **FlatShape** (geometry only: outline, holes, cuts, markings, bends,
-   threads; size, area and cut length worked out from them) and **Fact**
-   (`material`, `thickness`, `part_number`, `bom_qty`, `fastener`,
-   `called_out`, `bought_body`, each with its file, page and the line it was
-   read from).
-4. **Part** (one per part number; its files are `PartSource`s; each value a
-   `Value`: auto, where from, typed) and **Assembly** (one per part number, a
-   tree of `Child`ren). Ostetut osat are `BoughtPart`s, on a part (its
-   fasteners) or on an assembly.
-5. Nesting and price, computed.
-
-In the app so far: a card (`view.dxf_files.Item`) is its `PartSource`s, each
-with how it joined the card (`part_number`, `text` or `folder`), its
-FlatShape, score and note. A STEP body's card is built straight from its
-FlatShape. A part's fasteners are its own Ostetut osat, and assemblies are
-one per part number, with subassemblies.
+1. **Files.** A dropped file, or a file in a ZIP, is kept as a way to read it
+   (not its bytes). A DXF or DWG is read into a `core.dxf.DxfFile`; a DWG is
+   only converted first (`core.dwg`). A STEP model's sheet bodies are unfolded
+   (`core.step.FlatPart`) and each becomes a `DxfFile` straight from its flat
+   (`core.step.flat_file`), with no DXF written and read back. A PDF gives
+   text: material, part numbers, BOM lines and fastener callouts.
+2. **Cards** (`core.items.Item`): one per part number. Its files are
+   `PartSource`s: the file, how it came onto the card (its part number, the
+   part number in its text, or its folder) and how it scored as the shape to
+   price. The best one is priced.
+3. **Ostetut osat** (`core.work.BoughtPart`, edited in `view/bought.py`): on a
+   card, the part's own (its fasteners, per piece); on an assembly, its own
+   (per assembly). Fasteners never make an assembly.
+4. **Assemblies** (`core.assemblies.Assembly`): one per part number, from a
+   STEP model, an assembly drawing or both, or joined by hand. Its parts with
+   their kpl (STEP first, then the drawing's BOM lines, then 1), its
+   subassemblies, its bought parts and its work. A part sits in one place.
+5. **Nesting and price**, computed from the cards, assemblies and rates.
 
 ## How a DXF file is read
 

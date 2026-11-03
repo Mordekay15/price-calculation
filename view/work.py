@@ -20,7 +20,8 @@ from core.work import (
     laser_speed,
     work_cost,
 )
-from view.ui import is_headless, st
+from view import bought
+from view.ui import st
 
 WORK_LABEL = "Työvaiheet"
 
@@ -34,10 +35,8 @@ _SETUP_KEYS = ("work_setup_1", "work_setup_2", "work_setup_3")
 RATE_KEYS = (*_RATE_KEYS.values(), *_SETUP_KEYS)    # the sidebar's, kept by "Tyhjennä kaikki"
 
 # A card's Ostetut osat (its fasteners…): ``{card key: {"read": the lines they
-# were read from, "rows": as edited, "seed": what the editor starts from}}``.
+# were read from, "rows", "seed"}}`` (see ``view.bought``).
 PART_BOUGHT = "dxf_part_bought"
-BOUGHT_COLS = _NAME, _QTY, _EUR, _FIT, _FROM = (
-    "Nimike", "Kpl / osa", "€/kpl", "Asennus (€/kpl)", "Mistä")
 
 
 # ── Sidebar: the shop's rates ─────────────────────────────────────────────────
@@ -218,49 +217,24 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
     return inputs
 
 
-def _bought_rows(lines: list[tuple[str, int]], source: str,
-                 material: str | None) -> list[dict]:
-    return [{_NAME: name, _QTY: n, _EUR: fastener_price(material), _FIT: FASTENER_INSERT_EUR,
-             _FROM: source} for name, n in lines]
-
-
 def render_part_bought(key: str, lines: list[tuple[str, int]], source: str, *,
                        material: str | None) -> tuple[BoughtPart, ...]:
     """The part's Ostetut osat: the fasteners its drawing calls out (``lines``
     in ``source``), each with its price and putting in, editable; rows can be
     added by hand. Read again (and the edits dropped) only when the drawing's
     lines change."""
-    ss = st.session_state
-    store = ss.setdefault(PART_BOUGHT, {})
+    store = st.session_state.setdefault(PART_BOUGHT, {})
+    widget = f"work_bought_{key}"
     read = [list(x) for x in lines]
-    own = store.get(key)
-    if own is None or own["read"] != read:
-        rows = _bought_rows(lines, source, material)
-        own = store[key] = {"read": read, "rows": rows, "seed": rows}
-        ss.pop(f"work_bought_{key}", None)      # the editor's edits were to the old rows
+    own = store.setdefault(key, {})
+    if own.get("read") != read:
+        own["read"] = read
+        bought.reset(own, bought.fastener_rows(lines, material, source), widget)
     st.markdown(f"Ostetut osat ({len(own['rows'])})" if own["rows"] else "Ostetut osat",
-                help="Osaan kiinnitettävät valmiit osat (puristemutterit, ruuvit, niitit…), "
-                     "luettu piirustuksen teksteistä: (€/kpl + asennus) × kpl / osa. Ne "
-                     "pysyvät osan mukana myös kokoonpanossa. Lisää rivi tarvittaessa käsin.")
-    if is_headless():
-        # Not drawn: the editor forgets its edits, so it starts from them.
-        own["seed"] = own["rows"]
-    else:
-        edited = st.data_editor(
-            own["seed"], key=f"work_bought_{key}", num_rows="dynamic", hide_index=True,
-            width="stretch", column_order=BOUGHT_COLS,
-            column_config={
-                _NAME: st.column_config.TextColumn(_NAME),
-                _QTY: st.column_config.NumberColumn(_QTY, min_value=0, step=1),
-                _EUR: st.column_config.NumberColumn(_EUR, min_value=0.0, step=0.05,
-                                                    format="%.2f"),
-                _FIT: st.column_config.NumberColumn(_FIT, min_value=0.0, step=0.05,
-                                                    format="%.2f"),
-                _FROM: st.column_config.TextColumn(_FROM, disabled=True)})
-        own["rows"] = [dict(r) for r in edited]
-    return tuple(BoughtPart(str(r.get(_NAME) or ""), int(r.get(_QTY) or 0),
-                            float(r.get(_EUR) or 0.0), float(r.get(_FIT) or 0.0))
-                 for r in own["rows"] if r.get(_NAME) or r.get(_EUR) or r.get(_FIT))
+                help=bought.HELP + " Luetaan piirustuksen teksteistä, ja ne pysyvät osan "
+                     "mukana myös kokoonpanossa.")
+    bought.editor(own, widget, "Kpl / osa")
+    return bought.parts(own["rows"])
 
 
 def _speed_help(material: str | None) -> str:

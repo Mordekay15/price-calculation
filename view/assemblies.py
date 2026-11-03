@@ -27,36 +27,28 @@ sits in one place: a card in a subassembly is not also in its parent.
 
 Session keys: ``ASSEMBLIES`` holds ``{assembly id (part number, or "hand:…"):
 {"name", "members": {source id: kpl} (STEP or by hand), "drawn": {card id:
-kpl} (its drawing's), "kpl_from", "children": {assembly id: kpl}, "bought":
-[row], "auto": STEP file id, "drawing": card id, "fasteners_read": True once
+kpl} (its drawing's), "children": {assembly id: kpl}, "bought":
+{"rows", "seed"} (``view.bought``), "auto": STEP file id, "drawing": card id, "fasteners_read": True once
 its drawing's notes are in "bought", "hand": True, …}}``. A
 member is stored by a source id of its card (see ``core.items``), so it
 stays on the right card when the card's files are regrouped."""
 
 from __future__ import annotations
 
-import re
 import uuid
-from dataclasses import fields
 from collections.abc import Callable
+from dataclasses import fields
 
-from core.assemblies import Assembly, AssemblyWork, BoughtPart
+from core.assemblies import Assembly, AssemblyWork
 from core.items import NO_BLANK
-from core.linking import base_key, callouts
-from core.work import FASTENER_INSERT_EUR, fastener_price
-from view import bom
+from core.linking import base_key, bom_quantities, callouts
+from view import bom, bought
 from view.ui import is_headless, st
 from view.undo import undoable
 
 ASSEMBLIES = "dxf_assemblies"
 _SEEN = "dxf_assemblies_seen"      # STEP file ids already made into assemblies
 KEYS = (ASSEMBLIES, _SEEN)
-
-_NAME, _QTY, _EUR, _FIT = "Nimike", "Kpl / kokoonpano", "€/kpl", "Asennus (€/kpl)"
-# Bought parts pressed or fitted into a sheet part: their putting in is priced
-# at FASTENER_INSERT_EUR each by default.
-_FASTENER = re.compile(r"PEM|MUTTER|RUUV|PULT|NIIT|HOLK|TAPP|NUT|SCREW|STUD|BOLT|RIVET|PIN",
-                       re.IGNORECASE)
 
 
 def _store() -> dict[str, dict]:
@@ -85,8 +77,8 @@ def sync_from_models() -> None:
     for aid, a in list(store.items()):
         if a.get("auto") and a["auto"] not in models:
             names = set(a.get("step_names", ()))
-            a["bought"] = a["bought_seed"] = [r for r in a.get("bought", [])
-                                              if r.get(_NAME) not in names]
+            bought.reset(a["bought"], [r for r in a["bought"]["rows"]
+                                       if r.get(bought.NAME) not in names], _widget(aid))
             _drop_source(aid, ("auto", "members", "step_names"))
     seen &= set(models)
     for file_id, m in models.items():
@@ -95,19 +87,18 @@ def sync_from_models() -> None:
         seen.add(file_id)
         if not bom.is_assembly(file_id):
             continue
-        members, bought = {}, []
+        members, rows = {}, []
         for p in m["model"].parts:
             flat = m["flats"].get(p.key)
             if flat is not None and flat.is_sheet:
                 members[bom.card_id(file_id, p.key)] = p.qty
             else:
-                bought.append({_NAME: p.name, _QTY: p.qty, _EUR: 0.0,
-                               _FIT: FASTENER_INSERT_EUR if _FASTENER.search(p.name) else 0.0})
+                rows.append(bought.body_row(p.name, p.qty, m["name"]))
         name = m["name"].rsplit(".", 1)[0]
-        a = store.setdefault(part_number(name), {"name": name, "bought": [],
-                                                  "bought_seed": []})
-        a.update(members=members, auto=file_id, step_names=[r[_NAME] for r in bought])
-        a["bought"] = a["bought_seed"] = [*a.get("bought", []), *bought]
+        aid = part_number(name)
+        a = store.setdefault(aid, {"name": name, "bought": _table()})
+        a.update(members=members, auto=file_id, step_names=[r[bought.NAME] for r in rows])
+        _add_rows(aid, a, rows)
 
 
 def part_number(name: str) -> str:
@@ -132,40 +123,45 @@ def sync_from_drawings(items: dict, texts: Callable[[str], str]) -> None:
         text = texts(cid)
         expects = [k for k in callouts(text) if k not in keys[cid]]
         if expects:
-            drawings[cid] = (part_number(item.names[cid]), expects, _bom_kpl(text, keys[cid]))
+            drawings[cid] = (part_number(item.names[cid]), expects, _bom_kpl(text, expects))
     for aid, a in list(store.items()):
         if a.get("drawing") and a["drawing"] not in drawings:
-            _drop_source(aid, ("drawing", "drawn", "children", "kpl_from", "expects",
-                               "awaited", "fasteners_read"))
-    numbers = {pn for pn, _, _ in drawings.values()} | set(store)
+            _drop_source(aid, ("drawing", "drawn", "children", "awaited", "fasteners_read"))
+    # The part numbers that are assemblies (one joined by hand has none).
+    numbers = {pn for pn, _, _ in drawings.values()} | {
+        aid for aid, a in store.items() if not a.get("hand")}
     for cid, (pn, expects, kpl) in drawings.items():
-        a = store.setdefault(pn, {"name": pn.upper(), "bought": [], "bought_seed": []})
-        a.update(drawing=cid, expects=expects)
+        a = store.setdefault(pn, {"name": pn.upper(), "bought": _table()})
+        a["drawing"] = cid
         found = {k: other for k in expects for other, ks in keys.items()
                  if k in ks and k not in numbers}
         a["children"] = {k: kpl.get(k, 1) for k in expects if k in numbers and k != pn}
         a["drawn"] = {c: kpl.get(k, 1) for k, c in found.items()}
-        a["kpl_from"] = {c: "BOM" if k in kpl else "piirustus" for k, c in found.items()}
-        bought = {base_key(str(r.get(_NAME) or "")) for r in a.get("bought", [])}
+        named = {base_key(str(r.get(bought.NAME) or "")) for r in a["bought"]["rows"]}
         a["awaited"] = [k.upper() for k in expects
-                        if k not in found and k not in a["children"] and k not in bought]
+                        if k not in found and k not in a["children"] and k not in named]
 
 
-def _bom_kpl(text: str, own: set[str]) -> dict[str, int]:
-    """The kpl the drawing's BOM lines give each part number."""
-    from core.readers import _bom_facts
-
-    out: dict[str, int] = {}
-    for f in _bom_facts(text, "", 0, ""):
-        key = f.value["part_key"]
-        if key not in own:
-            out.setdefault(key, f.value["kpl"])
-    return out
+def _bom_kpl(text: str, keys: list[str]) -> dict[str, int]:
+    """The kpl the drawing's BOM lines give the part numbers it calls out
+    (read as any BOM is, ``core.linking.bom_quantities``)."""
+    return {k: n for k, (n, _) in bom_quantities({k: [k] for k in keys}, {"": text}).items()}
 
 
-def _fastener_rows(lines: list[tuple[str, int]], per: int, material: str | None) -> list[dict]:
-    return [{_NAME: name, _QTY: n * per, _EUR: fastener_price(material),
-             _FIT: FASTENER_INSERT_EUR} for name, n in lines]
+def _table() -> dict:
+    """An assembly's Ostetut osat: ``{"rows", "seed"}`` (see ``view.bought``)."""
+    return {"rows": [], "seed": []}
+
+
+def _widget(aid: str) -> str:
+    return f"asm_bought_{aid}"
+
+
+def _add_rows(aid: str, a: dict, rows: list[dict]) -> None:
+    """Rows read from a file, added to an assembly's Ostetut osat (the ones
+    typed in kept)."""
+    if rows:
+        bought.reset(a["bought"], [*a["bought"]["rows"], *rows], _widget(aid))
 
 
 def sync_drawing_fasteners(lines: dict[str, list[tuple[str, int]]],
@@ -173,12 +169,11 @@ def sync_drawing_fasteners(lines: dict[str, list[tuple[str, int]]],
     """An assembly drawing's fastener notes (``lines`` by drawing card) are
     its assembly's bought parts, added once. A part's own fasteners are not
     here: they stay on its card (``view.work``), wherever the part goes."""
-    for a in _store().values():
+    for aid, a in _store().items():
         cid = a.get("drawing")
         if cid and lines.get(cid) and not a.get("fasteners_read"):
             a["fasteners_read"] = True
-            rows = _fastener_rows(lines[cid], 1, material(cid))
-            a["bought"] = a["bought_seed"] = [*a.get("bought", []), *rows]
+            _add_rows(aid, a, bought.fastener_rows(lines[cid], material(cid), "piirustus"))
 
 
 def join(cids: list[str], name: str) -> None:
@@ -188,7 +183,7 @@ def join(cids: list[str], name: str) -> None:
         return
     _store()[f"hand:{uuid.uuid4().hex[:8]}"] = {
         "name": name.strip() or "Kokoonpano", "members": {cid: 1 for cid in cids},
-        "bought": [], "bought_seed": [], "hand": True}
+        "bought": _table(), "hand": True}
 
 
 def drawings() -> dict[str, str]:
@@ -233,13 +228,10 @@ def current(card_of: dict[str, str]) -> list[Assembly]:
     out = []
     cards = _tree_cards(card_of)
     for aid, a in _store().items():
-        bought = tuple(BoughtPart(str(r.get(_NAME) or ""), int(r.get(_QTY) or 0),
-                                  float(r.get(_EUR) or 0.0), float(r.get(_FIT) or 0.0))
-                       for r in a.get("bought", [])
-                       if r.get(_NAME) or r.get(_EUR) or r.get(_FIT))
         work = AssemblyWork(**{f: float(st.session_state.get(f"asm_{f}_{aid}", d))
                                for f, d in _WORK_DEFAULTS.items()})
-        out.append(Assembly(aid, a["name"], tuple(cards[aid].items()), bought, work,
+        out.append(Assembly(aid, a["name"], tuple(cards[aid].items()),
+                            bought.parts(a["bought"]["rows"]), work,
                             tuple((c, int(n)) for c, n in a.get("children", {}).items())))
     return out
 
@@ -357,24 +349,8 @@ def _remove(aid: str, card_of: dict[str, str], remove_card: Callable[[str], None
 
 def _render_work(aid: str, a: dict) -> None:
     """The bought parts and the assembly work."""
-    st.markdown("Ostetut osat", help="Valmiina ostettavat osat (ruuvit, tapit, "
-                "puristemutterit, koneistetut osat…): (€/kpl + asennus) × kpl / "
-                "kokoonpano. €/kpl on ostohinta, Asennus (€/kpl) yhden kappaleen "
-                "kiinnitys osaan, esim. puristemutterin puristus.")
-    if is_headless():
-        # Not drawn: the editor forgets its edits, so it starts from them.
-        a["bought_seed"] = a.get("bought", a.get("bought_seed", []))
-        return
-    bought = st.data_editor(
-        a.get("bought_seed", []), key=f"asm_bought_{aid}", num_rows="dynamic",
-        hide_index=True, width="stretch",
-        column_config={_NAME: st.column_config.TextColumn(_NAME),
-                       _QTY: st.column_config.NumberColumn(_QTY, min_value=0, step=1),
-                       _EUR: st.column_config.NumberColumn(_EUR, min_value=0.0,
-                                                           step=0.05, format="%.2f"),
-                       _FIT: st.column_config.NumberColumn(_FIT, min_value=0.0,
-                                                           step=0.05, format="%.2f")})
-    a["bought"] = [dict(r) for r in bought]
+    st.markdown("Ostetut osat", help=bought.HELP + " Kpl on kokoonpanoa kohden.")
+    bought.editor(a["bought"], _widget(aid), "Kpl / kokoonpano")
 
     cols = st.columns(len(_WORK_LABELS))
     for col, (f, (label, step, help_)) in zip(cols, _WORK_LABELS.items()):

@@ -7,7 +7,8 @@ import pytest
 pytest.importorskip("OCP")
 
 from core.dxf import read_dxf                         # noqa: E402
-from core.step import bends_on, flat_dxf, read_step, unfold  # noqa: E402
+from core.step import bends_on, read_step, unfold  # noqa: E402
+from tests.step_models import flat_dxf  # noqa: E402
 from tests.step_models import (                       # noqa: E402
     assembly_step, bent_part, creo_step, l_bracket, part_step, pin, plate)
 
@@ -114,6 +115,24 @@ def test_the_flat_dxf_reads_back_with_its_bends_and_thickness():
     assert any("t = 2 mm" in t for t in dxf.texts)
 
 
+def test_a_flat_becomes_a_card_without_a_dxf_round_trip(monkeypatch):
+    import core.dxf
+    from core.step import flat_file
+
+    flat = unfold(bent_part([(40, 90), (30, 90), (40, 0)]))
+    before = read_dxf(flat_dxf(flat, "U"), "U.step").part()
+    monkeypatch.setattr(core.dxf, "read_dxf", lambda *a, **k: pytest.fail("DXF read back"))
+    f = flat_file(flat, "U.step")
+    part = f.part()
+    assert part.outline.area_mm2 == pytest.approx(before.outline.area_mm2)
+    assert part.cut_length_mm == pytest.approx(before.cut_length_mm)
+    assert sorted(map(round, (part.outline.width_mm, part.outline.height_mm))) \
+        == sorted(map(round, (before.outline.width_mm, before.outline.height_mm)))
+    assert (part.bends, len(part.holes), part.problems) == (2, len(before.holes), [])
+    assert f.texts == ["U | t = 2 mm | 2 taivutusta (STEP)"] and f.unit_label == "mm"
+    assert f.suggested_layers() == ["CUT"]
+
+
 def test_an_assembly_becomes_cards_with_its_quantities():
     from streamlit.testing.v1 import AppTest
 
@@ -147,7 +166,8 @@ def test_a_parts_flat_drawing_model_and_pdf_make_one_card():
         import streamlit as st
         from reportlab.pdfgen import canvas
 
-        from core.step import flat_dxf, unfold
+        from core.step import unfold
+        from tests.step_models import flat_dxf
         from tests.conftest import dxf_bytes
         from tests.step_models import l_bracket, part_step
         from view.dxf_files import ingest, sync
@@ -181,8 +201,9 @@ def test_a_parts_flat_drawing_model_and_pdf_make_one_card():
     assert not at.exception
     assert at.session_state["cards"] == [("a", "ITM-072558_A.dxf")]
     files = " ".join(m.proto.help for m in at.markdown if m.value.startswith("**#1**"))
-    assert "✓ ITM-072558_A.dxf (vastaa STEP-mallin aihiota)" in files
+    assert "✓ ITM-072558_A.dxf (vastaa STEP-mallin aihiota; kortilla: osanumero)" in files
     assert "DRW-023179_A.dxf (piirustuksen kehys" in files
+    assert "kortilla: tekstin osanumero)" in files          # its title block named the part
     assert any("DRW-023179_A.pdf" in e.label for e in at.expander)
     at.selectbox(key="dxf_src_a").set_value("d|0:1:1:1/0").run()
     assert at.session_state["cards"] == [("a", "ITM-072558_A.stp")]
@@ -201,7 +222,8 @@ def test_a_card_takes_its_bends_from_the_model_and_its_material_from_the_pdf():
         import streamlit as st
         from reportlab.pdfgen import canvas
 
-        from core.step import flat_dxf, unfold
+        from core.step import unfold
+        from tests.step_models import flat_dxf
         from tests.conftest import dxf_bytes
         from tests.step_models import l_bracket, part_step
         from view.dxf_files import auto_fill_materials, ingest, sync

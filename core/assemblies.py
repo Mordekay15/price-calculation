@@ -22,7 +22,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.work import BoughtPart, WorkRates  # noqa: F401  (BoughtPart: re-exported)
+from core.work import BoughtPart, WorkRates
+
+__all__ = ["Assembly", "AssemblyPrice", "AssemblyWork", "BoughtPart", "assembly_prices",
+           "counts", "fit_eur", "per_unit", "tops", "tree_prices", "work_eur"]
 
 
 @dataclass(frozen=True)
@@ -93,13 +96,9 @@ def _children(assemblies: list[Assembly]) -> dict[str, list[tuple[str, int]]]:
     out: dict[str, list[tuple[str, int]]] = {aid: [] for aid in kids}
     for a in assemblies:
         for c, n in kids[a.id]:
-            if not reaches(c, a.id, set()) and not _below(out, c, a.id):
+            if not reaches(c, a.id, set()):
                 out[a.id].append((c, n))
     return out
-
-
-def _below(kids: dict[str, list[tuple[str, int]]], top: str, aid: str) -> bool:
-    return any(c == aid or _below(kids, c, aid) for c, _ in kids.get(top, []))
 
 
 def tops(assemblies: list[Assembly]) -> list[Assembly]:

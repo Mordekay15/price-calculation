@@ -58,7 +58,7 @@ def group_sources(sources: list[Source], is_drawing=lambda source_id: True,
     its own that merely mentions another part number). ``pdf_text(key)`` is
     the text of the PDFs of a part number (``base_key``), "" when none.
     ``linked``, when given, gets how each source joined its item
-    (``part_number``, ``text`` or ``folder``, see ``core.model.PartSource``)."""
+    (``part_number``, ``text`` or ``folder``, see ``PartSource``)."""
     linked = {} if linked is None else linked
     groups: dict[str, list[Source]] = {}
     for s in sources:
@@ -109,6 +109,42 @@ class Choice:
     score: float
     note: str                          # why, in Finnish, for the card
     valid: bool = True
+
+
+@dataclass
+class PartSource:
+    """One file on a card: a DXF/DWG, or a body of a STEP model, how it came
+    onto the card, and how it scored as the shape to price."""
+
+    source_id: str                     # file id, or STEP file id|body key
+    name: str                          # as on the card
+    linked_by: str                     # part_number | text | folder
+    choice: Choice
+
+
+LINKED_BY = {"part_number": "osanumero", "text": "tekstin osanumero", "folder": "kansio"}
+
+
+@dataclass
+class Item:
+    """One card (one part number): its files in drop order, the one priced,
+    and the STEP blank's size."""
+
+    sources: list[PartSource]
+    chosen: str
+    blank: tuple[float, float] | None = None   # mm
+
+    @property
+    def members(self) -> list[str]:
+        return [s.source_id for s in self.sources]
+
+    @property
+    def scores(self) -> dict[str, Choice]:
+        return {s.source_id: s.choice for s in self.sources}
+
+    @property
+    def names(self) -> dict[str, str]:
+        return {s.source_id: s.name for s in self.sources}
 
 
 def score_dxf(report, unit_guessed: bool, texts: list[str],

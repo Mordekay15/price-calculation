@@ -191,23 +191,21 @@ def test_one_assembly_per_part_number_with_its_subassemblies():
         # The STEP model of the sub has the same part number: one assembly.
         store = st.session_state.setdefault(assemblies.ASSEMBLIES, {})
         store["asm-070100"] = {"name": "ASM-070100", "members": {"b": 4}, "auto": "s1",
-                               "bought": [], "bought_seed": []}
+                               "bought": {"rows": [], "seed": []}}
         for _ in range(2):
             assemblies.sync_from_drawings(items, texts.get)
         cards = {c: c for c in items}
         got = {a.id: (a.members, a.children) for a in assemblies.current(cards)}
-        st.session_state["got"] = (sorted(store), got,
-                                   store["asm-070000"]["kpl_from"])
+        st.session_state["got"] = (sorted(store), got)
 
     at = AppTest.from_function(page).run()
     assert not at.exception
-    ids, got, kpl_from = at.session_state["got"]
+    ids, got = at.session_state["got"]
     assert ids == ["asm-070000", "asm-070100"]
     # The STEP's kpl (4) beats the drawing's callout (1); the top's plate
     # 064555 is also called out on the sub's drawing, but sits in the sub only.
     assert got["asm-070100"] == ((("b", 4), ("c", 1), ("a", 1)), ())
     assert got["asm-070000"] == ((), (("asm-070100", 2),))
-    assert kpl_from == {"a": "BOM"}
 
 
 def test_a_subassembly_is_priced_inside_its_parent():
@@ -252,17 +250,17 @@ def test_only_an_assembly_drawings_own_notes_are_its_bought_parts():
         from view import assemblies
 
         store = st.session_state.setdefault(assemblies.ASSEMBLIES, {})
-        store["drawing:d"] = {"name": "Runko", "members": {"p": 1}, "bought": [],
-                              "bought_seed": [], "drawing": "d"}
+        store["drawing:d"] = {"name": "Runko", "members": {"p": 1},
+                              "bought": {"rows": [], "seed": []}, "drawing": "d"}
         lines = {"d": [("M6-RUUVIT", 4)], "p": [("M5-PURISTEMUTTERIT", 4)]}
         assemblies.sync_drawing_fasteners(lines, lambda cid: "RST 1.4301")
         assemblies.sync_drawing_fasteners(lines)                    # only once
-        st.session_state["drawn"] = [(r["Nimike"], r["Kpl / kokoonpano"], r["€/kpl"])
-                                     for r in store["drawing:d"]["bought"]]
+        st.session_state["drawn"] = [(r["name"], r["kpl"], r["eur"])
+                                     for r in store["drawing:d"]["bought"]["rows"]]
         # Joined by hand: the parts' fasteners stay on their cards.
         assemblies.join(["p", "q"], "Kehys")
         hand = next(a for a in store.values() if a.get("hand"))
-        st.session_state["hand"] = (sorted(store), hand["members"], hand["bought"])
+        st.session_state["hand"] = (sorted(store), hand["members"], hand["bought"]["rows"])
 
     at = AppTest.from_function(page).run()
     assert not at.exception
@@ -282,12 +280,12 @@ def test_on_the_page_a_parts_fasteners_are_its_own_bought_parts_wherever_it_goes
     assert not at.exception
     assert at.session_state[ASSEMBLIES] == {}          # fasteners make no assembly
     own = at.session_state[PART_BOUGHT]
-    assert [(r["Nimike"], r["Kpl / osa"], r["Mistä"]) for r in own["f0"]["rows"]] \
+    assert [(r["name"], r["kpl"], r["from"]) for r in own["f0"]["rows"]] \
         == [("M5-PURISTEMUTTERIT", 4, "levy.dxf")]
-    assert sorted((r["Nimike"], r["Kpl / osa"]) for r in own["f3"]["rows"]) == [
+    assert sorted((r["name"], r["kpl"]) for r in own["f3"]["rows"]) == [
         ("M5 KALEI NUT", 4), ("M6 KALEI NUT", 6), ("PEM-FH-M4-12", 25),
         ("PEM-FH-M4-8", 2), ("PEM-FH-M6-12", 2)]
-    assert {r["Mistä"] for r in own["f3"]["rows"]} == {"kotelo.pdf"}
+    assert {r["from"] for r in own["f3"]["rows"]} == {"kotelo.pdf"}
     assert own["f1"]["rows"] == []
     # Priced on the card: 4 × (0.05 + 0.20) per piece, the count gone.
     work = at.session_state["work"]
@@ -304,7 +302,7 @@ def test_on_the_page_a_parts_fasteners_are_its_own_bought_parts_wherever_it_goes
     store = at.session_state[ASSEMBLIES]
     (aid, a), = store.items()
     assert aid.startswith("hand:") and a["name"] == "Runko"
-    assert a["members"] == {"f0": 1, "f1": 1} and a["bought"] == []
+    assert a["members"] == {"f0": 1, "f1": 1} and a["bought"]["rows"] == []
     # The plate keeps its nuts in the assembly; the assembly welds.
     assert at.session_state["work"]["f0"].fasteners == 4
     assert "work_weld_f0" not in {n.key for n in at.number_input}
@@ -313,6 +311,10 @@ def test_on_the_page_a_parts_fasteners_are_its_own_bought_parts_wherever_it_goes
     assert not at.exception
     assert at.session_state[ASSEMBLIES] == {}
     assert sorted(at.session_state["ids"]) == ["f0", "f1", "f2", "f3"]
+    # A removed card leaves no Ostetut osat behind.
+    at.button(key="dxf_del_f0").click().run()
+    assert not at.exception
+    assert "f0" not in at.session_state[PART_BOUGHT] and "f3" in at.session_state[PART_BOUGHT]
 
 
 def test_a_parts_own_bought_parts_are_rows_under_it_in_the_price_table():

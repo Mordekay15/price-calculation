@@ -13,16 +13,14 @@ Only the open screen is drawn, but every screen runs the cards, the
 nesting and the prices (headless where not drawn, see ``view.ui``), so the
 quote bar above the tabs shows the live total on each."""
 
-import re
 from dataclasses import dataclass
 
 from core.assemblies import per_unit
 from core.dxf import DxfFile, DxfReport, is_slit
-from core.items import NO_BLANK, confirm_unit
+from core.items import LINKED_BY, NO_BLANK, Item, confirm_unit
 from core.pricing import build_lookup
 from core.sheet_cost import is_ready
 from view import assemblies, attachments, bom, material_agent
-from view.undo import render_undo, undoable
 from view.common import (
     materials_with_copper,
     render_material_thickness,
@@ -35,7 +33,6 @@ from view.dxf_files import (
     FILL_ASKED,
     ITEMS,
     REPORTS,
-    Item,
     apply_material,
     auto_fill_materials,
     bom_quantities,
@@ -64,7 +61,8 @@ from view.dxf_nesting import (
     render_nesting_angles,
 )
 from view.quote import current_sizes
-from view.ui import headless, ids_in, is_headless, keep, st
+from view.ui import headless, is_headless, keep, st
+from view.undo import render_undo, undoable
 from view.work import RATE_KEYS, auto_input, render_work_inputs
 
 BOM, NESTING, PRICING = "1 · Osat ja tiedostot", "2 · Nestaus", "3 · Hinnoittelu"
@@ -369,9 +367,10 @@ def _render_page_picker(n: int, key: str = _PAGE) -> range:
 
 
 def _file_lines(item: Item) -> list[str]:
-    """The card's files: which one is priced (✓) and why."""
-    return [f"{'✓ ' if sid == item.chosen else ''}{item.names[sid]} ({item.scores[sid].note})"
-            for sid in item.members]
+    """The card's files: which one is priced (✓) and why, and what put each
+    on the card (its part number, the part number in its text, its folder)."""
+    return [f"{'✓ ' if s.source_id == item.chosen else ''}{s.name} ({s.choice.note}; "
+            f"kortilla: {LINKED_BY[s.linked_by]})" for s in item.sources]
 
 
 def _render_item_files(fid: str, item: Item) -> None:

@@ -105,15 +105,11 @@ def sources(hidden: set[str], folder_of=lambda sid: "") -> list[Source]:
 
 def flat_file(source_id: str):
     """A model part's flat pattern as a ``DxfFile`` (made once per K factor),
-    straight from its FlatShape: no DXF round trip (see
-    ``core.readers.dxf_file_of``)."""
-    from core.readers import dxf_file_of, shape_from_flat
-
+    straight from the unfolded body (``core.step.flat_file``)."""
     m, part, flat = source(source_id)
     cache = m.setdefault("cards", {})
     if part.key not in cache:
-        cache[part.key] = dxf_file_of(shape_from_flat(flat, source_id),
-                                      _file_name(m, part), flat.thickness_mm)
+        cache[part.key] = step.flat_file(flat, _file_name(m, part))
     return cache[part.key]
 
 

@@ -10,17 +10,22 @@ The card itself is drawn by ``view.dxf_tab``."""
 
 import re
 import time
-from dataclasses import dataclass
 from types import SimpleNamespace
 
 from core.archive import ArchiveError, is_zip, unpack
 from core.dwg import read_drawing
 from core.dxf import DxfFile, DxfReport, fastener_lines
-from core.items import (Choice, Source, choose, group_sources, looks_like_drawing,
-                        score_dxf, STEP_CHOICE)
+from core.items import (
+    STEP_CHOICE,
+    Item,
+    PartSource,
+    Source,
+    choose,
+    group_sources,
+    looks_like_drawing,
+    score_dxf,
+)
 from core.linking import base_key
-from core.model import FlatShape, PartSource
-from core.readers import shape_from_flat, shape_from_report
 from core.linking import bom_quantities as _bom_quantities
 from core.step import available as step_available
 from core.step import bends_on
@@ -28,6 +33,7 @@ from view import assemblies, attachments, bom, material_agent
 from view.common import thicknesses_for
 from view.ui import ids_in, st
 from view.work import AUTO_SHOWN, PART_BOUGHT
+
 STORE   = "dxf_store"         # {card id: DxfFile}: each card's chosen shape
 REPORTS = "dxf_part_reports"  # {card id: DxfReport}
 CONFIG  = "dxf_part_config"   # {card id: {"material", "thickness", "source"}}
@@ -295,29 +301,6 @@ def _unzipped(dropped, skipped: list[str]) -> list:
 
 # ── Items: one card per part ──────────────────────────────────────────────────
 
-@dataclass
-class Item:
-    """One card: its files as ``PartSource``s (drop order), the one priced,
-    and the STEP blank's size. ``members``, ``scores`` and ``names`` are
-    views of the sources, for the code that reads them that way."""
-
-    sources: list[PartSource]
-    chosen: str
-    blank: tuple[float, float] | None = None   # the STEP blank's size, mm
-
-    @property
-    def members(self) -> list[str]:
-        return [s.source_id for s in self.sources]
-
-    @property
-    def scores(self) -> dict[str, Choice]:
-        return {s.source_id: Choice(s.score, s.note, s.valid) for s in self.sources}
-
-    @property
-    def names(self) -> dict[str, str]:
-        return {s.source_id: s.name for s in self.sources}
-
-
 def sync() -> list[tuple[str, DxfFile]]:
     """Group the dropped files into cards and choose each card's shape.
     A card's id is its first file's id, so it keeps its settings while files
@@ -357,23 +340,16 @@ def sync() -> list[tuple[str, DxfFile]]:
         if cid in old and old[cid].chosen != chosen:
             ss.get(REPORTS, {}).pop(cid, None)
         store[cid] = shape(chosen)
-        items[cid] = Item([PartSource(m, m.split("|", 1)[0], linked.get(m, "part_number"),
-                                      _flat_shape(m, report(m)), scores[m].score,
-                                      scores[m].note, name=shape(m).name,
-                                      valid=scores[m].valid) for m in members],
-                          chosen, blank)
+        items[cid] = Item([PartSource(m, shape(m).name, linked.get(m, "part_number"), scores[m])
+                           for m in members], chosen, blank)
     ss[STORE], ss[ITEMS] = store, items
+    # A card gone (removed, or joined to another when a drawing came) leaves
+    # no Ostetut osat behind.
+    bought = ss.get(PART_BOUGHT, {})
+    for cid in [c for c in bought if c not in store]:
+        del bought[cid]
+        ss.pop(f"work_bought_{cid}", None)
     return list(store.items())
-
-
-def _flat_shape(sid: str, report: DxfReport) -> FlatShape:
-    """A source's part as the model's FlatShape: a STEP body's straight from
-    its unfolding, a DXF's from the part the DXF reader built."""
-    if bom.is_source(sid):
-        src = bom.source(sid)
-        if src is not None and src[2] is not None and src[2].is_sheet:
-            return shape_from_flat(src[2], sid)
-    return shape_from_report(report, sid)
 
 
 def _pdf_texts():
@@ -546,8 +522,7 @@ def evict(fid: str) -> None:
     ss.get(STORE, {}).pop(fid, None)
     cfg = ss.get(CONFIG, {}).pop(fid, {})
     ss.get(REPORTS, {}).pop(fid, None)
-    ss.get(PART_BOUGHT, {}).pop(fid, None)
-    for key in (*material_keys(fid, cfg), f"dxf_unit_ok_{fid}", f"work_bought_{fid}",
+    for key in (*material_keys(fid, cfg), f"dxf_unit_ok_{fid}",
                 f"dxf_src_{fid}",
                 f"dxf_turn_{fid}"):
         ss.pop(key, None)
