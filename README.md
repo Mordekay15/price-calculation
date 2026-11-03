@@ -209,6 +209,15 @@ parts, work and contents.
   becomes an assembly of the cards with those numbers, 1 kpl each, with the
   drawing shown in it instead of as a card in Osat. The ones neither dropped
   yet nor added as bought parts are listed as awaited.
+- **One per part number.** A STEP model and an assembly drawing with the
+  same part number are one assembly. A part's kpl / kokoonpano comes from the
+  STEP model first, then the drawing's BOM lines (`2 ITM-064555 Levy 3 pcs`),
+  then 1 for a part only called out.
+- **Subassemblies.** A part number an assembly drawing calls out that is
+  another assembly's makes that one its subassembly, × its BOM kpl. It is
+  priced inside its parent (at `q × how many go into one`), shows as a
+  `└ 🧩` row with its own rows under it, and is not a quote line itself. A
+  part sits in one place: a card in a subassembly is not also in its parent.
 - **Removing.** An assembly's **Poista** removes it with its parts' cards
   (one also in another assembly stays), its drawing and its STEP file.
 - **Apart from the loose parts.** **Osat** lists only the parts in no

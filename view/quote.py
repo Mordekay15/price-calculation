@@ -10,7 +10,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import date
 
-from core.assemblies import Assembly, assembly_prices, fit_eur, per_unit
+from core.assemblies import Assembly, fit_eur, per_unit, tops, tree_prices
 from core.batches import (
     DEFAULT_BATCH_SIZES,
     BatchPart,
@@ -167,7 +167,7 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
             kg = sum(pc.kg * pc.product["qty"] for pc in costs
                      if group_of[pc.product["id"]] == k)
             group_sheets[k] = GroupSheets(totals[k], sheets[k], kg)
-    assemblies = [a for a in assemblies or [] if a.members or a.bought]
+    assemblies = [a for a in assemblies or [] if a.members or a.bought or a.children]
     in_assembly = per_unit(assemblies)
     parts = [BatchPart(pc.product["id"], group_of[pc.product["id"]], pc.kg,
                        pc.product.get("work"), in_assembly.get(pc.product["id"], 1))
@@ -188,26 +188,21 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
     subs: list[list[dict]] = [_bought_rows(works[pc.product["id"]], 1, 1, len(sizes))
                               for pc in costs if pc.product["id"] not in in_assembly]
     priced: list[tuple[Assembly, dict, tuple]] = []     # for the breakdown
+    units = {pid: [p.unit for p in by_part[pid]] for pid in by_part}
+    tree = tree_prices(assemblies, units, sizes, rates)
+    asm_names = {a.id: a.name for a in assemblies}
     for a in assemblies:
-        units = {pid: [p.unit for p in by_part[pid]] for pid, _ in a.members if pid in by_part}
+        priced.append((a, units, tree[a.id]))
+    for a in tops(assemblies):
         contents = tuple([f"{names.get(pid, '?')} × {n}" for pid, n in a.members]
+                         + [f"{asm_names[c]} × {n}" for c, n in a.children if c in tree]
                          + [f"{b.name} × {b.qty}" for b in a.bought])
-        lines.append(QuoteLine(a.name, prices=tuple(assembly_prices(a, units, sizes, rates)),
-                               parts=contents or ("—",)))
-        prices = lines[-1].prices
-        priced.append((a, units, prices))
+        prices = tuple(tree[a.id])
+        lines.append(QuoteLine(a.name, prices=prices, parts=contents or ("—",)))
         # Each row is what it adds to one assembly (kpl/kok. × €/kpl), so the
         # rows add up to the assembly's €/kpl; its quantity is per batch.
-        subs.append(
-            [row for pid, n in a.members for row in (
-                {"name": f"\u2003└ {names.get(pid, '?')} × {n}", "per": n,
-                 "units": [None if u is None else u * n
-                           for u in units.get(pid, [None] * len(sizes))]},
-                *_bought_rows(works.get(pid), n, 2, len(sizes)))]
-            + [{"name": f"\u2003└ {b.name} × {b.qty} (ostettu)", "per": b.qty,
-                "units": [b.unit * b.qty] * len(sizes)} for b in a.bought]
-            + ([{"name": "\u2003└ Kokoonpanotyö", "per": None,
-                 "units": [p.work for p in prices]}] if any(p.work for p in prices) else []))
+        subs.append(_assembly_rows(a, 1, {x.id: x for x in assemblies}, tree, units, names,
+                                   works, len(sizes)))
     line_totals = quote_totals(lines, len(sizes))
     result = Totals(sizes, line_totals, missing, margin_pct)
     if is_headless():
@@ -308,6 +303,33 @@ def _eur(v: float | None) -> str:
     return "–" if v is None else f"{v:,.2f}"
 
 
+def _assembly_rows(a: Assembly, depth: int, by_id: dict[str, Assembly], tree: dict,
+                   units: dict, names: dict, works: dict, n: int) -> list[dict]:
+    """An assembly's └ rows: its parts (each with its own bought parts), its
+    subassemblies (each with its rows, one step in), bought parts and work."""
+    pad = "\u2003" * depth
+    rows = []
+    for pid, k in a.members:
+        rows.append({"name": f"{pad}└ {names.get(pid, '?')} × {k}", "per": k,
+                     "units": [None if u is None else u * k for u in units.get(pid, [None] * n)]})
+        rows += _bought_rows(works.get(pid), k, depth + 1, n)
+    for c, k in a.children:
+        if c in tree:
+            rows.append({"name": f"{pad}└ 🧩 {by_id[c].name} × {k}", "per": k,
+                         "units": [None if p.unit is None else p.unit * k for p in tree[c]]})
+            rows += [{**r, "per": None if r["per"] is None else r["per"] * k,
+                      "units": [None if u is None else u * k for u in r["units"]]}
+                     for r in _assembly_rows(by_id[c], depth + 1, by_id, tree, units, names,
+                                             works, n)]
+    rows += [{"name": f"{pad}└ {b.name} × {b.qty} (ostettu)", "per": b.qty,
+              "units": [b.unit * b.qty] * n} for b in a.bought]
+    prices = tree[a.id]
+    if any(p.work for p in prices):
+        rows.append({"name": f"{pad}└ Kokoonpanotyö", "per": None,
+                     "units": [p.work for p in prices]})
+    return rows
+
+
 def _bought_rows(work, per: int, depth: int, n_sizes: int) -> list[dict]:
     """A part's own bought parts (``WorkInputs.bought``) as └ rows: what each
     adds to one quote line, ``per`` pieces of the part in it."""
@@ -368,27 +390,33 @@ def _render_breakdown(costs, names: dict[str, str], by_part: dict[str, list],
             rows.append(row)
         st.dataframe(rows, width="stretch", hide_index=True)
 
+        tree = {a.id: prices for a, _, prices in priced}
+        asm_names = {a.id: a.name for a, _, _ in priced}
         for a, units, prices in priced:
             p = prices[i]
             w = a.work
             parts = " + ".join(
                 f"{names.get(pid, '?')} {n} × {_eur(units[pid][i] if pid in units else None)}"
-                for pid, n in a.members) or "—"
+                for pid, n in a.members)
+            kids = " + ".join(f"🧩 {asm_names.get(c, '?')} {n} × {_eur(tree[c][i].unit)}"
+                              for c, n in a.children if c in tree)
+            parts = " + ".join(filter(None, [parts, kids])) or "—"
             bought = " + ".join(f"{b.name} {b.qty} × ({b.eur:,.2f} + {b.fit_eur:,.2f})"
                                 for b in a.bought) or "—"
             steps = [
                 ("1. Osat (kpl / kok. × €/kpl)", parts, _eur(p.parts)),
                 ("2. Ostetut osat (kpl × (€/kpl + asennus))", bought, _eur(p.bought)),
                 ("3. Kokoonpanotyö",
-                 f"({w.setup_min:g} min / {q} + {w.fit_min:g} min) / 60 × {w.eur_per_h:g} €/h",
-                 _eur(fit_eur(w, q))),
+                 f"({w.setup_min:g} min / {p.qty} + {w.fit_min:g} min) / 60 × {w.eur_per_h:g} €/h",
+                 _eur(fit_eur(w, p.qty))),
                 ("4. Hitsaus",
                  f"{w.weld_m:g} m / {rates.weld_m_per_h:g} m/h × {rates.weld_eur_per_h:g} €/h",
                  _eur(rates.weld_eur(w.weld_m))),
                 ("5. Muut", "per kokoonpano", _eur(w.other_eur)),
                 ("6. Kokoonpanon kpl-hinta", "1 + 2 + 3 + 4 + 5", _eur(p.unit)),
-                ("7. Yhteensä", f"{_eur(p.unit)} × {q} kok.", _eur(p.total)),
+                ("7. Yhteensä", f"{_eur(p.unit)} × {p.qty} kok.", _eur(p.total)),
             ]
-            st.markdown(f"**🧩 {a.name}, eräkoko {q}**")
+            st.markdown(f"**🧩 {a.name}, eräkoko {q}**" if p.qty == q else
+                        f"**🧩 {a.name} (alikokoonpano, {p.qty} kpl eräkoolla {q})**")
             st.dataframe([{"Vaihe": v, "Laskenta": c, "Arvo €": val} for v, c, val in steps],
                          width="stretch", hide_index=True)

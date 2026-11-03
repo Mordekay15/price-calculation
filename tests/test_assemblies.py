@@ -105,6 +105,36 @@ def test_the_quote_table_shows_an_assembly_line_with_its_parts():
     assert float(steps["Arvo €"].iloc[-2]) == pytest.approx(rows["1 kpl, €/kpl"][1], abs=0.01)
 
 
+def test_the_quote_table_shows_a_subassembly_inside_its_parent_only():
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        from core.assemblies import Assembly, BoughtPart
+        from core.work import LaserSpeed, WorkInputs
+        from view.quote import render_batch_prices
+
+        work = WorkInputs(cut_length_m=1.0, laser=LaserSpeed(10, 0.05), setup_eur=0.0)
+        products = [{"id": i, "name": f"{i}.dxf", "material": "S235", "thickness": "2",
+                     "width": 100.0, "height": 50.0, "qty": 1, "work": work} for i in "ab"]
+        group = ("S235", "2")
+        render_batch_prices(
+            products, {p["id"]: 1000.0 for p in products}, {group: products},
+            {group: 1}, {group: 50.0}, lead="Osa", key="t",
+            assemblies=[Assembly("s", "Kehys", (("a", 2),), (BoughtPart("Tappi", 1, 0.5),)),
+                        Assembly("t", "Runko", (("b", 1),), children=(("s", 3),))])
+
+    at = AppTest.from_function(page, default_timeout=30).run()
+    assert not at.exception
+    rows = at.dataframe[0].value
+    assert list(rows["Osa"]) == ["🧩 Runko", "\u2003└ b.dxf × 1", "\u2003└ 🧩 Kehys × 3",
+                                 "\u2003\u2003└ a.dxf × 2", "\u2003\u2003└ Tappi × 1 (ostettu)"]
+    # Per batch: 3 Kehys and 6 a.dxf in each Runko.
+    assert list(rows["Määrä"])[2:4] == ["3 · 15 · 30", "6 · 30 · 60"]
+    col = rows.columns[-1]
+    assert rows[col][0] == pytest.approx(rows[col][1] + rows[col][2], abs=0.02)
+    assert rows[col][2] == pytest.approx(rows[col][3] + rows[col][4], abs=0.02)
+
+
 def test_an_assembly_drawing_becomes_an_assembly_awaiting_its_missing_items():
     from streamlit.testing.v1 import AppTest
 
@@ -122,8 +152,8 @@ def test_an_assembly_drawing_becomes_an_assembly_awaiting_its_missing_items():
                                 scores={"p": Choice(100, "puhdas aihio")})
         text = "3AXD50001016005\n3AXD50000026889\nTitle 3AXD50001139896"
         assemblies.sync_from_drawings({"d": drawing, "p": plate}, lambda cid: text)
-        a = st.session_state[assemblies.ASSEMBLIES]["drawing:d"]
-        st.session_state["got"] = (a["name"], a["members"], a["awaited"])
+        a = st.session_state[assemblies.ASSEMBLIES]["3axd50001139896"]
+        st.session_state["got"] = (a["name"], a["drawn"], a["awaited"])
         # A loose plate's own drawing is no assembly.
         assemblies.sync_from_drawings({"p": plate}, lambda cid: text)
         st.session_state["left"] = list(st.session_state[assemblies.ASSEMBLIES])
@@ -132,6 +162,68 @@ def test_an_assembly_drawing_becomes_an_assembly_awaiting_its_missing_items():
     assert not at.exception
     assert at.session_state["got"] == ("3AXD50001139896", {"p": 1}, ["3AXD50000026889"])
     assert at.session_state["left"] == []
+
+
+def test_one_assembly_per_part_number_with_its_subassemblies():
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        from types import SimpleNamespace
+
+        import streamlit as st
+
+        from core.items import NO_BLANK, Choice
+        from view import assemblies
+
+        def drawing(cid, name):
+            return SimpleNamespace(names={cid: name},
+                                   scores={cid: Choice(-1e9, NO_BLANK, valid=False)})
+
+        def plate(cid, name):
+            return SimpleNamespace(names={cid: name}, scores={cid: Choice(100, "puhdas aihio")})
+
+        items = {"top": drawing("top", "ASM-070000.pdf"), "sub": drawing("sub", "ASM-070100.dxf"),
+                 "a": plate("a", "ITM-064555.dxf"), "b": plate("b", "ITM-064556.dxf"),
+                 "c": plate("c", "ITM-064557.dxf")}
+        texts = {  # the top: the subassembly × 2 (BOM) and a plate; the sub: two plates
+            "top": "1 ASM-070100 Kehys 2 pcs\nASM-070100\nITM-064555\n2 ITM-064555 Levy 3 pcs",
+            "sub": "ITM-064556\nITM-064557\nITM-064555"}
+        # The STEP model of the sub has the same part number: one assembly.
+        store = st.session_state.setdefault(assemblies.ASSEMBLIES, {})
+        store["asm-070100"] = {"name": "ASM-070100", "members": {"b": 4}, "auto": "s1",
+                               "bought": [], "bought_seed": []}
+        for _ in range(2):
+            assemblies.sync_from_drawings(items, texts.get)
+        cards = {c: c for c in items}
+        got = {a.id: (a.members, a.children) for a in assemblies.current(cards)}
+        st.session_state["got"] = (sorted(store), got,
+                                   store["asm-070000"]["kpl_from"])
+
+    at = AppTest.from_function(page).run()
+    assert not at.exception
+    ids, got, kpl_from = at.session_state["got"]
+    assert ids == ["asm-070000", "asm-070100"]
+    # The STEP's kpl (4) beats the drawing's callout (1); the top's plate
+    # 064555 is also called out on the sub's drawing, but sits in the sub only.
+    assert got["asm-070100"] == ((("b", 4), ("c", 1), ("a", 1)), ())
+    assert got["asm-070000"] == ((), (("asm-070100", 2),))
+    assert kpl_from == {"a": "BOM"}
+
+
+def test_a_subassembly_is_priced_inside_its_parent():
+    from core.assemblies import counts, tops, tree_prices
+
+    sub = Assembly("s", "Kehys", (("p", 2),), (BoughtPart("Tappi", 1, 1.0),))
+    top = Assembly("t", "Runko", (("q", 1),), children=(("s", 3),))
+    assert [a.id for a in tops([sub, top])] == ["t"]
+    assert counts([sub, top]) == {"t": 1, "s": 3}
+    assert per_unit([sub, top]) == {"p": 6, "q": 1}
+    prices = tree_prices([sub, top], {"p": [2.0], "q": [5.0]}, [10], RATES)
+    assert prices["s"][0].qty == 30 and prices["s"][0].unit == pytest.approx(5.0)
+    assert prices["t"][0].parts == pytest.approx(5.0 + 3 * 5.0)
+    # A loop is cut: neither is the other's subassembly.
+    loop = Assembly("s", "Kehys", children=(("t", 1),))
+    assert sorted(a.id for a in tops([loop, top])) == ["s", "t"]
 
 
 def test_the_drawing_notes_give_each_fastener_line():

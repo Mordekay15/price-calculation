@@ -378,7 +378,7 @@ def test_removing_an_assembly_removes_its_parts_and_its_step_file():
 
     at = AppTest.from_function(page, default_timeout=60).run()
     assert at.session_state["parts"] == ["Pohja.dxf", "Irto.dxf", "Kulma.step"]
-    at.button(key="asm_del_step:s1").click().run()
+    at.button(key="asm_del_runko").click().run()
     assert not at.exception
     at.run()
     assert at.session_state["parts"] == ["Irto.dxf"] and at.session_state["models"] == []
