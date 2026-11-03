@@ -151,7 +151,7 @@ def test_a_drawing_pdf_gives_each_fastener_with_its_pcs_count():
         ("PEM-FH-M4-8", 2), ("PEM-FH-M6-12", 2)]
 
 
-def test_a_part_with_fasteners_is_an_assembly_of_it_and_them():
+def test_only_an_assembly_drawings_own_notes_are_its_bought_parts():
     from streamlit.testing.v1 import AppTest
 
     def page():
@@ -159,71 +159,77 @@ def test_a_part_with_fasteners_is_an_assembly_of_it_and_them():
 
         from view import assemblies
 
-        lines = {"p": [("M5-PURISTEMUTTERIT", 4)], "q": [], "r": [("M4-RUUVIT", 2)]}
-        names = {"p": "Levy.dxf", "q": "Kansi.dxf", "r": "Kulma.dxf"}
-        cards = {c: c for c in names}
-        assemblies.sync_from_fasteners(lines, names, cards, lambda cid: "RST 1.4301")
-        store = st.session_state[assemblies.ASSEMBLIES]
-        st.session_state["own"] = (sorted(store), store["fasteners:p"]["name"],
-                                   store["fasteners:p"]["members"],
-                                   store["fasteners:p"]["bought"])
-        # Joined to another part by hand, its fasteners come along.
-        assemblies.join(["p", "q"], "Runko")
-        assemblies.sync_from_fasteners(lines, names, cards)
+        store = st.session_state.setdefault(assemblies.ASSEMBLIES, {})
+        store["drawing:d"] = {"name": "Runko", "members": {"p": 1}, "bought": [],
+                              "bought_seed": [], "drawing": "d"}
+        lines = {"d": [("M6-RUUVIT", 4)], "p": [("M5-PURISTEMUTTERIT", 4)]}
+        assemblies.sync_drawing_fasteners(lines, lambda cid: "RST 1.4301")
+        assemblies.sync_drawing_fasteners(lines)                    # only once
+        st.session_state["drawn"] = [(r["Nimike"], r["Kpl / kokoonpano"], r["€/kpl"])
+                                     for r in store["drawing:d"]["bought"]]
+        # Joined by hand: the parts' fasteners stay on their cards.
+        assemblies.join(["p", "q"], "Kehys")
         hand = next(a for a in store.values() if a.get("hand"))
-        st.session_state["joined"] = (sorted(a.get("fasteners", "") for a in store.values()),
-                                      hand["members"], [r["Nimike"] for r in hand["bought"]])
-        # A part in a STEP assembly puts its fasteners there, × its kpl.
-        store["step:x"] = {"name": "X", "members": {"r": 3}, "bought": [], "auto": "x"}
-        assemblies.sync_from_fasteners(lines, names, cards)
-        assemblies.sync_from_fasteners(lines, names, cards)          # only once
-        st.session_state["step"] = ("fasteners:r" in store,
-                                    [(r["Nimike"], r["Kpl / kokoonpano"])
-                                     for r in store["step:x"]["bought"]])
+        st.session_state["hand"] = (sorted(store), hand["members"], hand["bought"])
 
     at = AppTest.from_function(page).run()
     assert not at.exception
-    ids, name, members, bought = at.session_state["own"]
-    assert ids == ["fasteners:p", "fasteners:r"]
-    assert (name, members) == ("Levy", {"p": 1})
-    assert bought == [{"Nimike": "M5-PURISTEMUTTERIT", "Kpl / kokoonpano": 4,
-                       "€/kpl": 0.80, "Asennus (€/kpl)": 0.20}]
-    assert at.session_state["joined"] == (["", "r"], {"p": 1, "q": 1},
-                                          ["M5-PURISTEMUTTERIT"])
-    assert at.session_state["step"] == (False, [("M4-RUUVIT", 6)])
+    assert at.session_state["drawn"] == [("M6-RUUVIT", 4, 0.80)]
+    ids, members, bought = at.session_state["hand"]
+    assert ids[0] == "drawing:d" and ids[1].startswith("hand:") and len(ids) == 2
+    assert (members, bought) == ({"p": 1, "q": 1}, [])
 
 
-def test_on_the_page_a_part_with_fasteners_and_parts_joined_by_hand_are_assemblies():
+def test_on_the_page_a_parts_fasteners_are_its_own_bought_parts_wherever_it_goes():
     from streamlit.testing.v1 import AppTest
 
     from view.assemblies import ASSEMBLIES
+    from view.work import PART_BOUGHT
 
     at = AppTest.from_file("fastener_page.py", default_timeout=60).run()
     assert not at.exception
-    store = at.session_state[ASSEMBLIES]
-    assert sorted(store) == ["fasteners:f0", "fasteners:f3"]
-    assert [(r["Nimike"], r["Kpl / kokoonpano"]) for r in store["fasteners:f0"]["bought"]] \
-        == [("M5-PURISTEMUTTERIT", 4)]
-    assert sorted((r["Nimike"], r["Kpl / kokoonpano"])
-                  for r in store["fasteners:f3"]["bought"]) == [
+    assert at.session_state[ASSEMBLIES] == {}          # fasteners make no assembly
+    own = at.session_state[PART_BOUGHT]
+    assert [(r["Nimike"], r["Kpl / osa"], r["Mistä"]) for r in own["f0"]["rows"]] \
+        == [("M5-PURISTEMUTTERIT", 4, "levy.dxf")]
+    assert sorted((r["Nimike"], r["Kpl / osa"]) for r in own["f3"]["rows"]) == [
         ("M5 KALEI NUT", 4), ("M6 KALEI NUT", 6), ("PEM-FH-M4-12", 25),
         ("PEM-FH-M4-8", 2), ("PEM-FH-M6-12", 2)]
-    # The card in it has no fastener inputs: its assembly prices them.
+    assert {r["Mistä"] for r in own["f3"]["rows"]} == {"kotelo.pdf"}
+    assert own["f1"]["rows"] == []
+    # Priced on the card: 4 × (0.05 + 0.20) per piece, the count gone.
+    work = at.session_state["work"]
+    assert work["f0"].fasteners == 4
+    assert sum(b.unit * b.qty for b in work["f0"].bought) == pytest.approx(1.00)
     keys = {n.key for n in at.number_input}
-    assert "work_bends_f0" in keys and "work_fasteners_f1" in keys
     assert not {f"work_{k}_f0" for k in ("fasteners", "fastener_eur", "insert_eur")} & keys
+    assert "work_weld_f0" in keys
     # "Uusi kokoonpano": the press-nutted plate and an angle welded together.
     at.multiselect(key="asm_new_parts").set_value(["f0", "f1"]).run()
     at.text_input(key="asm_new_name").set_value("Runko").run()
     at.button(key="asm_new_go").click().run()
     assert not at.exception
     store = at.session_state[ASSEMBLIES]
-    (aid, a), = ((k, v) for k, v in store.items() if v.get("hand"))
+    (aid, a), = store.items()
     assert aid.startswith("hand:") and a["name"] == "Runko"
-    assert a["members"] == {"f0": 1, "f1": 1}
-    assert [r["Nimike"] for r in a["bought"]] == ["M5-PURISTEMUTTERIT"]
-    # "Pura" leaves the parts loose, the plate with its fasteners again.
+    assert a["members"] == {"f0": 1, "f1": 1} and a["bought"] == []
+    # The plate keeps its nuts in the assembly; the assembly welds.
+    assert at.session_state["work"]["f0"].fasteners == 4
+    assert "work_weld_f0" not in {n.key for n in at.number_input}
+    # "Pura" leaves the parts loose.
     at.button(key=f"asm_del_{aid}").click().run()
     assert not at.exception
-    assert sorted(at.session_state[ASSEMBLIES]) == ["fasteners:f0", "fasteners:f3"]
+    assert at.session_state[ASSEMBLIES] == {}
     assert sorted(at.session_state["ids"]) == ["f0", "f1", "f2", "f3"]
+
+
+def test_a_parts_own_bought_parts_are_rows_under_it_in_the_price_table():
+    from core.work import BoughtPart
+    from view.quote import _bought_rows
+
+    work = WorkInputs(fasteners=4, bought=(BoughtPart("M5-PURISTEMUTTERIT", 4, 0.05, 0.20),))
+    assert _bought_rows(work, 2, 2, 3) == [
+        {"name": "  └ M5-PURISTEMUTTERIT × 4 (ostettu)", "per": 8,
+         "units": [2.0, 2.0, 2.0]}]
+    assert _bought_rows(WorkInputs(fasteners=4), 1, 1, 3) == []
+    assert _bought_rows(None, 1, 1, 3) == []

@@ -107,6 +107,22 @@ class WorkRates:
 
 
 @dataclass(frozen=True)
+class BoughtPart:
+    """One row of Ostetut osat: bought, and put in. ``qty`` is per owner: per
+    piece for a part's own (its fasteners), per assembly for an assembly's."""
+
+    name: str
+    qty: int
+    eur: float = 0.0              # one piece
+    fit_eur: float = 0.0          # putting one piece in (e.g. pressing a PEM nut)
+
+    @property
+    def unit(self) -> float:
+        """One piece, bought and put in."""
+        return self.eur + self.fit_eur
+
+
+@dataclass(frozen=True)
 class WorkInputs:
     """One part's work, as set on its card. Lengths are per piece;
     ``setup_eur`` is per batch; None means the default by phases
@@ -123,6 +139,9 @@ class WorkInputs:
     fasteners: int = 0                    # press nuts, bolts… (kiinnikkeet)
     eur_per_fastener: float = 0.05        # one fastener
     eur_per_insert: float = FASTENER_INSERT_EUR   # putting one in
+    # The part's own Ostetut osat (DXF tab): priced row by row, and then
+    # ``fasteners`` is only their count. None: the count × the two prices.
+    bought: tuple[BoughtPart, ...] | None = None
     weld_m: float = 0.0
     subcontract_eur: float = 0.0          # per piece
     setup_eur: float | None = None
@@ -133,6 +152,13 @@ def phases(inp: WorkInputs) -> int:
     threading, fastening, welding and subcontracting that it has."""
     return 1 + sum(bool(x) for x in (inp.bends, inp.threads, inp.fasteners, inp.weld_m,
                                       inp.subcontract_eur))
+
+
+def bought_eur(inp: WorkInputs) -> float:
+    """The part's bought parts (fasteners…) per piece, put in."""
+    if inp.bought is not None:
+        return sum(b.unit * b.qty for b in inp.bought)
+    return inp.fasteners * (inp.eur_per_fastener + inp.eur_per_insert)
 
 
 def default_setup(inp: WorkInputs, rates: WorkRates) -> float:
@@ -184,7 +210,7 @@ class WorkCost:
 
 
 # The phases of ``WorkCost.breakdown``, as the tables and exports name them.
-BREAKDOWN = ("Leikkaus", "Taivutus", "Kierteet", "Kiinnikkeet", "Hitsaus", "Alihankinta")
+BREAKDOWN = ("Leikkaus", "Taivutus", "Kierteet", "Ostetut osat", "Hitsaus", "Alihankinta")
 
 
 def work_cost(inp: WorkInputs, qty: int, rates: WorkRates) -> WorkCost:
@@ -197,7 +223,7 @@ def work_cost(inp: WorkInputs, qty: int, rates: WorkRates) -> WorkCost:
         cutting=cutting_eur(inp, inp.method, rates) or 0.0,
         bending=inp.bends * inp.eur_per_bend,
         threads=inp.threads * inp.eur_per_thread,
-        fasteners=inp.fasteners * (inp.eur_per_fastener + inp.eur_per_insert),
+        fasteners=bought_eur(inp),
         welding=rates.weld_eur(inp.weld_m),
         subcontract=inp.subcontract_eur,
         setup=setup,

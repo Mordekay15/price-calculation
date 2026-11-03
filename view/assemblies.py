@@ -10,11 +10,10 @@ one quote line.
   becomes an assembly of the cards with those numbers, 1 kpl each (the
   drawing is shown in it, not among the cards); the ones
   neither dropped yet nor added as bought parts are listed as awaited.
-- **From a part's fasteners.** A part whose drawing calls out fasteners
-  (ruuvit, mutterit, niitit…, e.g. "M5-PURISTEMUTTERIT X4KPL") is an
-  assembly of itself and them: the fasteners are its bought parts, priced
-  there and not on the card. In an assembly of several parts, its fasteners
-  are that assembly's bought parts instead.
+- **Not from a part's fasteners.** The fasteners a part's drawing calls out
+  (e.g. "M5-PURISTEMUTTERIT X4KPL") are the part's own Ostetut osat, on its
+  card (``view.work``), and come with it into any assembly. Only an assembly
+  drawing's own notes are its assembly's bought parts.
 - **By hand.** Parts attached to each other (welded, riveted, screwed
   together) are joined into one with "Uusi kokoonpano".
 
@@ -22,8 +21,8 @@ Its cards are drawn inside it, apart from the loose parts.
 
 Session keys: ``ASSEMBLIES`` holds ``{assembly id: {"name", "members":
 {source id: kpl}, "bought": [row], "auto": STEP file id, "drawing": card
-id, "fasteners": card id, "hand": True, "fasteners_of": [card id whose
-fasteners are in "bought"], …}}``. A
+id, "fasteners_read": True once its drawing's notes are in "bought", "hand":
+True, …}}``. A
 member is stored by a source id of its card (see ``core.items``), so it
 stays on the right card when the card's files are regrouped."""
 
@@ -116,57 +115,27 @@ def _fastener_rows(lines: list[tuple[str, int]], per: int, material: str | None)
              _FIT: FASTENER_INSERT_EUR} for name, n in lines]
 
 
-def sync_from_fasteners(lines: dict[str, list[tuple[str, int]]], names: dict[str, str],
-                        card_of: dict[str, str],
-                        material: Callable[[str], str | None] = lambda cid: None) -> None:
-    """Make an assembly of every card whose drawing calls out fasteners:
-    ``lines`` are each card's ``(name, kpl / osa)``, ``names`` its name. A
-    card in an assembly of several parts puts its fasteners in that one
-    (once, × its kpl / kokoonpano) and has none of its own."""
-    store = _store()
-    joined = {cid: (aid, n) for aid, a in store.items() if not a.get("fasteners")
-              for cid, n in _cards_of(a, card_of).items()}
-    # An assembly drawing's own notes are its assembly's fasteners.
-    joined |= {a["drawing"]: (aid, 1) for aid, a in store.items() if a.get("drawing")}
-    live = set()
-    for cid, ls in lines.items():
-        if not ls:
-            continue
-        if cid in joined:
-            aid, n = joined[cid]
-            a = store[aid]
-            if cid not in a.setdefault("fasteners_of", []):
-                a["fasteners_of"].append(cid)
-                own = store.get(f"fasteners:{cid}")
-                rows = ([{**r, _QTY: int(r.get(_QTY) or 0) * n} for r in own["bought"]]
-                        if own else _fastener_rows(ls, n, material(cid)))
-                a["bought"] = a["bought_seed"] = [*a.get("bought", []), *rows]
-            continue
-        aid = f"fasteners:{cid}"
-        live.add(aid)
-        if aid not in store:
-            rows = _fastener_rows(ls, 1, material(cid))
-            store[aid] = {"name": names.get(cid, cid).rsplit(".", 1)[0], "members": {cid: 1},
-                          "bought": rows, "bought_seed": rows, "fasteners": cid}
-    for aid in [aid for aid, a in store.items() if a.get("fasteners") and aid not in live]:
-        store.pop(aid)
+def sync_drawing_fasteners(lines: dict[str, list[tuple[str, int]]],
+                           material: Callable[[str], str | None] = lambda cid: None) -> None:
+    """An assembly drawing's fastener notes (``lines`` by drawing card) are
+    its assembly's bought parts, added once. A part's own fasteners are not
+    here: they stay on its card (``view.work``), wherever the part goes."""
+    for a in _store().values():
+        cid = a.get("drawing")
+        if cid and lines.get(cid) and not a.get("fasteners_read"):
+            a["fasteners_read"] = True
+            rows = _fastener_rows(lines[cid], 1, material(cid))
+            a["bought"] = a["bought_seed"] = [*a.get("bought", []), *rows]
 
 
 def join(cids: list[str], name: str) -> None:
     """"Uusi kokoonpano": parts attached to each other, 1 kpl each, as one
-    assembly. Their fasteners (as edited) come with them."""
+    assembly. Their fasteners stay on their cards."""
     if not cids:
         return
-    store = _store()
-    bought, of = [], []
-    for cid in cids:
-        own = store.pop(f"fasteners:{cid}", None)
-        if own:
-            bought += own.get("bought", [])
-            of.append(cid)
-    store[f"hand:{uuid.uuid4().hex[:8]}"] = {
+    _store()[f"hand:{uuid.uuid4().hex[:8]}"] = {
         "name": name.strip() or "Kokoonpano", "members": {cid: 1 for cid in cids},
-        "bought": bought, "bought_seed": bought, "hand": True, "fasteners_of": of}
+        "bought": [], "bought_seed": [], "hand": True}
 
 
 def drawings() -> dict[str, str]:
@@ -246,7 +215,7 @@ def _render_new(col, labels: dict[str, str]) -> None:
         st.text_input("Nimi", key="asm_new_name")
         st.multiselect("Osat", list(labels), format_func=labels.get, key="asm_new_parts",
                        help="Toisiinsa kiinnitetyt osat (hitsatut, niitatut, ruuvatut), "
-                            "1 kpl / kokoonpano kukin. Osien kiinnikkeet tulevat mukaan.")
+                            "1 kpl / kokoonpano kukin. Osien kiinnikkeet pysyvät osien korteilla.")
         st.button("Yhdistä kokoonpanoksi", key="asm_new_go", type="primary",
                   on_click=undoable(_join_picked, "uusi kokoonpano"))
 
@@ -261,8 +230,6 @@ _ORIGIN = {
     "auto": "Tehty STEP-mallista: osat ja määrät mallin rakenteesta.",
     "drawing": "Tehty kokoonpanopiirustuksesta: osat ovat piirustuksessa mainitut "
                "osanumerot, 1 kpl / kokoonpano kukin. Tarkista määrät piirustuksesta.",
-    "fasteners": "Osa kiinnikkeineen: kiinnikkeet (ruuvit, mutterit…) luettu piirustuksen "
-                 "teksteistä ostetuiksi osiksi. Tarkista määrät ja hinnat.",
     "hand": "Yhdistetty käsin: toisiinsa kiinnitetyt osat.",
 }
 

@@ -51,10 +51,14 @@ the quantity). Work has no margin; its rates are selling prices.
   model's (a flat DXF often has no bend lines), and the card's preview draws
   the model's bend lines on the DXF (green up, orange down), lined up with it
   even when the DXF is turned or mirrored.
-- **Fasteners** (kiinnikkeet: press nuts, screws, bolts, rivets…): count ×
-  (one fastener's price + putting one in). By default 0.80 + 0.20 € in RST/HST
-  and 0.05 + 0.20 € otherwise. The DXF gives the count from notes like
-  "M5-PURISTEMUTTERIT X4KPL".
+- **Ostetut osat** (the part's fasteners: press nuts, screws, bolts,
+  rivets…): a table in Työvaiheet, one row per fastener the drawing calls out
+  (notes like "M5-PURISTEMUTTERIT X4KPL" in the DXF, or PEM/KALEI callouts
+  in its PDF), with **Mistä** naming the file. Each row is kpl / osa ×
+  (€/kpl + Asennus), by default 0.80 + 0.20 € in RST/HST and 0.05 + 0.20 €
+  otherwise; rows can be edited and added by hand. They are the part's own,
+  so they stay with it in an assembly, and show as `└ … (ostettu)` rows under
+  it in Eräkohtaiset hinnat. (Pikalaskuri keeps a count × two prices.)
 - **Welding**: metres ÷ m/h × €/h. **Subcontracting** €/kpl.
 - **Setup** per batch by the number of work phases: 40 / 60 / 80 €.
 
@@ -212,10 +216,12 @@ parts, work and contents.
   Their **Määrä** starts as kpl / kokoonpano × the largest batch size (a
   loose card's as its BOM quantity or the largest batch size), filled in: the quantity they
   are nested at. A typed Määrä is nested instead; clearing it goes back.
-- **No cost twice.** A card in an assembly has no fasteners or welding: the
-  assembly's bought parts (PEM nuts and studs too, with their pressing as
-  Asennus) and its welding price them. The card keeps the part's own work
-  and its setup (laser, bending); the assembly's setup is for assembling.
+- **No cost twice.** A card in an assembly has no welding: the assembly
+  welds its parts together. The card keeps the part's own work, its own
+  Ostetut osat (its fasteners) and its setup (laser, bending); the
+  assembly's bought parts are only its own (a STEP model's other bodies, an
+  assembly drawing's notes, rows typed in), and its setup is for assembling.
+  Fasteners never make an assembly.
 - **Pricing.** A batch size counts assemblies. Each part is priced at
   `batch × kpl / kokoonpano` pieces, so its setup and sheets are shared over
   all of them. One assembly costs its parts' €/kpl × kpl/kokoonpano, plus the

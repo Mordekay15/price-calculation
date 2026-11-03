@@ -1,5 +1,6 @@
 """A page for test_assemblies: four part cards: the first one's DXF calls out
-press nuts, the last one's PDF KALEI nuts and PEMs."""
+press nuts, the last one's PDF KALEI nuts and PEMs. Each card's work is kept
+in "work"."""
 
 import ezdxf
 import streamlit as st
@@ -35,3 +36,4 @@ sync_assemblies()
 products = _render_part_cards(list(st.session_state[STORE].items()), ["S235"],
                               {("2", "S235 | 1000x2000"): 900.0})
 st.session_state["ids"] = [p["id"] for p in products]
+st.session_state["work"] = {p["id"]: p["work"] for p in products}

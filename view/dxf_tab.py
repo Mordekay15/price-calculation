@@ -41,7 +41,7 @@ from view.dxf_files import (
     bom_quantities,
     card_bends,
     card_docs,
-    card_fasteners,
+    card_fastener_lines,
     card_forms,
     card_report,
     empty_cards,
@@ -413,7 +413,8 @@ def _render_part_config(
     question from card to card (see ``_offer_same_material``). ``doc_ids``
     are the supporting files linked to it (see ``view.attachments``). A card in
     an assembly (``per_assembly`` kpl in one) takes its quantity from the batch
-    sizes and leaves its fasteners and welding to the assembly; a loose card
+    sizes and leaves its welding to the assembly (its fasteners, the Ostetut
+    osat in Työvaiheet, stay on the card); a loose card
     listed in a BOM (``in_bom``: kpl, BOM names) takes the BOM's quantity."""
     in_assembly = per_assembly > 0
     with st.container(border=True):
@@ -476,7 +477,7 @@ def _render_part_config(
             work = render_work_inputs(fid, material=material, thickness=thickness, qty=qty,
                                       cut_length_m=report.cut_length_mm / 1000,
                                       bends=card_bends(report, item), threads=report.threads,
-                                      fasteners=0 if in_assembly else card_fasteners(dxf, item),
+                                      bought=card_fastener_lines(fid, item, list(doc_ids)),
                                       in_assembly=in_assembly)
         # Chosen on the Nestaus step, next to the run button (see
         # ``dxf_nesting._render_angle_controls``); read here for the product.

@@ -182,7 +182,11 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
                        tuple(by_part[pc.product["id"]]))
              for pc in costs if pc.product["id"] not in in_assembly]
     names = {pc.product["id"]: name(pc) for pc in costs}
-    members: list[list[dict]] = []      # each assembly's rows in the table
+    works = {pc.product["id"]: pc.product.get("work") for pc in costs}
+    # Each line's └ rows in the table: a loose part's own bought parts, an
+    # assembly's parts (each with its own bought parts), bought parts and work.
+    subs: list[list[dict]] = [_bought_rows(works[pc.product["id"]], 1, 1, len(sizes))
+                              for pc in costs if pc.product["id"] not in in_assembly]
     priced: list[tuple[Assembly, dict, tuple]] = []     # for the breakdown
     for a in assemblies:
         units = {pid: [p.unit for p in by_part[pid]] for pid, _ in a.members if pid in by_part}
@@ -194,11 +198,12 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
         priced.append((a, units, prices))
         # Each row is what it adds to one assembly (kpl/kok. × €/kpl), so the
         # rows add up to the assembly's €/kpl; its quantity is per batch.
-        members.append(
-            [{"name": f"\u2003└ {names.get(pid, '?')} × {n}", "per": n,
-              "units": [None if u is None else u * n
-                        for u in units.get(pid, [None] * len(sizes))]}
-             for pid, n in a.members]
+        subs.append(
+            [row for pid, n in a.members for row in (
+                {"name": f"\u2003└ {names.get(pid, '?')} × {n}", "per": n,
+                 "units": [None if u is None else u * n
+                           for u in units.get(pid, [None] * len(sizes))]},
+                *_bought_rows(works.get(pid), n, 2, len(sizes)))]
             + [{"name": f"\u2003└ {b.name} × {b.qty} (ostettu)", "per": b.qty,
                 "units": [b.unit * b.qty] * len(sizes)} for b in a.bought]
             + ([{"name": "\u2003└ Kokoonpanotyö", "per": None,
@@ -217,9 +222,11 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
         "hukalla. Eräkoot muutetaan sivun ylälaidasta."
         + (" 🧩 Kokoonpanon └-rivit ovat sen osuuksia yhdestä kokoonpanosta "
            "(kpl / kokoonpano × €/kpl), ja niiden summa on kokoonpanon kpl-hinta."
-           if assemblies and table else "")))
+           if assemblies and table else "")
+        + (" Osan alla oleva └ … (ostettu) -rivi on sen omat ostetut osat (kiinnikkeet), "
+           "jotka sisältyvät osan hintaan." if table and any(subs) else "")))
     if table:
-        _render_table(lines, members, sizes, lead)
+        _render_table(lines, subs, sizes, lead)
     _render_breakdown(costs, names, by_part, priced, sizes, rates, key, folded=table)
 
     info = current_info()
@@ -301,22 +308,29 @@ def _eur(v: float | None) -> str:
     return "–" if v is None else f"{v:,.2f}"
 
 
-def _render_table(lines: list[QuoteLine], members: list[list[dict]], sizes: list[int],
+def _bought_rows(work, per: int, depth: int, n_sizes: int) -> list[dict]:
+    """A part's own bought parts (``WorkInputs.bought``) as └ rows: what each
+    adds to one quote line, ``per`` pieces of the part in it."""
+    return [{"name": "\u2003" * depth + f"└ {b.name} × {b.qty} (ostettu)", "per": b.qty * per,
+             "units": [b.unit * b.qty * per] * n_sizes}
+            for b in (getattr(work, "bought", None) or ())]
+
+
+def _render_table(lines: list[QuoteLine], subs: list[list[dict]], sizes: list[int],
                   lead: str) -> None:
-    """Every quote line's €/kpl at every batch size, each assembly's rows
-    under it."""
+    """Every quote line's €/kpl at every batch size, its └ rows (``subs``,
+    one list per line) under it."""
     def qty(per: int | None) -> str:
         return "" if per is None else " · ".join(str(q * per) for q in sizes)
 
     rows = []
-    sub = iter(members)
-    for line in lines:
+    for line, sub in zip(lines, subs):
         row = {lead: ("🧩 " if line.is_assembly else "") + line.name, "Määrä": qty(1),
                "Materiaali": line.material, "Paksuus": line.thickness}
         for q, p in zip(sizes, line.prices):
             row[f"{q} kpl, €/kpl"] = None if p.unit is None else round(p.unit, 2)
         rows.append(row)
-        for m in (next(sub) if line.is_assembly else []):
+        for m in sub:
             rows.append({lead: m["name"], "Määrä": qty(m["per"]), "Materiaali": "",
                          "Paksuus": "",
                          **{f"{q} kpl, €/kpl": None if u is None else round(u, 2)

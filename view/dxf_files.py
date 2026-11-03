@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 from core.archive import ArchiveError, is_zip, unpack
 from core.dwg import read_drawing
-from core.dxf import DxfFile, DxfReport, fastener_lines, fasteners_from_texts
+from core.dxf import DxfFile, DxfReport, fastener_lines
 from core.items import (Choice, Source, choose, group_sources, looks_like_drawing,
                         score_dxf, STEP_CHOICE)
 from core.linking import base_key
@@ -25,7 +25,7 @@ from core.step import bends_on
 from view import assemblies, attachments, bom, material_agent
 from view.common import thicknesses_for
 from view.ui import ids_in, st
-from view.work import AUTO_SHOWN
+from view.work import AUTO_SHOWN, PART_BOUGHT
 STORE   = "dxf_store"         # {card id: DxfFile}: each card's chosen shape
 REPORTS = "dxf_part_reports"  # {card id: DxfReport}
 CONFIG  = "dxf_part_config"   # {card id: {"material", "thickness", "source"}}
@@ -378,23 +378,28 @@ def sync_assemblies() -> None:
     items = st.session_state.get(ITEMS, {})
     assemblies.sync_from_drawings(items, texts)
     config = st.session_state.get(CONFIG, {})
-    assemblies.sync_from_fasteners(
-        {cid: card_fastener_lines(cid, item, links.get(cid, [])) for cid, item in items.items()},
-        {cid: store[cid].name for cid in items if cid in store}, source_cards(),
+    # A part's own fasteners stay on its card (its Ostetut osat); only an
+    # assembly drawing's notes are its assembly's.
+    drawn = assemblies.drawings().values()
+    assemblies.sync_drawing_fasteners(
+        {cid: card_fastener_lines(cid, items.get(cid), links.get(cid, []))[0] for cid in drawn},
         lambda cid: config.get(cid, {}).get("material"))
 
 
-def card_fastener_lines(cid: str, item: Item, docs: list[str]) -> list[tuple[str, int]]:
-    """The fasteners the card's drawings call out, ``(name, kpl / osa)``: of
-    its PDFs and files, the one that asks for the most (a flat and its drawing
-    repeat the same note)."""
+def card_fastener_lines(cid: str, item: Item | None,
+                        docs: list[str]) -> tuple[list[tuple[str, int]], str]:
+    """The fasteners the card's drawings call out, ``(name, kpl / osa)``, and
+    the file they were read from: of its PDFs and files, the one that asks
+    for the most (a flat and its drawing repeat the same note)."""
     files, store = st.session_state.get(FILES, {}), st.session_state.get(STORE, {})
-    sources = [attachments.fasteners(d) for d in docs]
-    sources += [fastener_lines(files[m].texts) for m in item.members if m in files]
+    all_docs = attachments.docs()
+    sources = [(attachments.fasteners(d), all_docs.get(d, {}).get("name", d)) for d in docs]
+    sources += [(fastener_lines(files[m].texts), files[m].name)
+                for m in (item.members if item else []) if m in files]
     if cid in store:
-        sources.append(fastener_lines(store[cid].texts))
-    return max(sources,
-               key=lambda ls: sum(n for _, n in ls), default=[])
+        sources.append((fastener_lines(store[cid].texts), store[cid].name))
+    best = max(sources, key=lambda s: sum(n for _, n in s[0]), default=([], ""))
+    return (best if best[0] else ([], ""))
 
 
 def source_cards() -> dict[str, str]:
@@ -487,14 +492,6 @@ def card_forms(item: Item | None) -> int:
     return flats[0].forms if flats else 0
 
 
-def card_fasteners(dxf: DxfFile, item: Item | None) -> int:
-    """The fasteners the notes of the card's files ask for (the most any one
-    file asks for: a flat and its drawing repeat the same note)."""
-    files = st.session_state.get(FILES, {})
-    texts = [files[m].texts for m in (item.members if item else []) if m in files]
-    return max((fasteners_from_texts(t) for t in [dxf.texts, *texts]), default=0)
-
-
 def evict(fid: str) -> None:
     """A card's "Poista" button: drop the card's files (its PDFs too, unless
     another card has them) and everything kept for it, including its widget
@@ -521,7 +518,8 @@ def evict(fid: str) -> None:
     ss.get(STORE, {}).pop(fid, None)
     cfg = ss.get(CONFIG, {}).pop(fid, {})
     ss.get(REPORTS, {}).pop(fid, None)
-    for key in (*material_keys(fid, cfg), f"dxf_unit_ok_{fid}",
+    ss.get(PART_BOUGHT, {}).pop(fid, None)
+    for key in (*material_keys(fid, cfg), f"dxf_unit_ok_{fid}", f"work_bought_{fid}",
                 f"dxf_src_{fid}",
                 f"dxf_turn_{fid}"):
         ss.pop(key, None)
@@ -541,7 +539,7 @@ def evict_all() -> None:
                 _DUPES, _SKIPPED,   # these warnings name files that are gone
                 _FOLDERS, _WAITING,
                 _BEND_LINES,
-                AUTO_SHOWN, *material_agent.AUTO_KEYS, *assemblies.KEYS):
+                AUTO_SHOWN, PART_BOUGHT, *material_agent.AUTO_KEYS, *assemblies.KEYS):
         st.session_state.pop(key, None)
 
 

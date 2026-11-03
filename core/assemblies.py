@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.work import WorkRates
+from core.work import BoughtPart, WorkRates  # noqa: F401  (BoughtPart: re-exported)
 
 
 @dataclass(frozen=True)
@@ -29,19 +29,6 @@ class AssemblyWork:
     setup_min: float = 0.0        # minutes per batch
     eur_per_h: float = 0.0        # fitting and setup
     other_eur: float = 0.0        # per assembly (packing, painting the whole…)
-
-
-@dataclass(frozen=True)
-class BoughtPart:
-    name: str
-    qty: int                      # per assembly
-    eur: float = 0.0              # one piece
-    fit_eur: float = 0.0          # putting one piece in (e.g. pressing a PEM nut)
-
-    @property
-    def unit(self) -> float:
-        """One piece, bought and put in."""
-        return self.eur + self.fit_eur
 
 
 @dataclass(frozen=True)
