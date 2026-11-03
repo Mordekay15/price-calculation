@@ -476,7 +476,8 @@ def _render_part_config(
             work = render_work_inputs(fid, material=material, thickness=thickness, qty=qty,
                                       cut_length_m=report.cut_length_mm / 1000,
                                       bends=card_bends(report, item), threads=report.threads,
-                                      bought=card_fastener_lines(fid, item, list(doc_ids)),
+                                      bought=(item, *card_fastener_lines(fid, item,
+                                                                         list(doc_ids))),
                                       in_assembly=in_assembly)
         # Chosen on the Nestaus step, next to the run button (see
         # ``dxf_nesting._render_angle_controls``); read here for the product.

@@ -220,6 +220,23 @@ class PartSource:
     choice: Choice
 
 
+@dataclass(frozen=True)
+class BoughtPart:
+    """One row of Ostetut osat: bought, and put in. ``qty`` is per owner: per
+    piece for a part's own (its fasteners), per assembly for an assembly's."""
+
+    name: str
+    qty: int
+    eur: float = 0.0                            # one piece
+    fit_eur: float = 0.0                        # putting one piece in (e.g. pressing a PEM nut)
+    source: str = ""                            # "Mistä": the file it was read from, "" by hand
+
+    @property
+    def unit(self) -> float:
+        """One piece, bought and put in."""
+        return self.eur + self.fit_eur
+
+
 @dataclass
 class Part:
     """One card: one part number, however many files describe it. Its files
@@ -233,6 +250,8 @@ class Part:
     chosen_by_user: str | None = None
     material: Value[str] = field(default_factory=Value)
     thickness: Value[str] = field(default_factory=Value)
+    bought: list[BoughtPart] = field(default_factory=list)   # its own: fasteners, per piece
+    bought_lines: list | None = None            # the drawing's lines ``bought`` was read from
     version: int = 0                            # bumped to give its widgets new keys
 
     @property
@@ -249,22 +268,6 @@ class Part:
 
 
 @dataclass(frozen=True)
-class BoughtPart:
-    """One row of Ostetut osat: bought, and put in. ``qty`` is per owner: per
-    piece for a part's own (its fasteners), per assembly for an assembly's."""
-
-    name: str
-    qty: int
-    eur: float = 0.0                            # one piece
-    fit_eur: float = 0.0                        # putting one piece in (e.g. pressing a PEM nut)
-
-    @property
-    def unit(self) -> float:
-        """One piece, bought and put in."""
-        return self.eur + self.fit_eur
-
-
-@dataclass(frozen=True)
 class AssemblyWork:
     """Putting one assembly together."""
 
@@ -275,14 +278,33 @@ class AssemblyWork:
     other_eur: float = 0.0                      # per assembly (packing, painting the whole…)
 
 
-@dataclass(frozen=True)
+@dataclass
 class Assembly:
-    """One per part number: its parts and subassemblies × kpl, its bought
-    parts and its work (see ``core.assemblies`` for its price)."""
+    """One per part number, however many files describe it: a STEP model of
+    several bodies, an assembly drawing, or parts joined by hand. It goes
+    when none of them is left (``described``).
 
-    id: str
+    ``parts`` are its cards × kpl / kokoonpano, a part sitting in one place
+    (one in a subassembly is not also in its parent), ``children`` its
+    subassemblies × kpl; ``core.assemblies`` prices them."""
+
+    id: str                                     # its part number, or "hand:…"
     name: str
-    members: tuple[tuple[str, int], ...] = ()      # (Part id, kpl / kokoonpano)
-    bought: tuple[BoughtPart, ...] = ()
+    parts: dict[str, int] = field(default_factory=dict)       # card id → kpl
+    bought: list[BoughtPart] = field(default_factory=list)
     work: AssemblyWork = AssemblyWork()
-    children: tuple[tuple[str, int], ...] = ()     # (subassembly id, kpl / kokoonpano)
+    children: dict[str, int] = field(default_factory=dict)    # assembly id → kpl
+    # Where it comes from:
+    step_file: str | None = None                # the STEP model's file id
+    members: dict[str, int] = field(default_factory=dict)     # source id → kpl: the
+    #   model's sheet bodies, or the cards joined by hand
+    step_bought: list[str] = field(default_factory=list)      # the model's bodies in bought
+    drawing: str | None = None                  # the card of its assembly drawing
+    drawn: dict[str, int] = field(default_factory=dict)       # card id → kpl it calls out
+    awaited: list[str] = field(default_factory=list)          # called out, not dropped
+    fasteners_read: bool = False                # its drawing's notes are in bought
+    by_hand: bool = False
+
+    @property
+    def described(self) -> bool:
+        return bool(self.step_file or self.drawing or self.by_hand)

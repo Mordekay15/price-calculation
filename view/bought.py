@@ -2,9 +2,11 @@
 machined parts…) that a part card (its own, per piece) and an assembly (per
 assembly) both show and edit.
 
-A row is a dict with stable keys (``NAME``, ``KPL``, ``EUR``, ``FIT``,
-``FROM``); the table's headers are labels only, so "Kpl / osa" on a card and
-"Kpl / kokoonpano" on an assembly are the same column."""
+The rows are the owner's ``core.model.BoughtPart``s (``Part.bought``,
+``Assembly.bought``): the table is drawn from them and its edits are written
+back as BoughtParts. In the table a row is a dict with stable keys (``NAME``,
+``KPL``, ``EUR``, ``FIT``, ``FROM``); the headers are labels only, so "Kpl /
+osa" on a card and "Kpl / kokoonpano" on an assembly are the same column."""
 
 from __future__ import annotations
 
@@ -27,39 +29,48 @@ HELP = ("Valmiina ostettavat osat (puristemutterit, ruuvit, tapit, koneistetut o
         "kiinnitys, esim. puristemutterin puristus. Lisää rivi tarvittaessa käsin.")
 
 
-def fastener_rows(lines: list[tuple[str, int]], material: str | None, source: str = "",
-                  per: int = 1) -> list[dict]:
-    """Rows for the fasteners a drawing calls out (``(name, kpl)``), × ``per``,
-    priced by the part's material."""
-    return [{NAME: name, KPL: n * per, EUR: fastener_price(material), FIT: FASTENER_INSERT_EUR,
-             FROM: source} for name, n in lines]
+SEEDS = "bought_seeds"     # {table key: the rows its editor started from}
 
 
-def body_row(name: str, kpl: int, source: str = "") -> dict:
-    """A row for a STEP body that isn't sheet: no price yet, its putting in
-    priced when it is a fastener or a pin."""
-    return {NAME: name, KPL: kpl, EUR: 0.0,
-            FIT: FASTENER_INSERT_EUR if _FASTENER.search(name) else 0.0, FROM: source}
+def fastener_parts(lines: list[tuple[str, int]], material: str | None, source: str = "",
+                   per: int = 1) -> list[BoughtPart]:
+    """The fasteners a drawing calls out (``(name, kpl)``), × ``per``, priced
+    by the part's material."""
+    return [BoughtPart(name, n * per, fastener_price(material), FASTENER_INSERT_EUR, source)
+            for name, n in lines]
 
 
-def parts(rows: list[dict]) -> tuple[BoughtPart, ...]:
-    """The rows as priced (empty rows left out)."""
-    return tuple(BoughtPart(str(r.get(NAME) or ""), int(r.get(KPL) or 0),
-                            float(r.get(EUR) or 0.0), float(r.get(FIT) or 0.0))
-                 for r in rows if r.get(NAME) or r.get(EUR) or r.get(FIT))
+def body_part(name: str, kpl: int, source: str = "") -> BoughtPart:
+    """A STEP body that isn't sheet: no price yet, its putting in priced
+    when it is a fastener or a pin."""
+    return BoughtPart(name, kpl, 0.0, FASTENER_INSERT_EUR if _FASTENER.search(name) else 0.0,
+                      source)
 
 
-def editor(own: dict, key: str, kpl_label: str) -> None:
-    """The table, editing ``own["rows"]`` in place. ``own["seed"]`` is what the
-    editor starts from: Streamlit keeps the edits as changes to it, so it is
-    only replaced together with the widget's state (``reset``). Headless the
-    editor isn't drawn and forgets its edits, so it starts from them."""
+def _rows(parts: list[BoughtPart]) -> list[dict]:
+    return [{NAME: b.name, KPL: b.qty, EUR: b.eur, FIT: b.fit_eur, FROM: b.source}
+            for b in parts]
+
+
+def _parts(rows: list[dict]) -> list[BoughtPart]:
+    """The table's rows as BoughtParts (empty rows left out)."""
+    return [BoughtPart(str(r.get(NAME) or ""), int(r.get(KPL) or 0), float(r.get(EUR) or 0.0),
+                       float(r.get(FIT) or 0.0), str(r.get(FROM) or ""))
+            for r in rows if r.get(NAME) or r.get(EUR) or r.get(FIT)]
+
+
+def editor(parts: list[BoughtPart], key: str, kpl_label: str) -> list[BoughtPart]:
+    """The table of ``parts``; returns them as edited. The editor starts from
+    a seed kept per table: Streamlit keeps the edits as changes to it, so it
+    is only replaced together with the widget's state (``reset``). Headless
+    the editor isn't drawn and forgets its edits, so it starts from them."""
+    seeds = st.session_state.setdefault(SEEDS, {})
     if is_headless():
-        own["seed"] = own.get("rows", own.get("seed", []))
-        return
+        seeds[key] = _rows(parts)
+        return parts
     edited = st.data_editor(
-        own.get("seed", []), key=key, num_rows="dynamic", hide_index=True, width="stretch",
-        column_order=_COLUMNS,
+        seeds.setdefault(key, _rows(parts)), key=key, num_rows="dynamic", hide_index=True,
+        width="stretch", column_order=_COLUMNS,
         column_config={
             NAME: st.column_config.TextColumn("Nimike"),
             KPL: st.column_config.NumberColumn(kpl_label, min_value=0, step=1),
@@ -67,10 +78,11 @@ def editor(own: dict, key: str, kpl_label: str) -> None:
             FIT: st.column_config.NumberColumn("Asennus (€/kpl)", min_value=0.0, step=0.05,
                                                format="%.2f"),
             FROM: st.column_config.TextColumn("Mistä", disabled=True)})
-    own["rows"] = [dict(r) for r in edited]
+    return _parts(edited)
 
 
-def reset(own: dict, rows: list[dict], key: str) -> None:
-    """Start the table again from ``rows``, dropping the editor's edits."""
-    own["rows"] = own["seed"] = rows
+def reset(key: str) -> None:
+    """The table starts again from its owner's BoughtParts, its edits
+    dropped (rows were read from a file, or the owner is gone)."""
+    st.session_state.get(SEEDS, {}).pop(key, None)
     st.session_state.pop(key, None)

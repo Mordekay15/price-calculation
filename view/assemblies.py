@@ -25,23 +25,21 @@ BOM lines, then 1 for a part only called out. A number called out that is
 another assembly's makes that one a subassembly (``children``), and a part
 sits in one place: a card in a subassembly is not also in its parent.
 
-Session keys: ``ASSEMBLIES`` holds ``{assembly id (part number, or "hand:…"):
-{"name", "members": {source id: kpl} (STEP or by hand), "drawn": {card id:
-kpl} (its drawing's), "children": {assembly id: kpl}, "bought":
-{"rows", "seed"} (``view.bought``), "auto": STEP file id, "drawing": card id, "fasteners_read": True once
-its drawing's notes are in "bought", "hand": True, …}}``. A
-member is stored by a source id of its card (see ``core.items``), so it
-stays on the right card when the card's files are regrouped."""
+``ASSEMBLIES`` holds ``{assembly id (part number, or "hand:…"): Assembly}``
+(``core.model.Assembly``): where each comes from, its bought parts and work,
+and its ``parts`` (set by ``current``). A STEP or hand member is stored by a
+source id of its card (see ``core.items``), so it stays on the right card
+when the card's files are regrouped."""
 
 from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
-from dataclasses import fields
+from dataclasses import replace
 
 from core.items import NO_BLANK
 from core.linking import base_key
-from core.model import Assembly, AssemblyWork
+from core.model import Assembly
 from view import bom, bought
 from view.ui import is_headless, st
 from view.undo import undoable
@@ -51,20 +49,17 @@ _SEEN = "dxf_assemblies_seen"      # STEP file ids already made into assemblies
 KEYS = (ASSEMBLIES, _SEEN)
 
 
-def _store() -> dict[str, dict]:
+def _store() -> dict[str, Assembly]:
     return st.session_state.setdefault(ASSEMBLIES, {})
 
 
-def _drop_source(aid: str, keys: tuple[str, ...]) -> None:
+def _drop_if_undescribed(aid: str) -> None:
     """A source of an assembly is gone (its STEP file, or its drawing no
-    longer an assembly drawing): what came from it goes, and the assembly
-    with it when nothing else describes it."""
-    store = _store()
-    a = store[aid]
-    for k in keys:
-        a.pop(k, None)
-    if not (a.get("auto") or a.get("drawing") or a.get("hand")):
-        store.pop(aid)
+    longer an assembly drawing): the assembly goes too when nothing else
+    describes it."""
+    if not _store()[aid].described:
+        _store().pop(aid)
+        bought.reset(_widget(aid))
 
 
 def sync_from_models() -> None:
@@ -75,11 +70,11 @@ def sync_from_models() -> None:
     store, seen = _store(), st.session_state.setdefault(_SEEN, set())
     models = bom.models()
     for aid, a in list(store.items()):
-        if a.get("auto") and a["auto"] not in models:
-            names = set(a.get("step_names", ()))
-            bought.reset(a["bought"], [r for r in a["bought"]["rows"]
-                                       if r.get(bought.NAME) not in names], _widget(aid))
-            _drop_source(aid, ("auto", "members", "step_names"))
+        if a.step_file and a.step_file not in models:
+            a.bought = [b for b in a.bought if b.name not in a.step_bought]
+            bought.reset(_widget(aid))
+            a.step_file, a.members, a.step_bought = None, {}, []
+            _drop_if_undescribed(aid)
     seen &= set(models)
     for file_id, m in models.items():
         if file_id in seen:
@@ -87,18 +82,18 @@ def sync_from_models() -> None:
         seen.add(file_id)
         if not bom.is_assembly(file_id):
             continue
-        members, rows = {}, []
+        members, bodies = {}, []
         for p in m["model"].parts:
             flat = m["flats"].get(p.key)
             if flat is not None and flat.is_sheet:
                 members[bom.card_id(file_id, p.key)] = p.qty
             else:
-                rows.append(bought.body_row(p.name, p.qty, m["name"]))
+                bodies.append(bought.body_part(p.name, p.qty, m["name"]))
         name = m["name"].rsplit(".", 1)[0]
         aid = part_number(name)
-        a = store.setdefault(aid, {"name": name, "bought": _table()})
-        a.update(members=members, auto=file_id, step_names=[r[bought.NAME] for r in rows])
-        _add_rows(aid, a, rows)
+        a = store.setdefault(aid, Assembly(aid, name))
+        a.step_file, a.members, a.step_bought = file_id, members, [b.name for b in bodies]
+        _add_bought(a, bodies)
 
 
 def part_number(name: str) -> str:
@@ -131,37 +126,34 @@ def sync_from_drawings(items: dict, facts: Callable[[str], list]) -> None:
         if expects:
             drawings[cid] = (part_number(item.names[cid]), expects, kpl)
     for aid, a in list(store.items()):
-        if a.get("drawing") and a["drawing"] not in drawings:
-            _drop_source(aid, ("drawing", "drawn", "children", "awaited", "fasteners_read"))
+        if a.drawing and a.drawing not in drawings:
+            a.drawing, a.drawn, a.children, a.awaited, a.fasteners_read = None, {}, {}, [], False
+            _drop_if_undescribed(aid)
     # The part numbers that are assemblies (one joined by hand has none).
     numbers = {pn for pn, _, _ in drawings.values()} | {
-        aid for aid, a in store.items() if not a.get("hand")}
+        aid for aid, a in store.items() if not a.by_hand}
     for cid, (pn, expects, kpl) in drawings.items():
-        a = store.setdefault(pn, {"name": pn.upper(), "bought": _table()})
-        a["drawing"] = cid
+        a = store.setdefault(pn, Assembly(pn, pn.upper()))
+        a.drawing = cid
         found = {k: other for k in expects for other, ks in keys.items()
                  if k in ks and k not in numbers}
-        a["children"] = {k: kpl.get(k, 1) for k in expects if k in numbers and k != pn}
-        a["drawn"] = {c: kpl.get(k, 1) for k, c in found.items()}
-        named = {base_key(str(r.get(bought.NAME) or "")) for r in a["bought"]["rows"]}
-        a["awaited"] = [k.upper() for k in expects
-                        if k not in found and k not in a["children"] and k not in named]
-
-
-def _table() -> dict:
-    """An assembly's Ostetut osat: ``{"rows", "seed"}`` (see ``view.bought``)."""
-    return {"rows": [], "seed": []}
+        a.children = {k: kpl.get(k, 1) for k in expects if k in numbers and k != pn}
+        a.drawn = {c: kpl.get(k, 1) for k, c in found.items()}
+        named = {base_key(b.name) for b in a.bought}
+        a.awaited = [k.upper() for k in expects
+                     if k not in found and k not in a.children and k not in named]
 
 
 def _widget(aid: str) -> str:
     return f"asm_bought_{aid}"
 
 
-def _add_rows(aid: str, a: dict, rows: list[dict]) -> None:
-    """Rows read from a file, added to an assembly's Ostetut osat (the ones
-    typed in kept)."""
-    if rows:
-        bought.reset(a["bought"], [*a["bought"]["rows"], *rows], _widget(aid))
+def _add_bought(a: Assembly, parts: list) -> None:
+    """Bought parts read from a file, added to an assembly's Ostetut osat
+    (the ones typed in kept); its table starts again from them."""
+    if parts:
+        a.bought = [*a.bought, *parts]
+        bought.reset(_widget(a.id))
 
 
 def sync_drawing_fasteners(lines: dict[str, list[tuple[str, int]]],
@@ -169,11 +161,11 @@ def sync_drawing_fasteners(lines: dict[str, list[tuple[str, int]]],
     """An assembly drawing's fastener notes (``lines`` by drawing card) are
     its assembly's bought parts, added once. A part's own fasteners are not
     here: they stay on its card (``view.work``), wherever the part goes."""
-    for aid, a in _store().items():
-        cid = a.get("drawing")
-        if cid and lines.get(cid) and not a.get("fasteners_read"):
-            a["fasteners_read"] = True
-            _add_rows(aid, a, bought.fastener_rows(lines[cid], material(cid), "piirustus"))
+    for a in _store().values():
+        cid = a.drawing
+        if cid and lines.get(cid) and not a.fasteners_read:
+            a.fasteners_read = True
+            _add_bought(a, bought.fastener_parts(lines[cid], material(cid), "piirustus"))
 
 
 def join(cids: list[str], name: str) -> None:
@@ -181,27 +173,27 @@ def join(cids: list[str], name: str) -> None:
     assembly. Their fasteners stay on their cards."""
     if not cids:
         return
-    _store()[f"hand:{uuid.uuid4().hex[:8]}"] = {
-        "name": name.strip() or "Kokoonpano", "members": {cid: 1 for cid in cids},
-        "bought": _table(), "hand": True}
+    aid = f"hand:{uuid.uuid4().hex[:8]}"
+    _store()[aid] = Assembly(aid, name.strip() or "Kokoonpano",
+                             members={cid: 1 for cid in cids}, by_hand=True)
 
 
 def drawings() -> dict[str, str]:
     """``{assembly id: card id}`` of the assemblies made from a drawing: that
     card is the assembly's drawing, not one of its parts."""
-    return {aid: a["drawing"] for aid, a in _store().items() if a.get("drawing")}
+    return {aid: a.drawing for aid, a in _store().items() if a.drawing}
 
 
-def _cards_of(a: dict, card_of: dict[str, str]) -> dict[str, int]:
+def _cards_of(a: Assembly, card_of: dict[str, str]) -> dict[str, int]:
     """An assembly's own cards with their kpl (members whose card is gone
     left out): the STEP model's (or joined by hand) first, then the ones its
     drawing calls out that the model doesn't have."""
     out: dict[str, int] = {}
-    for sid, n in a.get("members", {}).items():
+    for sid, n in a.members.items():
         cid = card_of.get(sid)
         if cid is not None and n > 0:
             out[cid] = max(out.get(cid, 0), int(n))
-    for cid, n in a.get("drawn", {}).items():
+    for cid, n in a.drawn.items():
         if cid in card_of.values() and n > 0:
             out.setdefault(cid, int(n))
     return out
@@ -215,7 +207,7 @@ def _tree_cards(card_of: dict[str, str]) -> dict[str, dict[str, int]]:
 
     def below(aid: str, seen: set[str]) -> set[str]:
         out: set[str] = set()
-        for c in store[aid].get("children", {}):
+        for c in store[aid].children:
             if c in store and c not in seen:
                 out |= set(own[c]) | below(c, seen | {c})
         return out
@@ -224,21 +216,16 @@ def _tree_cards(card_of: dict[str, str]) -> dict[str, dict[str, int]]:
 
 
 def current(card_of: dict[str, str]) -> list[Assembly]:
-    """The assemblies as priced: members by card id, bought parts, work."""
-    out = []
+    """The assemblies, each with its ``parts`` (cards × kpl) as the cards now
+    stand."""
     cards = _tree_cards(card_of)
     for aid, a in _store().items():
-        work = AssemblyWork(**{f: float(st.session_state.get(f"asm_{f}_{aid}", d))
-                               for f, d in _WORK_DEFAULTS.items()})
-        out.append(Assembly(aid, a["name"], tuple(cards[aid].items()),
-                            bought.parts(a["bought"]["rows"]), work,
-                            tuple((c, int(n)) for c, n in a.get("children", {}).items())))
-    return out
+        a.parts = cards[aid]
+    return list(_store().values())
 
 
 # ── The panel ─────────────────────────────────────────────────────────────────
 
-_WORK_DEFAULTS = {f.name: f.default for f in fields(AssemblyWork)}
 _WORK_LABELS = {
     "fit_min": ("Kokoonpanotyö (min/kok.)", 1.0, "Osien kokoaminen yhdeksi kokoonpanoksi."),
     "weld_m": ("Hitsaus (m/kok.)", 0.1, "Osien hitsaus yhteen. Hinnoitellaan sivupalkin "
@@ -270,8 +257,8 @@ def render(card_of: dict[str, str], draw_cards: Callable[[str, dict[str, int]], 
                      "hinnoitellaan määrällä eräkoko × kpl / kokoonpano. STEP-kokoonpano "
                      "tehdään tänne automaattisesti.")
     cards = _tree_cards(card_of)
-    parents = {c: (b["name"], n) for b in store.values()
-               for c, n in b.get("children", {}).items() if c in store}
+    parents = {c: (b.name, n) for b in store.values()
+               for c, n in b.children.items() if c in store}
     for aid in list(store):
         _render_one(aid, store[aid], cards[aid], draw_cards, remove_card, card_of,
                     parents.get(aid))
@@ -296,38 +283,39 @@ def _join_picked() -> None:
     ss["asm_new_parts"], ss["asm_new_name"] = [], ""
 
 
-_ORIGIN = {
-    "auto": "Tehty STEP-mallista: osat ja määrät mallin rakenteesta.",
-    "drawing": "Tehty kokoonpanopiirustuksesta: osat ovat piirustuksessa mainitut "
-               "osanumerot, 1 kpl / kokoonpano kukin. Tarkista määrät piirustuksesta.",
-    "hand": "Yhdistetty käsin: toisiinsa kiinnitetyt osat.",
-}
+def _origin(a: Assembly) -> str | None:
+    if a.step_file:
+        return "Tehty STEP-mallista: osat ja määrät mallin rakenteesta."
+    if a.drawing:
+        return ("Tehty kokoonpanopiirustuksesta: osat ovat piirustuksessa mainitut "
+                "osanumerot, 1 kpl / kokoonpano kukin. Tarkista määrät piirustuksesta.")
+    return "Yhdistetty käsin: toisiinsa kiinnitetyt osat." if a.by_hand else None
 
 
-def _render_one(aid: str, a: dict, cards: dict[str, int],
+def _render_one(aid: str, a: Assembly, cards: dict[str, int],
                 draw_cards: Callable[[str, dict[str, int]], None],
                 remove_card: Callable[[str], None], card_of: dict[str, str],
                 parent: tuple[str, int] | None) -> None:
     with st.container(border=True):
         c1, c2 = st.columns([6, 1], vertical_alignment="bottom")
-        a["name"] = c1.text_input("Kokoonpano", value=a["name"], key=f"asm_name_{aid}",
-                                  help=_ORIGIN.get(next((k for k in _ORIGIN if a.get(k)), "")))
-        c2.button("Pura" if a.get("hand") else "Poista", key=f"asm_del_{aid}",
-                  on_click=undoable(_remove, f"kokoonpano {a['name']}"),
+        a.name = c1.text_input("Kokoonpano", value=a.name, key=f"asm_name_{aid}",
+                               help=_origin(a))
+        c2.button("Pura" if a.by_hand else "Poista", key=f"asm_del_{aid}",
+                  on_click=undoable(_remove, f"kokoonpano {a.name}"),
                   args=(aid, card_of, remove_card),
-                  help="Purkaa kokoonpanon: osat jäävät irto-osiksi." if a.get("hand") else
+                  help="Purkaa kokoonpanon: osat jäävät irto-osiksi." if a.by_hand else
                   "Poistaa kokoonpanon ja sen osat (kortit, piirustuksen ja STEP-mallin).")
-        if a.get("awaited"):
+        if a.awaited:
             st.warning("Piirustuksessa on osia, joita ei ole ladattu: "
-                       + ", ".join(a["awaited"]) + ". Lataa niiden DXF- tai STEP-tiedostot, "
+                       + ", ".join(a.awaited) + ". Lataa niiden DXF- tai STEP-tiedostot, "
                        "tai lisää ne alle ostettuina osina.")
         if parent is not None:
             st.caption(f"Alikokoonpano: {parent[1]} kpl kokoonpanossa {parent[0]}, "
                        "hinnoitellaan siinä.")
         store = _store()
-        if kids := {c: n for c, n in a.get("children", {}).items() if c in store}:
+        if kids := {c: n for c, n in a.children.items() if c in store}:
             st.caption("Alikokoonpanot: " + " · ".join(
-                f"🧩 {store[c]['name']} × {n}" for c, n in kids.items()))
+                f"🧩 {store[c].name} × {n}" for c, n in kids.items()))
         draw_cards(aid, cards)
         _render_work(aid, a)
 
@@ -336,25 +324,25 @@ def _remove(aid: str, card_of: dict[str, str], remove_card: Callable[[str], None
     """The assembly's "Poista": it goes with its parts' cards (a card in
     another assembly too stays), its drawing and its STEP file."""
     store = _store()
-    a = store.pop(aid, {})
-    if a.get("hand"):       # only undone: its parts are loose again
+    a = store.pop(aid, None)
+    if a is None or a.by_hand:       # only undone: its parts are loose again
         return
     others = {c for b in store.values() for c in _cards_of(b, card_of)}
-    for cid in [*_cards_of(a, card_of), *filter(None, [a.get("drawing")])]:
+    for cid in [*_cards_of(a, card_of), *filter(None, [a.drawing])]:
         if cid not in others:
             remove_card(cid)
-    if a.get("auto"):
-        bom.remove_model(a["auto"])
+    if a.step_file:
+        bom.remove_model(a.step_file)
 
 
-def _render_work(aid: str, a: dict) -> None:
-    """The bought parts and the assembly work."""
+def _render_work(aid: str, a: Assembly) -> None:
+    """The bought parts and the assembly work, written back to the Assembly."""
     st.markdown("Ostetut osat", help=bought.HELP + " Kpl on kokoonpanoa kohden.")
-    bought.editor(a["bought"], _widget(aid), "Kpl / kokoonpano")
+    a.bought = bought.editor(a.bought, _widget(aid), "Kpl / kokoonpano")
 
     cols = st.columns(len(_WORK_LABELS))
+    work = {}
     for col, (f, (label, step, help_)) in zip(cols, _WORK_LABELS.items()):
-        col.number_input(label, min_value=0.0, step=step, help=help_,
-                         value=float(st.session_state.get(f"asm_{f}_{aid}",
-                                                          _WORK_DEFAULTS[f])),
-                         key=f"asm_{f}_{aid}")
+        work[f] = col.number_input(label, min_value=0.0, step=step, help=help_,
+                                   value=float(getattr(a.work, f)), key=f"asm_{f}_{aid}")
+    a.work = replace(a.work, **work)

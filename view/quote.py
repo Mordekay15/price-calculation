@@ -168,7 +168,7 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
             kg = sum(pc.kg * pc.product["qty"] for pc in costs
                      if group_of[pc.product["id"]] == k)
             group_sheets[k] = GroupSheets(totals[k], sheets[k], kg)
-    assemblies = [a for a in assemblies or [] if a.members or a.bought or a.children]
+    assemblies = [a for a in assemblies or [] if a.parts or a.bought or a.children]
     in_assembly = per_unit(assemblies)
     parts = [BatchPart(pc.product["id"], group_of[pc.product["id"]], pc.kg,
                        pc.product.get("work"), in_assembly.get(pc.product["id"], 1))
@@ -195,8 +195,8 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
     for a in assemblies:
         priced.append((a, units, tree[a.id]))
     for a in tops(assemblies):
-        contents = tuple([f"{names.get(pid, '?')} × {n}" for pid, n in a.members]
-                         + [f"{asm_names[c]} × {n}" for c, n in a.children if c in tree]
+        contents = tuple([f"{names.get(pid, '?')} × {n}" for pid, n in a.parts.items()]
+                         + [f"{asm_names[c]} × {n}" for c, n in a.children.items() if c in tree]
                          + [f"{b.name} × {b.qty}" for b in a.bought])
         prices = tuple(tree[a.id])
         lines.append(QuoteLine(a.name, prices=prices, parts=contents or ("—",)))
@@ -310,11 +310,11 @@ def _assembly_rows(a: Assembly, depth: int, by_id: dict[str, Assembly], tree: di
     subassemblies (each with its rows, one step in), bought parts and work."""
     pad = "\u2003" * depth
     rows = []
-    for pid, k in a.members:
+    for pid, k in a.parts.items():
         rows.append({"name": f"{pad}└ {names.get(pid, '?')} × {k}", "per": k,
                      "units": [None if u is None else u * k for u in units.get(pid, [None] * n)]})
         rows += _bought_rows(works.get(pid), k, depth + 1, n)
-    for c, k in a.children:
+    for c, k in a.children.items():
         if c in tree:
             rows.append({"name": f"{pad}└ 🧩 {by_id[c].name} × {k}", "per": k,
                          "units": [None if p.unit is None else p.unit * k for p in tree[c]]})
@@ -398,9 +398,9 @@ def _render_breakdown(costs, names: dict[str, str], by_part: dict[str, list],
             w = a.work
             parts = " + ".join(
                 f"{names.get(pid, '?')} {n} × {_eur(units[pid][i] if pid in units else None)}"
-                for pid, n in a.members)
+                for pid, n in a.parts.items())
             kids = " + ".join(f"🧩 {asm_names.get(c, '?')} {n} × {_eur(tree[c][i].unit)}"
-                              for c, n in a.children if c in tree)
+                              for c, n in a.children.items() if c in tree)
             parts = " + ".join(filter(None, [parts, kids])) or "—"
             bought = " + ".join(f"{b.name} {b.qty} × ({b.eur:,.2f} + {b.fit_eur:,.2f})"
                                 for b in a.bought) or "—"

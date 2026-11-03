@@ -22,10 +22,10 @@ from core.linking import bom_quantities as _bom_quantities
 from core.model import InputFile, Part, PartSource, file_kind
 from core.step import available as step_available
 from core.step import bends_on
-from view import assemblies, attachments, bom, files, material_agent
+from view import assemblies, attachments, bom, bought, files, material_agent
 from view.common import thicknesses_for
 from view.ui import ids_in, st
-from view.work import AUTO_SHOWN, PART_BOUGHT
+from view.work import AUTO_SHOWN
 
 STORE   = "dxf_store"         # {card id: DxfFile}: each card's chosen shape
 REPORTS = "dxf_part_reports"  # {card id: DxfReport}
@@ -360,12 +360,10 @@ def sync() -> list[tuple[str, DxfFile]]:
             was.id, was.sources, was.chosen, was.blank = cid, sources, chosen, blank
             new[cid] = was
     ss[STORE], ss[PARTS] = store, new
-    # A card gone (removed, or joined to another when a drawing came) leaves
-    # no Ostetut osat behind.
-    bought = ss.get(PART_BOUGHT, {})
-    for cid in [c for c in bought if c not in store]:
-        del bought[cid]
-        ss.pop(f"work_bought_{cid}", None)
+    # A card gone (removed, or joined to another when a drawing came) takes
+    # its Ostetut osat table with it.
+    for cid in old.keys() - new.keys():
+        bought.reset(f"work_bought_{cid}")
     return list(store.items())
 
 
@@ -561,7 +559,7 @@ def evict_all() -> None:
     for key in (bom.MODELS, *files.KEYS, PARTS, _HIDDEN, _SRC_REPORTS, FILL_ASKED,
                 _DUPES, _SKIPPED,   # these warnings name files that are gone
                 _BEND_LINES,
-                AUTO_SHOWN, PART_BOUGHT, *material_agent.KEYS, *assemblies.KEYS):
+                AUTO_SHOWN, bought.SEEDS, *material_agent.KEYS, *assemblies.KEYS):
         st.session_state.pop(key, None)
 
 

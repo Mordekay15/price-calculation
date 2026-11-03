@@ -302,7 +302,7 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
         parts = sync()
         assemblies.sync_from_models()
         _render_part_cards(parts, ["S235"], {("2", "S235 | 1000x2000"): 900.0}, False)
-        st.session_state["asm"] = [(a.name, dict(a.members),
+        st.session_state["asm"] = [(a.name, dict(a.parts),
                                     [(b.name, b.qty, b.fit_eur) for b in a.bought])
                                    for a in assemblies.current(source_cards())]
         st.session_state["parts"] = [(fid, d.name) for fid, d in parts]

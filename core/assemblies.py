@@ -64,7 +64,7 @@ def _children(assemblies: list[Assembly]) -> dict[str, list[tuple[str, int]]]:
     """Each assembly's subassemblies, those making a loop (or not there) left
     out, so the tree can be walked."""
     ids = {a.id for a in assemblies}
-    kids = {a.id: [(c, int(n)) for c, n in a.children if c in ids and n > 0]
+    kids = {a.id: [(c, int(n)) for c, n in a.children.items() if c in ids and n > 0]
             for a in assemblies}
 
     def reaches(start: str, goal: str, seen: set[str]) -> bool:
@@ -110,7 +110,7 @@ def per_unit(assemblies: list[Assembly]) -> dict[str, int]:
     n_of = counts(assemblies)
     out: dict[str, int] = {}
     for a in assemblies:
-        for pid, n in a.members:
+        for pid, n in a.parts.items():
             out[pid] = out.get(pid, 0) + int(n) * n_of.get(a.id, 0)
     return out
 
@@ -143,7 +143,8 @@ def assembly_prices(assembly: Assembly, part_units: dict[str, list[float | None]
     €/kpl at each size (``BatchPrice.unit``), priced at ``q × kpl/kokoonpano``,
     and each subassembly's (``children``, by default the assembly's own)."""
     bought = sum(b.qty * b.unit for b in assembly.bought)
-    rows = [*assembly.members, *(assembly.children if children is None else children)]
+    rows = [*assembly.parts.items(),
+            *(assembly.children.items() if children is None else children)]
     out = []
     for i, q in enumerate(sizes):
         units = [(part_units.get(pid, [None] * len(sizes))[i], n) for pid, n in rows]

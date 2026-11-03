@@ -2,7 +2,7 @@
 inputs on every part card (both tabs), and each product's work cost with the
 per-sheet cutting minimum applied by group (see ``core.work``)."""
 
-from core.model import BoughtPart
+from core.model import BoughtPart, Part
 from core.pricing import parse_thickness_mm
 from core.work import (
     FASTENER_INSERT_EUR,
@@ -33,10 +33,6 @@ _RATE_KEYS = {          # WorkRates field -> sidebar widget key
 }
 _SETUP_KEYS = ("work_setup_1", "work_setup_2", "work_setup_3")
 RATE_KEYS = (*_RATE_KEYS.values(), *_SETUP_KEYS)    # the sidebar's, kept by "Tyhjennä kaikki"
-
-# A card's Ostetut osat (its fasteners…): ``{card key: {"read": the lines they
-# were read from, "rows", "seed"}}`` (see ``view.bought``).
-PART_BOUGHT = "dxf_part_bought"
 
 
 # ── Sidebar: the shop's rates ─────────────────────────────────────────────────
@@ -108,14 +104,14 @@ def auto_input(col, label: str, key: str, auto: float | None, *, step: float,
 def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
                        qty: int, cut_length_m: float, bends: int = 0,
                        threads: int = 0, fasteners: int = 0,
-                       bought: tuple[list[tuple[str, int]], str] | None = None,
+                       bought: tuple[Part, list[tuple[str, int]], str] | None = None,
                        in_assembly: bool = False) -> WorkInputs:
     """The card's "Työvaiheet": cutting, bends, threads, fasteners,
     welding, subcontracting and setup. ``cut_length_m``, ``bends``,
     ``threads`` and ``fasteners`` are what the drawing gives (the defaults,
     overwritable); the laser speed comes from the table. ``key`` makes the
-    widget keys unique per card. ``bought`` (the DXF tab: the fastener lines
-    the drawing calls out and the file they are in) makes the fasteners the
+    widget keys unique per card. ``bought`` (the DXF tab: the card's Part, the
+    fastener lines its drawing calls out and the file they are in) makes the fasteners the
     part's own Ostetut osat, row by row, instead of a count; they stay on the
     card in an assembly too. A card ``in_assembly`` has no welding: the
     assembly welds its parts together."""
@@ -182,7 +178,7 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
                                                help="Yhden kiinnikkeen asennus (puristus).")
             weld_col = c[3]
         else:                   # the DXF tab: the part's own Ostetut osat
-            bought_parts = render_part_bought(key, *bought, material=material)
+            bought_parts = render_part_bought(*bought, material=material)
             n_fasteners = sum(b.qty for b in bought_parts)
             eur_per_fastener, eur_per_insert = 0.0, 0.0
             weld_col = None if in_assembly else st.columns(4)[0]
@@ -217,24 +213,23 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
     return inputs
 
 
-def render_part_bought(key: str, lines: list[tuple[str, int]], source: str, *,
+def render_part_bought(part, lines: list[tuple[str, int]], source: str, *,
                        material: str | None) -> tuple[BoughtPart, ...]:
-    """The part's Ostetut osat: the fasteners its drawing calls out (``lines``
-    in ``source``), each with its price and putting in, editable; rows can be
-    added by hand. Read again (and the edits dropped) only when the drawing's
-    lines change."""
-    store = st.session_state.setdefault(PART_BOUGHT, {})
-    widget = f"work_bought_{key}"
+    """The part's Ostetut osat (``Part.bought``): the fasteners its drawing
+    calls out (``lines`` in ``source``), each with its price and putting in,
+    editable; rows can be added by hand. Read again (and the edits dropped)
+    only when the drawing's lines change."""
+    widget = f"work_bought_{part.id}"
     read = [list(x) for x in lines]
-    own = store.setdefault(key, {})
-    if own.get("read") != read:
-        own["read"] = read
-        bought.reset(own, bought.fastener_rows(lines, material, source), widget)
-    st.markdown(f"Ostetut osat ({len(own['rows'])})" if own["rows"] else "Ostetut osat",
+    if part.bought_lines != read:
+        part.bought_lines = read
+        part.bought = bought.fastener_parts(lines, material, source)
+        bought.reset(widget)
+    st.markdown(f"Ostetut osat ({len(part.bought)})" if part.bought else "Ostetut osat",
                 help=bought.HELP + " Luetaan piirustuksen teksteistä, ja ne pysyvät osan "
                      "mukana myös kokoonpanossa.")
-    bought.editor(own, widget, "Kpl / osa")
-    return bought.parts(own["rows"])
+    part.bought = bought.editor(part.bought, widget, "Kpl / osa")
+    return tuple(part.bought)
 
 
 def _speed_help(material: str | None) -> str:
