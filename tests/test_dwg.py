@@ -138,14 +138,21 @@ def test_a_dwg_with_a_broken_objects_section_reads_in_full(no_oda, monkeypatch, 
     assert round(part.outline.width_mm) == 300 and part.bends == 1
 
 
-def test_an_embedded_ole_object_is_not_a_problem():
-    # M3440659-00.dwg's sheet has one (a picture from another program): left
-    # as unreadable, it kept the part from being priced.
+def test_an_entity_that_cant_be_read_is_skipped_and_logged(caplog):
+    # M3440659-00.dwg's sheet has an OLE2FRAME (an object embedded from
+    # another program): it used to keep the part from being priced.
+    import logging
+
     from core.dxf import read_dxf
 
     doc = ezdxf.new()
     doc.header["$INSUNITS"] = 4
     rect(doc.modelspace(), 0, 0, 300, 200)
-    doc.modelspace().new_entity("OLE2FRAME", {"layer": "0"})
-    f = read_dxf(dxf_bytes(doc), "plate.dxf")
-    assert f.unreadable == {} and f.part().problems == []
+    doc.modelspace().new_entity("OLE2FRAME", {"layer": "LOGO"})
+    with caplog.at_level(logging.WARNING, logger="core.dxf"):
+        f = read_dxf(dxf_bytes(doc), "plate.dxf")
+    assert f.unreadable == {"LOGO": {"OLE2FRAME": 1}}
+    part = f.part({"0", "LOGO"})
+    assert part.problems == [] and round(part.outline.width_mm) == 300
+    assert [r.getMessage() for r in caplog.records] == [
+        "plate.dxf: skipped what can't be read on layer 'LOGO': OLE2FRAME ×1"]

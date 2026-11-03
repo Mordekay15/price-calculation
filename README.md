@@ -532,6 +532,10 @@ the price all use the same result.
   ¾-circle around a hole).
 - **Slits**: a single straight line inside the part (louvres, lanced slits)
   is cut as a line and counted in the cut length.
+- **Skipped**: a kind of drawing object the reader can't use yet (an embedded
+  OLE object, a 3D solid, …) is left out, and the console says so, e.g.
+  `M3440659-00.dwg: skipped what can't be read on layer '0': OLE2FRAME ×1`.
+  It never stops the part from being priced.
 - **Not priced**, with the reason shown on the card: the file can't be read,
   there is no closed outline, an open line that isn't straight sits inside
   the part (a gap in a hole's outline), or an outline crosses itself.

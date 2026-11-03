@@ -5,6 +5,7 @@ priced (see "How a DXF file is read" in the README)."""
 from __future__ import annotations
 
 import io
+import logging
 import math
 import re
 import sys
@@ -27,6 +28,8 @@ from core.geometry import (
 )
 
 Point = tuple[float, float]
+
+_log = logging.getLogger(__name__)
 
 # Curve flattening tolerance in *drawing units* (arcs/circles/bulges are
 # approximated by segments no further than this from the true curve).
@@ -51,7 +54,6 @@ _ANNOTATION_TYPES = {
     "HATCH", "POINT", "VIEWPORT", "WIPEOUT",
     "SOLID", "TRACE",   # filled 2D shapes: a dimension's exploded arrowheads
     "IMAGE",            # a raster picture (a scanned view): nothing to cut
-    "OLE2FRAME",        # an object embedded from another program: nothing to cut
 }
 
 # Layer-name fragments that mark a layer as drawing furniture or reference
@@ -219,7 +221,9 @@ class DxfFile:
     # length: a view drawn at 1:10 on a 1:1 sheet has its dimensions at 10.
     dimensions: list[tuple[Point, Point, float, float]] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)          # file-level
-    unreadable: dict[str, dict[str, int]] = field(default_factory=dict)  # layer -> type -> n
+    # Entities of types the reader can't use (layer -> type -> n): skipped,
+    # and logged to the console when the file is read (see ``read_dxf``).
+    unreadable: dict[str, dict[str, int]] = field(default_factory=dict)
     # The part from the default layers, once built (see ``part``).
     _default: DxfReport | None = field(default=None, repr=False, compare=False)
 
@@ -255,16 +259,6 @@ class DxfFile:
         chosen = set(self.suggested_layers() if layers is None else layers)
         report = DxfReport(name=self.name, unit_label=self.unit_label,
                            problems=list(self.problems))
-
-        unreadable: dict[str, int] = defaultdict(int)
-        for layer in chosen:
-            for etype, n in self.unreadable.get(layer, {}).items():
-                unreadable[etype] += n
-        if unreadable:
-            listed = ", ".join(f"{t} ×{n}" for t, n in sorted(unreadable.items()))
-            report.problems.append(
-                f"Valituilla tasoilla on elementtejä, joita ei vielä osata lukea: {listed}."
-            )
 
         if self.problems and not self.pieces:
             return report  # the file couldn't be read: its own problem says why
@@ -709,6 +703,10 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
         if extracted is not None:
             pts, closed = extracted
             f.pieces.append(_Piece(pts, closed, layer, not _is_dashed(entity, doc)))
+
+    for layer, counts in sorted(f.unreadable.items()):
+        listed = ", ".join(f"{t} ×{n}" for t, n in sorted(counts.items()))
+        _log.warning("%s: skipped what can't be read on layer %r: %s", name, layer, listed)
 
     if unit_code is None:
         if _iso_sheet([pt for p in f.pieces for pt in p.points]):
