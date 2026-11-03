@@ -547,6 +547,12 @@ has no limit.
    fasteners) or on an assembly.
 5. Nesting and price, computed.
 
+In the app so far: a card (`view.dxf_files.Item`) is its `PartSource`s, each
+with how it joined the card (`part_number`, `text` or `folder`), its
+FlatShape, score and note. A STEP body's card is built straight from its
+FlatShape. A part's fasteners are its own Ostetut osat, and assemblies are
+one per part number, with subassemblies.
+
 ## How a DXF file is read
 
 `core/dxf.py` reads each file once. The card preview, the Sparrow nesting and

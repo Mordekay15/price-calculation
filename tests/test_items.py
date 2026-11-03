@@ -22,8 +22,12 @@ def test_a_parts_files_are_one_item_and_its_drawing_joins_it():
         Source("s|1", "Part1.step", "step", keys={"part1", "3aua0000098622"}),
     ]
     drawings = {"dwg"}
-    assert group_sources(sources, lambda sid: sid in drawings) == [
+    linked = {}
+    assert group_sources(sources, lambda sid: sid in drawings, linked=linked) == [
         ["dwg", "dxf"], ["p1", "p2", "s|1"], ["other"]]
+    # How each file came onto its card (PartSource.linked_by).
+    assert linked == {"dwg": "text", "dxf": "part_number", "p1": "part_number",
+                      "p2": "part_number", "other": "part_number", "s|1": "part_number"}
 
 
 def test_a_part_that_mentions_another_part_number_keeps_its_card():
@@ -88,8 +92,10 @@ def test_a_drawing_that_names_no_part_joins_the_item_in_its_folder():
                Source("other", "100325.dxf", "dxf", [], folder="100325"),
                Source("lone", "DRW-9.dwg", "dxf", [], folder="")]
     drawings = {"dwg", "lone"}
-    assert group_sources(sources, lambda sid: sid in drawings) == [
+    linked = {}
+    assert group_sources(sources, lambda sid: sid in drawings, linked=linked) == [
         ["dwg", "dxf"], ["other"], ["lone"]]
+    assert (linked["dwg"], linked["lone"]) == ("folder", "part_number")
     # Two items in one folder: the drawing can't tell which, it stays apart.
     sources[2] = Source("other", "100325.dxf", "dxf", [], folder="ITM-072558")
     assert group_sources(sources, lambda sid: sid in drawings) == [

@@ -587,11 +587,20 @@ def test_a_zip_of_item_folders_becomes_one_card_per_folder():
         st.session_state["links"] = {items[c].names[c]: len(ids)
                                      for c, ids in card_docs().items()}
         st.session_state["skipped"] = st.session_state.get("dxf_skipped")
+        st.session_state["sources"] = sorted(
+            (s.name, s.linked_by, s.valid, bool(s.shape and s.shape.outline))
+            for item in items.values() for s in item.sources)
 
     at = AppTest.from_function(page, default_timeout=30).run()
     assert not at.exception
     assert at.session_state["cards"] == [["100325.dxf"],
                                          ["DRW-023179_A.dxf", "ITM-072558_A.dxf"]]
+    # Each file on a card is a PartSource: how it came there, and its shape.
+    srcs = at.session_state["sources"]
+    assert [(n, how) for n, how, _, _ in srcs] == [
+        ("100325.dxf", "part_number"), ("DRW-023179_A.dxf", "folder"),
+        ("ITM-072558_A.dxf", "part_number")]
+    assert srcs[2][2:] == (True, True)
     # The PDF names no part: it goes to the card of its folder.
     assert at.session_state["links"] == {"DRW-023179_A.dxf": 1}
     assert sorted(at.session_state["skipped"]) == ["100325.dxf.bak", "ITM-072558.prt.1"]

@@ -50,17 +50,22 @@ class Source:
 
 
 def group_sources(sources: list[Source], is_drawing=lambda source_id: True,
-                  pdf_text=lambda key: "") -> list[list[str]]:
+                  pdf_text=lambda key: "", linked: dict[str, str] | None = None
+                  ) -> list[list[str]]:
     """The items: lists of source ids, each in drop order, the items in the
     order of their first file. A group joins another by its texts only when
     ``is_drawing`` says each of its files is a drawing (not a flat part of
     its own that merely mentions another part number). ``pdf_text(key)`` is
-    the text of the PDFs of a part number (``base_key``), "" when none."""
+    the text of the PDFs of a part number (``base_key``), "" when none.
+    ``linked``, when given, gets how each source joined its item
+    (``part_number``, ``text`` or ``folder``, see ``core.model.PartSource``)."""
+    linked = {} if linked is None else linked
     groups: dict[str, list[Source]] = {}
     for s in sources:
         keys = s.part_keys()
         key = next((k for k in sorted(keys) if k in groups), None) or sorted(keys)[0]
         groups.setdefault(key, []).append(s)
+        linked[s.id] = "part_number"
 
     # A group named otherwise whose texts name exactly one other group's part
     # number is that part's drawing: it joins it.
@@ -71,6 +76,7 @@ def group_sources(sources: list[Source], is_drawing=lambda source_id: True,
         found = link_by_text(others, {"x": texts})
         if found:
             target = next(iter(found))
+            linked.update({s.id: "text" for s in groups[key]})
             groups[target].extend(groups.pop(key))
 
     # A drawing still on its own joins the one other item in its folder (a
@@ -81,6 +87,7 @@ def group_sources(sources: list[Source], is_drawing=lambda source_id: True,
         others = [k for k, ms in groups.items()
                   if folder and k != key and any(s.folder == folder for s in ms)]
         if len(others) == 1:
+            linked.update({s.id: "folder" for s in groups[key]})
             groups[others[0]].extend(groups.pop(key))
 
     order = {s.id: i for i, s in enumerate(sources)}

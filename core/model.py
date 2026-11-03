@@ -217,6 +217,8 @@ class PartSource:
     score: float = 0.0
     note: str = ""
     hidden: bool = False
+    name: str = ""                              # as on the card: the file's, or the body's
+    valid: bool = True                          # its shape can be priced
 
 
 @dataclass

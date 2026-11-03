@@ -19,6 +19,8 @@ from core.dxf import DxfFile, DxfReport, fastener_lines
 from core.items import (Choice, Source, choose, group_sources, looks_like_drawing,
                         score_dxf, STEP_CHOICE)
 from core.linking import base_key
+from core.model import FlatShape, PartSource
+from core.readers import shape_from_flat, shape_from_report
 from core.linking import bom_quantities as _bom_quantities
 from core.step import available as step_available
 from core.step import bends_on
@@ -295,14 +297,25 @@ def _unzipped(dropped, skipped: list[str]) -> list:
 
 @dataclass
 class Item:
-    """The files on one card (source ids, drop order), the one priced, and
-    how each scored (see ``core.items``)."""
+    """One card: its files as ``PartSource``s (drop order), the one priced,
+    and the STEP blank's size. ``members``, ``scores`` and ``names`` are
+    views of the sources, for the code that reads them that way."""
 
-    members: list[str]
+    sources: list[PartSource]
     chosen: str
-    scores: dict[str, Choice]
-    names: dict[str, str]
     blank: tuple[float, float] | None = None   # the STEP blank's size, mm
+
+    @property
+    def members(self) -> list[str]:
+        return [s.source_id for s in self.sources]
+
+    @property
+    def scores(self) -> dict[str, Choice]:
+        return {s.source_id: Choice(s.score, s.note, s.valid) for s in self.sources}
+
+    @property
+    def names(self) -> dict[str, str]:
+        return {s.source_id: s.name for s in self.sources}
 
 
 def sync() -> list[tuple[str, DxfFile]]:
@@ -326,8 +339,9 @@ def sync() -> list[tuple[str, DxfFile]]:
     sources = ([Source(fid, d.name, "dxf", list(d.texts), folder=folder_of(fid))
                 for fid, d in files.items()]
                + bom.sources(ss.setdefault(_HIDDEN, set()), folder_of))
+    linked: dict[str, str] = {}
     groups = group_sources(sources, lambda sid: sid in files
-                           and looks_like_drawing(report(sid)), _pdf_texts())
+                           and looks_like_drawing(report(sid)), _pdf_texts(), linked)
     store, items = {}, {}
     for members in groups:
         cid = members[0]
@@ -343,9 +357,23 @@ def sync() -> list[tuple[str, DxfFile]]:
         if cid in old and old[cid].chosen != chosen:
             ss.get(REPORTS, {}).pop(cid, None)
         store[cid] = shape(chosen)
-        items[cid] = Item(members, chosen, scores, {m: shape(m).name for m in members}, blank)
+        items[cid] = Item([PartSource(m, m.split("|", 1)[0], linked.get(m, "part_number"),
+                                      _flat_shape(m, report(m)), scores[m].score,
+                                      scores[m].note, name=shape(m).name,
+                                      valid=scores[m].valid) for m in members],
+                          chosen, blank)
     ss[STORE], ss[ITEMS] = store, items
     return list(store.items())
+
+
+def _flat_shape(sid: str, report: DxfReport) -> FlatShape:
+    """A source's part as the model's FlatShape: a STEP body's straight from
+    its unfolding, a DXF's from the part the DXF reader built."""
+    if bom.is_source(sid):
+        src = bom.source(sid)
+        if src is not None and src[2] is not None and src[2].is_sheet:
+            return shape_from_flat(src[2], sid)
+    return shape_from_report(report, sid)
 
 
 def _pdf_texts():
