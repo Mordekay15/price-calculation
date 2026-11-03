@@ -37,10 +37,6 @@ class ConversionError(Exception):
     """The DWG could not be converted; the message says why, in Finnish."""
 
 
-def is_dwg(name: str) -> bool:
-    return name.lower().endswith(".dwg")
-
-
 def _oda_installed() -> bool:
     try:
         from ezdxf.addons import odafc

@@ -81,7 +81,7 @@ def render_drop_area() -> list[tuple[str, DxfFile]]:
         st.rerun()  # redraw with the drop area empty
     parts = sync()
     sync_assemblies()
-    if not step_available() and any(bom.is_step(d["name"]) for d in attachments.docs().values()):
+    if not step_available() and any(bom.is_step(d.name) for d in attachments.docs().values()):
         st.warning("STEP-malleja ei voi lukea tällä palvelimella: Open CASCADE (cadquery-ocp) "
                    "ei lataudu, yleensä koska libGL puuttuu (packages.txt). Osat hinnoitellaan "
                    "DXF:stä ja piirustuksista ilman STEP-mallia.")
@@ -253,14 +253,18 @@ def add_drawing(f: InputFile, data: bytes) -> None:
     f.status = "read" if files.result(f.id).shapes else "failed"
 
 
+def drawing(fid: str) -> DxfFile | None:
+    """A dropped DXF/DWG as its reader read it (None for other files)."""
+    f = files.get(fid)
+    res = files.result(fid) if f is not None and f.kind in ("dxf", "dwg") else None
+    if res is None:
+        return None
+    return res.record[1] if isinstance(res.record, tuple) else res.record
+
+
 def drawings() -> dict[str, DxfFile]:
     """Every dropped DXF/DWG as its reader read it, in drop order."""
-    out = {}
-    for fid in files.of_kind("dxf", "dwg"):
-        res = files.result(fid)
-        if res is not None:
-            out[fid] = res.record[1] if isinstance(res.record, tuple) else res.record
-    return out
+    return {fid: d for fid in files.of_kind("dxf", "dwg") if (d := drawing(fid)) is not None}
 
 
 def _release_memory() -> None:
@@ -300,6 +304,14 @@ def _unzipped(dropped, skipped: list[str]) -> list:
     return out
 
 
+def _hidden() -> set[str]:
+    """The STEP bodies removed from the cards, of the models still there."""
+    ss = st.session_state
+    ss[_HIDDEN] = {sid for sid in ss.get(_HIDDEN, set())
+                   if files.is_read(sid.split("|", 1)[0])}
+    return ss[_HIDDEN]
+
+
 # ── Parts: one card per part number ───────────────────────────────────────────
 
 def parts() -> dict[str, Part]:
@@ -329,7 +341,8 @@ def cards() -> dict[str, FlatShape]:
 def card_texts(cid: str) -> list[str]:
     """The texts of the card's priced drawing (none for a STEP body)."""
     p = part(cid)
-    return list(getattr(drawings().get(p.chosen if p else cid), "texts", []))
+    d = drawing(p.chosen if p else cid)
+    return list(d.texts) if d is not None else []
 
 
 def sync() -> list[tuple[str, FlatShape]]:
@@ -342,7 +355,7 @@ def sync() -> list[tuple[str, FlatShape]]:
 
     sources = ([Source(fid, d.name, "dxf", list(d.texts), folder=folder_of(fid))
                 for fid, d in dwgs.items()]
-               + bom.sources(ss.setdefault(_HIDDEN, set()), folder_of))
+               + bom.sources(_hidden(), folder_of))
     linked: dict[str, str] = {}
     groups = group_sources(sources, lambda sid: sid in dwgs and files.result(sid).is_drawing,
                            _pdf_texts(), linked)
@@ -379,8 +392,8 @@ def _pdf_texts():
     (a drawing whose title block may name the part it belongs to)."""
     by_key: dict[str, list[str]] = {}
     for d, doc in attachments.docs().items():
-        if doc["kind"] == "pdf":
-            by_key.setdefault(base_key(doc["name"]), []).append(d)
+        if doc.kind == "pdf":
+            by_key.setdefault(base_key(doc.name), []).append(d)
     return lambda key: "\n".join(attachments.text(d) for d in by_key.get(key, []))
 
 
@@ -549,6 +562,10 @@ def evict(fid: str) -> None:
     shown = ss.get(AUTO_SHOWN, {})
     for key in [k for k in shown if ids_in([fid]).search(k)]:
         del shown[key]
+    material_agent.forget(fid)
+    bends = ss.get(_BEND_LINES, {})
+    for key in [k for k in bends if k[0] == fid]:
+        del bends[key]
     sync()
 
 

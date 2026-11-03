@@ -10,7 +10,7 @@ from core.readers import read_dwg_file, read_dxf_file
 
 def read_drawing(data: bytes, name: str):
     """What the DXF/DWG readers give the cards: the file as read."""
-    if dwg.is_dwg(name):
+    if name.lower().endswith(".dwg"):
         return read_dwg_file(data, "f", name).record[1]
     return read_dxf_file(data, "f", name).record
 from tests.conftest import dxf_bytes, rect

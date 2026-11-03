@@ -22,7 +22,6 @@ from core.model import DwgConversion, Fact, FlatBend, FlatShape, ReadResult
 # A part number in a BOM line: a word with five digits in a row, its
 # revision (.A, -revB) taken off by ``base_key``.
 _NUMBER = re.compile(r"(?<![\w.-])(?=[\w.-]*\d{5})[A-Za-z0-9]+(?:[-.][A-Za-z0-9]+)*")
-_ASSEMBLY_TITLE = re.compile(r"\b(assembly|assy|kokoonpano|zsb|zusammenbau)\b", re.IGNORECASE)
 
 
 # ── Facts shared by the DXF and PDF readers ───────────────────────────────────
@@ -90,7 +89,6 @@ def _from_dxf_file(f: DxfFile, file_id: str, name: str, record=None) -> ReadResu
     result = ReadResult(file_id, shapes=[shape], facts=facts, problems=list(f.problems),
                         is_drawing=looks_like_drawing(shape),
                         record=f if record is None else record)
-    result.is_assembly = result.is_drawing and len({f.value for f in result.of("called_out")}) >= 2
     return result
 
 
@@ -133,28 +131,25 @@ def shape_from_flat(flat, origin: str, name: str = "") -> FlatShape:
              for b in flat.bends]
     raw = FlatShape(origin, list(flat.outline), holes=[list(h) for h in flat.holes],
                     markings=[list(b.line) for b in bends], bends=bends)
-    shape = shape_from_report(dxf_file_of(raw, name, flat.thickness_mm).part(), origin)
+    shape = shape_from_report(dxf_file_of(raw, name).part(), origin)
     # The bend lines, laid along with the part, are its markings, in order.
     shape.bends = [FlatBend(tuple(map(tuple, line[:2])), b.angle_deg, b.inner_radius_mm, b.up)
                    for b, line in zip(bends, shape.markings)]
     return shape
 
 
-def dxf_file_of(shape: FlatShape, name: str, thickness_mm: float | None = None) -> DxfFile:
-    """A STEP body's FlatShape as the cards' ``DxfFile``, built straight from
-    it: no DXF written and read back. Its part (``DxfFile.part``) is the
-    shape itself, checked and laid along its length by the DXF reader's own
-    steps; its lines stay on CUT / BEND_UP / BEND_DOWN, and its note gives the
-    thickness to the material panel."""
+def dxf_file_of(shape: FlatShape, name: str) -> DxfFile:
+    """A STEP body's raw FlatShape as a ``DxfFile``, built straight from it
+    (no DXF written and read back), so that its part (``DxfFile.part``) is
+    checked and laid along its length by the DXF reader's own steps (see
+    ``shape_from_flat``). Its lines stay on CUT / BEND_UP / BEND_DOWN."""
     from core.dxf import Contour, _lay_along_length, _part_problems, _Piece
     from core.geometry import area
     from core.step import BEND_DOWN, BEND_UP
 
     bends = [(list(b.line), BEND_UP if b.up else BEND_DOWN)
              for b in shape.bends if b.line is not None]
-    note = (f"{name.rsplit('.', 1)[0]} | t = {thickness_mm:g} mm | "
-            f"{len(shape.bends)} taivutusta (STEP)" if thickness_mm else "")
-    f = DxfFile(name, unit_label="mm", texts=[note] if note else [],
+    f = DxfFile(name, unit_label="mm",
                 pieces=[_Piece(list(c), True, "CUT", True) for c in (shape.outline, *shape.holes)]
                 + [_Piece(line, False, layer, True) for line, layer in bends])
     report = DxfReport(name=name, unit_label="mm", problems=list(shape.problems),
@@ -217,7 +212,6 @@ def step_result(model, flats: dict, file_id: str) -> ReadResult:
             result.facts.append(Fact("bought_body", {"name": part.name, "kpl": part.qty},
                                      file_id, (flat.reason if flat else "") or part.name,
                                      body=part.key))
-    result.is_assembly = len(model.parts) > 1
     return result
 
 
@@ -238,7 +232,7 @@ def _bom_facts(text: str, file_id: str, page: int, own: str) -> list[Fact]:
 
 def read_pdf_file(data: bytes, file_id: str, name: str) -> ReadResult:
     """A PDF: no shape, only facts (material, part numbers, BOM lines,
-    fastener callouts), and whether it is an assembly drawing."""
+    fastener callouts)."""
     from core.fasteners import pdf_fasteners
     from core.materials import pdf_material_fields, pdf_text
 
@@ -255,8 +249,6 @@ def read_pdf_file(data: bytes, file_id: str, name: str) -> ReadResult:
     facts += [Fact("fastener", {"name": n, "kpl": k}, file_id, f"{n} {k} PCS")
               for n, k in pdf_fasteners(data)]
     result = ReadResult(file_id, facts=facts, record=(pages, fields))
-    titled = any(_ASSEMBLY_TITLE.search(t) for _, t in pages)
-    result.is_assembly = titled or len({f.value for f in result.of("called_out")}) >= 2
     if not pages:
         result.problems.append("PDF-tiedostoa ei voitu lukea.")
     return result

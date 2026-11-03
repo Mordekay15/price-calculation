@@ -17,11 +17,6 @@ from view.common import render_page_picker
 _MANUAL = "dxf_doc_links"    # {doc id: part id or "" (= no part)}, set by hand
 _PREVIEWS = "dxf_doc_previews"  # {doc id: PNG bytes of page 1}
 
-DOC_TYPES = {"pdf": "pdf", "step": "step", "stp": "step"}
-
-
-def is_doc(name: str) -> bool:
-    return name.rsplit(".", 1)[-1].lower() in DOC_TYPES
 
 
 def add_doc(f: InputFile, data: bytes) -> None:
@@ -45,13 +40,12 @@ def remove_doc(doc_id: str) -> None:
     st.session_state.get(_PREVIEWS, {}).pop(doc_id, None)
 
 
-def docs() -> dict[str, dict]:
-    """The PDF and STEP files, ``{id: {"name", "size", "kind", "load"}}``."""
-    return {fid: {"name": f.name, "size": f.size_bytes, "kind": f.kind, "load": f.load}
-            for fid, f in files.of_kind("pdf", "step").items()}
+def docs() -> dict[str, InputFile]:
+    """The PDF and STEP files, ``{id: InputFile}``."""
+    return files.of_kind("pdf", "step")
 
 
-def _linkable() -> dict[str, dict]:
+def _linkable() -> dict[str, InputFile]:
     """The files that link to cards: PDFs, and STEP files that couldn't be
     read as models (a model's parts are on the cards themselves, see
     ``view.bom``)."""
@@ -71,10 +65,10 @@ def links(parts: dict[str, str | list[str]], card_folders: dict[str, set[str]] |
     all_docs = _linkable()
     names = {f"{pid}\0{i}": n for pid, ns in parts.items()
              for i, n in enumerate([ns] if isinstance(ns, str) else ns)}
-    by_name = link_files(names, {d: doc["name"] for d, doc in all_docs.items()})
+    by_name = link_files(names, {d: doc.name for d, doc in all_docs.items()})
     named = {d for ids in by_name.values() for d in ids}
-    unnamed = {d: _text(d, doc) for d, doc in all_docs.items()
-               if d not in named and doc["kind"] == "pdf"}
+    unnamed = {d: text(d) for d, doc in all_docs.items()
+               if d not in named and doc.kind == "pdf"}
     auto: dict[str, list[str]] = {}
     for found in (by_name, link_by_text(names, unnamed, lambda k: k.split("\0", 1)[0])):
         for key, ids in found.items():
@@ -99,26 +93,12 @@ def links(parts: dict[str, str | list[str]], card_folders: dict[str, set[str]] |
 
 
 def text(doc_id: str) -> str:
-    """A linked PDF's text ("" for other files)."""
-    doc = docs().get(doc_id)
-    return _text(doc_id, doc) if doc is not None and doc["kind"] == "pdf" else ""
-
-
-def pages(doc_id: str, doc: dict | None = None) -> list[tuple[int, str]]:
-    """A PDF's first pages, ``[(page, text)]``, as the PDF reader read them."""
+    """A PDF's text as the PDF reader read it ("" for other files)."""
+    f = files.get(doc_id)
+    if f is None or f.kind != "pdf":
+        return ""
     res = files.result(doc_id)
-    return res.record[0] if res is not None and res.record else []
-
-
-def material_fields(doc_id: str, doc: dict | None = None) -> list[tuple[int, str]]:
-    """A PDF's title block Material field, ``[(page, text)]``, as the PDF
-    reader read it."""
-    res = files.result(doc_id)
-    return res.record[1] if res is not None and res.record else []
-
-
-def _text(doc_id: str, doc: dict) -> str:
-    return "\n".join(text for _, text in pages(doc_id, doc))
+    return "\n".join(t for _, t in res.record[0]) if res is not None and res.record else ""
 
 
 _ROWS = 30   # files listed at once: a big RFQ has hundreds, each with a part picker
@@ -155,7 +135,7 @@ def render_doc_list(parts: dict[str, str], labels: dict[str, str]) -> None:
     for d in shown:
         doc = all_docs[d]
         c1, c2, c3 = st.columns([3, 4, 1], vertical_alignment="center")
-        c1.markdown(f"{'📄' if doc['kind'] == 'pdf' else '🧊'} {doc['name']}")
+        c1.markdown(f"{'📄' if doc.kind == 'pdf' else '🧊'} {doc.name}")
         current = linked.get(d, "")
         key = f"dxf_doc_link_{d}_{current}"
         if st.session_state.get(key) not in options:   # seeded, not a default: kept keys
@@ -176,21 +156,21 @@ def render_card_docs(card_id: str, doc_ids: list[str]) -> None:
     doc_ids = [d for d in doc_ids if d in all_docs]
     if not doc_ids:
         return
-    names = ", ".join(all_docs[d]["name"] for d in doc_ids)
+    names = ", ".join(all_docs[d].name for d in doc_ids)
     with st.expander(f"Piirustukset: {names}"):
         for d in doc_ids:
             doc = all_docs[d]
-            if doc["kind"] == "pdf":
-                png = _preview(d, doc["load"])
+            if doc.kind == "pdf":
+                png = _preview(d, doc.load)
                 if png:
-                    st.image(png, caption=doc["name"], width="stretch")
+                    st.image(png, caption=doc.name, width="stretch")
                 else:
-                    st.caption(f"{doc['name']}: esikatselua ei voitu tehdä.")
+                    st.caption(f"{doc.name}: esikatselua ei voitu tehdä.")
             else:
                 _step_preview(card_id, d)
-            st.download_button(f"Avaa {doc['name']}", data=doc["load"](),
-                               file_name=doc["name"], key=f"dxf_doc_dl_{card_id}_{d}",
-                               mime="application/pdf" if doc["kind"] == "pdf"
+            st.download_button(f"Avaa {doc.name}", data=doc.load(),
+                               file_name=doc.name, key=f"dxf_doc_dl_{card_id}_{d}",
+                               mime="application/pdf" if doc.kind == "pdf"
                                else "application/step")
 
 

@@ -325,6 +325,7 @@ def _remove(aid: str, card_of: dict[str, str], remove_card: Callable[[str], None
     another assembly too stays), its drawing and its STEP file."""
     store = _store()
     a = store.pop(aid, None)
+    bought.reset(_widget(aid))
     if a is None or a.by_hand:       # only undone: its parts are loose again
         return
     others = {c for b in store.values() for c in _cards_of(b, card_of)}

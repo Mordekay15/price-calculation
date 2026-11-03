@@ -177,10 +177,13 @@ def test_a_fastener_put_in_costs_stremets_minimum_by_default():
 
 
 def test_fasteners_are_counted_and_priced_as_count_times_part_plus_insert():
-    from core.dxf import fasteners_from_texts
-    assert fasteners_from_texts(["M5-PURISTEMUTTERIT X4KPL", "M4-PURISTEMUTTERIT 5KPL",
-                            "MATERIAALI: CR2-11 PL1,5 sinkitty"]) == 9
-    assert fasteners_from_texts(["M6 PURISTERUUVIT 2 KPL", "PULTIT X3 KPL"]) == 5
+    from core.dxf import fastener_lines
+
+    def count(texts):
+        return sum(n for _, n in fastener_lines(texts))
+    assert count(["M5-PURISTEMUTTERIT X4KPL", "M4-PURISTEMUTTERIT 5KPL",
+                  "MATERIAALI: CR2-11 PL1,5 sinkitty"]) == 9
+    assert count(["M6 PURISTERUUVIT 2 KPL", "PULTIT X3 KPL"]) == 5
     inp = WorkInputs(fasteners=9, eur_per_fastener=0.3, eur_per_insert=0.2)
     cost = work_cost(inp, 1, RATES)
     assert cost.fasteners == pytest.approx(4.5) and phases(inp) == 2

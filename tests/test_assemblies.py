@@ -229,11 +229,10 @@ def test_a_subassembly_is_priced_inside_its_parent():
 
 
 def test_the_drawing_notes_give_each_fastener_line():
-    from core.dxf import fastener_lines, fasteners_from_texts
+    from core.dxf import fastener_lines
 
     texts = ["M5-PURISTEMUTTERIT X4KPL", "HUOM: M4-PURISTEMUTTERIT 5KPL"]
     assert fastener_lines(texts) == [("M5-PURISTEMUTTERIT", 4), ("M4-PURISTEMUTTERIT", 5)]
-    assert fasteners_from_texts(texts) == 9
 
 
 def test_a_drawing_pdf_gives_each_fastener_with_its_pcs_count():

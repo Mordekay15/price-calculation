@@ -50,7 +50,7 @@ def test_file_kind_by_extension_and_others_left_out():
 def test_a_dxf_gives_its_part_and_the_facts_in_its_texts():
     r = read_dxf_file(_plate(["S355MC t=3", "M5-PURISTEMUTTERIT X4KPL"]), "f1", "ITM-064555_A.dxf")
     (shape,) = r.shapes
-    assert shape.priceable and shape.origin == "f1"
+    assert shape.outline and not shape.problems and shape.origin == "f1"
     assert [round(v) for v in sorted(shape.size_mm)] == [200, 300]
     assert len(shape.holes) == 1
     assert shape.net_area_mm2 == pytest.approx(300 * 200 - 3.1416 * 100, rel=1e-3)
@@ -59,7 +59,7 @@ def test_a_dxf_gives_its_part_and_the_facts_in_its_texts():
     assert [(f.value["grade"], f.value["thickness_mm"]) for f in r.of("material")] \
         == [("S355", 3.0)]
     assert r.of("fastener")[0].value == {"name": "M5-PURISTEMUTTERIT", "kpl": 4}
-    assert not r.is_drawing and not r.is_assembly
+    assert not r.is_drawing
 
 
 def test_a_dwg_is_converted_then_read_like_a_dxf(monkeypatch, tmp_path):
@@ -73,7 +73,7 @@ def test_a_dwg_is_converted_then_read_like_a_dxf(monkeypatch, tmp_path):
     r = read_dwg_file(b"AC1032...", "f2", "plate.dwg")
     conv, _ = r.record
     assert conv.converter == "libredwg" and conv.dxf_kind == "full" and conv.ok
-    assert r.shapes[0].priceable and round(max(r.shapes[0].size_mm)) == 300
+    assert not r.shapes[0].problems and round(max(r.shapes[0].size_mm)) == 300
 
 
 def test_a_dwg_that_cant_convert_has_no_shape_and_says_why(monkeypatch):
@@ -96,17 +96,11 @@ def test_a_pdf_gives_facts_only():
     assert any(f.value["grade"] == "S355" for f in r.of("material"))
 
 
-def test_a_pdf_titled_assembly_is_an_assembly():
-    assert read_pdf_file(_pdf(["KOKOONPANO", "Runko"]), "p2", "ITM-0700.pdf").is_assembly
-    assert not read_pdf_file(_pdf(["Plate", "S355 3 mm"]), "p3", "ITM-064555.pdf").is_assembly
-
-
 @needs_ocp
 def test_a_step_assembly_gives_flat_shapes_bought_bodies_and_thickness():
     from tests.step_models import assembly_step
 
     r = read_step_file(assembly_step(), "s1", "runko.step")
-    assert r.is_assembly
     assert len(r.shapes) == 2                         # Kulma, Pohja
     kulma = next(s for s in r.shapes if s.bends)
     (bend,) = kulma.bends
@@ -119,7 +113,7 @@ def test_a_step_assembly_gives_flat_shapes_bought_bodies_and_thickness():
 
 def test_read_file_picks_the_reader_by_kind():
     f = InputFile("f9", "x.dxf", "dxf", load=lambda: _plate())
-    assert read_file(f).shapes[0].priceable
+    assert read_file(f).shapes[0].outline
     assert read_file(InputFile("z", "a.zip", "zip", load=lambda: b"")).shapes == []
 
 
@@ -139,14 +133,14 @@ def test_a_value_chosen_by_hand_wins_until_the_files_speak_again():
     assert pem.unit == pytest.approx(0.25)
 
 
-def test_an_empty_shape_is_not_priceable():
-    assert not FlatShape("x", []).priceable
+def test_an_empty_shape_has_no_size_or_area():
+    assert FlatShape("x", []).size_mm == (0.0, 0.0) and FlatShape("x", []).net_area_mm2 == 0.0
 
 
 @needs_ocp
 def test_a_step_body_becomes_a_card_without_a_dxf_round_trip(monkeypatch):
     from core import dxf
-    from core.readers import dxf_file_of, shape_from_flat
+    from core.readers import shape_from_flat
     from tests.step_models import assembly_step, flat_dxf
 
     model = step.read_step(assembly_step(), "runko.step")
@@ -154,10 +148,10 @@ def test_a_step_body_becomes_a_card_without_a_dxf_round_trip(monkeypatch):
     flat = step.unfold(kulma.shape, step.DEFAULT_K_FACTOR)
     before = dxf.read_dxf(flat_dxf(flat, "Kulma"), "Kulma.step").part()
     monkeypatch.setattr(dxf, "read_dxf", lambda *a, **k: pytest.fail("DXF read back"))
-    f = dxf_file_of(shape_from_flat(flat, "s1|kulma"), "Kulma.step", flat.thickness_mm)
-    part = f.part()
-    assert part.outline.area_mm2 == pytest.approx(before.outline.area_mm2)
-    assert part.cut_length_mm == pytest.approx(before.cut_length_mm)
-    assert (part.bends, len(part.holes), part.problems) == (before.bends, len(before.holes), [])
-    assert f.texts == ["Kulma | t = 2 mm | 1 taivutusta (STEP)"]
-    assert f.suggested_layers() == ["CUT"]
+    shape = shape_from_flat(flat, "s1|kulma", "Kulma.step")
+    assert shape.net_area_mm2 == pytest.approx(before.net_area_mm2)
+    assert shape.cut_length_mm == pytest.approx(before.cut_length_mm)
+    assert (len(shape.bends), len(shape.holes), shape.problems) \
+        == (before.bends, len(before.holes), [])
+    (bend,) = shape.bends
+    assert bend.angle_deg and bend.line is not None and shape.name == "Kulma.step"

@@ -7,7 +7,6 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 
-from core.geometry import net_area
 from core.model import FlatShape
 from core.pricing import parse_thickness_mm
 from core.quote import CleanPart
@@ -434,7 +433,7 @@ def _parts_for_group(products: list[dict]) -> tuple[list, dict[str, float]]:
     parts = [
         part_from_shape(p["shape"], int(p["qty"]), p["angles"]) for p in products
     ]
-    areas = {p["id"]: net_area(sp.outer, sp.holes) for p, sp in zip(products, parts)}
+    areas = {p["id"]: p["shape"].net_area_mm2 for p in products}
     return parts, areas
 
 

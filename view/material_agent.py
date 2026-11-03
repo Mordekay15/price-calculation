@@ -64,3 +64,8 @@ def auto_fill(cards: dict[str, Part], facts_of, name_of, materials: list[str],
             part.version += 1           # its selectboxes start from the new values
         else:
             part.material.conflict = p.conflict or ""
+
+
+def forget(cid: str) -> None:
+    """A card removed: its last search goes with it."""
+    st.session_state.get(_SEARCHED, {}).pop(cid, None)

@@ -1088,13 +1088,6 @@ _FASTENERS = re.compile(r"(?:MUTTER|RUUV|PULT|NIIT|HOLK|TAPP)\w*\D*?(\d+)\s*(?:K
                         re.IGNORECASE)
 
 
-def fasteners_from_texts(texts: list[str]) -> int:
-    """Fasteners the drawing's notes ask for (nuts, screws, bolts, rivets,
-    bushes, studs), e.g. "M5-PURISTEMUTTERIT X4KPL" and "M4-PURISTEMUTTERIT
-    5KPL" make 9."""
-    return sum(n for _, n in fastener_lines(texts))
-
-
 def fastener_lines(texts: list[str]) -> list[tuple[str, int]]:
     """The drawing's fastener notes one by one, ``(name, kpl)``: e.g.
     "M5-PURISTEMUTTERIT X4KPL" is ("M5-PURISTEMUTTERIT", 4)."""

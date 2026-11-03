@@ -201,7 +201,7 @@ def _render_status(screen: str, nest: NestState, priced: bool) -> None:
     issues = ss.get(_ISSUES, {})
     n_drawings = sum(r["Tila"] == _DRAWING for r in rows.values())
     n_asm = len(assemblies.current(source_cards()))
-    n_pdf = sum(d["kind"] == "pdf" for d in attachments.docs().values())
+    n_pdf = sum(d.kind == "pdf" for d in attachments.docs().values())
     n_step = len(bom.models())
     read = [f"{len(rows) - n_drawings} osaa"] + [
         text for n, text in ((n_asm, f"{n_asm} kokoonpanoa"), (n_pdf, f"{n_pdf} PDF"),

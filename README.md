@@ -133,8 +133,8 @@ and in the whole model. Each body is checked for sheet metal:
 - A sheet part has two parallel skins at one thickness, made of flat flanges
   and cylindrical bends. One skin is laid flat face by face, with every bend
   at its neutral radius `inner radius + K × thickness` (the **K-kerroin**,
-  default 0.44). The flat outline, holes and bend lines become a part card
-  straight from the unfolded body (`core.step.flat_file`):
+  default 0.44). The flat outline, holes and bend lines become the card's
+  FlatShape straight from the unfolded body (`core.readers.shape_from_flat`):
   no DXF is written and read back, so nothing is guessed again from lines.
   Its quantity is the model's total, its bends (with angle, radius and
   direction) price the bending, and its thickness (`t = 2 mm`) is the

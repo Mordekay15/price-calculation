@@ -133,13 +133,6 @@ class FlatShape:
                     for c in (self.outline, *self.holes))
                 + sum(length(c) for c in self.open_cuts))
 
-    @property
-    def priceable(self) -> bool:
-        return bool(self.outline) and not self.problems
-
-
-FACT_KINDS = ("material", "thickness", "part_number", "revision", "bom_qty",
-              "fastener", "called_out", "bought_body")
 
 
 @dataclass(frozen=True)
@@ -175,7 +168,6 @@ class ReadResult:
     facts: list[Fact] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
     is_drawing: bool = False                    # a drawing sheet, not a flat part
-    is_assembly: bool = False
     record: object = field(default=None, repr=False, compare=False)
 
     def of(self, kind: str) -> list[Fact]:

@@ -11,9 +11,9 @@ prices like a dropped DXF.
    radius ``inner radius + K × thickness``. The result is the flat outline,
    its holes and the bend lines. A body that isn't sheet (a bought or
    machined part) comes back with ``is_sheet`` False and a reason.
-3. The STEP reader (``core.readers.read_step_file``) makes each sheet body a
-   FlatShape, and its card's ``DxfFile`` is built straight from that
-   (``core.readers.dxf_file_of``), with no DXF written and read back.
+3. The STEP reader (``core.readers.read_step_file``) makes each sheet body
+   the card's FlatShape straight from its flat, checked like a DXF part
+   (``core.readers.shape_from_flat``), with no DXF written and read back.
 4. ``mesh`` triangulates a body for the 3D preview.
 """
 
