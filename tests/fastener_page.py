@@ -9,7 +9,7 @@ from core.model import InputFile
 from tests.conftest import dxf_bytes
 from tests.fastener_pdf import drawing_pdf
 from view import attachments
-from view.dxf_files import STORE, add_drawing, sync, sync_assemblies
+from view.dxf_files import add_drawing, cards, sync, sync_assemblies
 from view.dxf_tab import _render_part_cards
 
 
@@ -33,7 +33,7 @@ if "seeded" not in st.session_state:
     attachments.add_doc(InputFile("d3", "kotelo.pdf", "pdf", None), drawing_pdf())
 sync()
 sync_assemblies()
-products = _render_part_cards(list(st.session_state[STORE].items()), ["S235"],
+products = _render_part_cards(list(cards().items()), ["S235"],
                               {("2", "S235 | 1000x2000"): 900.0})
 st.session_state["ids"] = [p["id"] for p in products]
 st.session_state["work"] = {p["id"]: p["work"] for p in products}

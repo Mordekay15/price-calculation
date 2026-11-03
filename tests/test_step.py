@@ -237,7 +237,7 @@ def test_a_card_takes_its_bends_from_the_model_and_its_material_from_the_pdf():
         auto_fill_materials(["S235"], lookup)
         products = _render_part_cards(parts, ["S235"], lookup, False)
         st.session_state["cards"] = [(p["name"], p["material"], p["thickness"],
-                                      p["report"].bends, p["work"].bends) for p in products]
+                                      len(p["shape"].bends), p["work"].bends) for p in products]
 
     at = AppTest.from_function(page, default_timeout=60).run()
     assert not at.exception
@@ -306,6 +306,11 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
                                     [(b.name, b.qty, b.fit_eur) for b in a.bought])
                                    for a in assemblies.current(source_cards())]
         st.session_state["parts"] = [(fid, d.name) for fid, d in parts]
+        from view.dxf_files import parts as card_parts
+        st.session_state["on_part"] = sorted((p.qty.value, p.work is not None)
+                                             for p in card_parts().values())
+        st.session_state["store_keys"] = [k for k in st.session_state
+                                          if k in ("dxf_step_models", "dxf_store")]
 
     at = AppTest.from_function(page, default_timeout=60).run()
     assert not at.exception
@@ -321,6 +326,9 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
         "Pohja.dxf", "Kulma.step"]
     # Its cards are nested for the largest batch (10) of assemblies.
     assert [n.value for n in at.number_input if n.key.startswith("dxf_q_")] == [10, 20]
+    # The cards' quantity and work are on their Parts; no second store.
+    assert at.session_state["on_part"] == [(10, True), (20, True)]
+    assert at.session_state["store_keys"] == []
     # The assembly prices fasteners and welding, so its cards don't.
     keys = {n.key for n in at.number_input}
     assert f"work_bends_{cards['Kulma.step']}" in keys

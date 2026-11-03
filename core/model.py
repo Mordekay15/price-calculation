@@ -20,9 +20,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 from core.geometry import bbox_wh, length, net_area
+
+if TYPE_CHECKING:
+    from core.work import WorkInputs
 
 Point = tuple[float, float]
 T = TypeVar("T")
@@ -91,8 +94,9 @@ class FlatBend:
 
 @dataclass
 class FlatShape:
-    """One flat part from one file, in mm: what the laser would cut.
-    Geometry only: no material, no price."""
+    """One flat part from one file, in mm: what the laser would cut, laid
+    along its length. Geometry only: no material, no price. The cards, the
+    nesting and the price all read the part from here."""
 
     origin: str                                 # the reader's source id (file id, or file id|body key)
     outline: list[Point]
@@ -104,6 +108,10 @@ class FlatShape:
     outside_count: int = 0                      # shapes outside the part on its drawing
     layers_used: list[str] | None = None        # None from STEP
     problems: list[str] = field(default_factory=list)
+    name: str = ""                              # as on its card: the file's, or the STEP body's
+    unit_label: str = "mm"                      # the drawing's unit
+    unit_guessed: bool = False                  # the file didn't say its unit
+    drawn_blank_mm: float = 0.0                 # a profile's blank as drawn, when unfolded
 
     @property
     def size_mm(self) -> tuple[float, float]:
@@ -250,6 +258,8 @@ class Part:
     chosen_by_user: str | None = None
     material: Value[str] = field(default_factory=Value)
     thickness: Value[str] = field(default_factory=Value)
+    qty: Value[int] = field(default_factory=Value)  # to nest: BOM or batch × kpl, or typed
+    work: WorkInputs | None = None              # its Työvaiheet as set on the card
     bought: list[BoughtPart] = field(default_factory=list)   # its own: fasteners, per piece
     bought_lines: list | None = None            # the drawing's lines ``bought`` was read from
     version: int = 0                            # bumped to give its widgets new keys

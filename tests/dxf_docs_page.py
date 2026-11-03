@@ -9,7 +9,7 @@ import streamlit as st
 from reportlab.pdfgen import canvas
 
 from tests.conftest import dxf_bytes
-from view.dxf_files import STORE, auto_fill_materials, ingest
+from view.dxf_files import auto_fill_materials, cards, ingest
 from view.dxf_tab import _render_part_cards
 
 doc = ezdxf.new()
@@ -20,12 +20,12 @@ buf = io.BytesIO()
 pdf = canvas.Canvas(buf)
 pdf.drawString(72, 720, "Material: S355MC  t = 3 mm")
 pdf.save()
-if not st.session_state.get(STORE):
+if not cards():
     ingest([SimpleNamespace(file_id="f0", name="100325.dxf", getvalue=lambda: data),
             SimpleNamespace(file_id="f1", name="200400.dxf", getvalue=lambda: data),
             SimpleNamespace(file_id="d0", name="100325-revA.pdf",
                             getvalue=lambda: buf.getvalue())])
-parts = list(st.session_state[STORE].items())
+parts = list(cards().items())
 materials = ["S235", "S355MC"]
 lookup = {("2", "S235 | 1000x2000"): 900.0, ("3", "S355MC | 1000x2000"): 950.0}
 auto_fill_materials(materials, lookup)

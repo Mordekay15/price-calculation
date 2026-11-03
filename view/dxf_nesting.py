@@ -7,8 +7,8 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 
-from core.dxf import DxfReport
 from core.geometry import net_area
+from core.model import FlatShape
 from core.pricing import parse_thickness_mm
 from core.quote import CleanPart
 from core.sheet_cost import (
@@ -22,7 +22,7 @@ from core.sheet_cost import (
 from core.sparrow import (
     NESTING_ANGLES,
     find_executable,
-    part_from_report,
+    part_from_shape,
     run_sparrow,
     sparrow_options,
 )
@@ -410,10 +410,10 @@ def _render_prices(products: list[dict], priced: tuple | None, margin_pct: float
 
 def _clean_part(product: dict) -> CleanPart:
     """A part's cut geometry for the clean-DXF export, as the card shows it."""
-    report: DxfReport = product["report"]
+    shape: FlatShape = product["shape"]
     return CleanPart(product["name"], product["material"] or "", product["thickness"] or "",
-                     report.outline.points, [h.points for h in report.holes],
-                     list(report.open_lines), list(report.reference_lines))
+                     shape.outline, list(shape.holes), list(shape.open_cuts),
+                     list(shape.markings))
 
 
 def _settings_of(entry: dict, settings: _Settings) -> _Settings:
@@ -432,7 +432,7 @@ def _parts_for_group(products: list[dict]) -> tuple[list, dict[str, float]]:
     outline minus its holes.
     """
     parts = [
-        part_from_report(p["report"], int(p["qty"]), p["angles"]) for p in products
+        part_from_shape(p["shape"], int(p["qty"]), p["angles"]) for p in products
     ]
     areas = {p["id"]: net_area(sp.outer, sp.holes) for p, sp in zip(products, parts)}
     return parts, areas
@@ -457,12 +457,12 @@ def turn_key(fid: str = "") -> str:
     return f"dxf_turn_{fid}" if fid else "dxf_turn"
 
 
-def render_nesting_angles(fid: str = "", report: DxfReport | None = None,
+def render_nesting_angles(fid: str = "", shape: FlatShape | None = None,
                           label: str = "Nestauskulma", px: int = 96,
                           picture: bool = True) -> tuple[int, ...]:
     """Allowed nesting angles (see ``core.sparrow.NESTING_ANGLES``), both by
     default; () with a warning when none is. A picture of the part
-    (``report``'s, else a sample) as it would lie on the sheet, turned
+    (``shape``'s, else a sample) as it would lie on the sheet, turned
     across when only that is chosen, and the two choices beside it, under
     ``label`` (without ``picture``, the choices alone). ``fid`` keys a part's
     own choice; without it, the shared one."""
@@ -471,8 +471,8 @@ def render_nesting_angles(fid: str = "", report: DxfReport | None = None,
     if picture:
         drawn, choice = st.columns([1, 2], vertical_alignment="center")
     if picture and not is_headless():
-        rings = ([report.outline.points, *(h.points for h in report.holes)]
-                 if report is not None and report.outline else None)
+        rings = ([shape.outline, *shape.holes] if shape is not None and shape.outline
+                 else None)
         turned = st.session_state.get(key) == [90]
         drawn.markdown(orientation_svg(rings, 90 if turned else 0, True, px),
                          unsafe_allow_html=True)
@@ -496,7 +496,7 @@ def _render_angle_controls(n_parts: int, products: list[dict]) -> tuple[int, ...
     where they are used. One part is drawn beside its choices."""
     if n_parts == 1:
         with st.columns([1, 2])[0]:
-            return render_nesting_angles(report=products[0]["report"] if products else None)
+            return render_nesting_angles(shape=products[0]["shape"] if products else None)
     # The switch first, so it stays put when the shared choice goes.
     switch, shared, _ = st.columns([1, 1, 2], vertical_alignment="bottom")
     if not switch.toggle("Osakohtainen", key=ANGLE_MODE,
@@ -509,5 +509,5 @@ def _render_angle_controls(n_parts: int, products: list[dict]) -> tuple[int, ...
     for start in range(0, len(products), _PER_ROW):
         for p, col in zip(products[start:start + _PER_ROW], box.columns(_PER_ROW)):
             with col:
-                render_nesting_angles(p["id"], p["report"], p["name"], px=64)
+                render_nesting_angles(p["id"], p["shape"], p["name"], px=64)
     return None

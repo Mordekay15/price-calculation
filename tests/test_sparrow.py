@@ -7,8 +7,8 @@ from collections import Counter
 
 import pytest
 
-from core.dxf import read_dxf
 from core.geometry import bbox, rotate_translate, signed_area
+from core.readers import read_dxf_file
 from core.sheet_cost import EdgeGaps
 from core.sparrow import (
     SparrowPart,
@@ -17,7 +17,7 @@ from core.sparrow import (
     _result,
     find_executable,
     greedy_fixed_sheets,
-    part_from_report,
+    part_from_shape,
     run_sparrow,
     sparrow_options,
 )
@@ -47,11 +47,11 @@ def fake_solver(instance, *, separation):
     return SparrowResult(True, "", placements, x + col_w)
 
 
-def test_part_from_report_orients_rings_and_keeps_holes(drawing):
+def test_part_from_shape_orients_rings_and_keeps_holes(drawing):
     doc, msp = drawing()
     msp.add_lwpolyline([(0, 0), (0, 200), (300, 200), (300, 0)], close=True)  # clockwise
     msp.add_circle((150, 100), 40)
-    part = part_from_report(read_dxf(dxf_bytes(doc), "bracket.dxf").part(), 5)
+    part = part_from_shape(read_dxf_file(dxf_bytes(doc), "f", "bracket.dxf").shapes[0], 5)
     assert part.part_id == "bracket" and part.quantity == 5
     assert signed_area(part.outer) > 0                  # counter-clockwise
     assert signed_area(part.holes[0]) < 0               # clockwise
@@ -121,7 +121,7 @@ def test_a_long_part_drawn_diagonally_fits_once_laid_along_its_length(drawing):
     doc, msp = drawing()
     msp.add_lwpolyline(rotate_translate([(0, 0), (2900, 0), (2900, 80), (0, 80)], 45, (0, 0)),
                        close=True)
-    part = part_from_report(read_dxf(dxf_bytes(doc), "strip.dxf").part(), 3)
+    part = part_from_shape(read_dxf_file(dxf_bytes(doc), "f", "strip.dxf").shapes[0], 3)
     pack = greedy_fixed_sheets([part], 3000, 1500, run_fn=fake_solver)
     assert pack.ok and pack.sheets_needed == 1
 
@@ -149,7 +149,7 @@ def bar_part(drawing, angle, angles, w=2900, h=80):
     doc, msp = drawing()
     msp.add_lwpolyline(rotate_translate([(0, 0), (w, 0), (w, h), (0, h)], angle, (0, 0)),
                        close=True)
-    return part_from_report(read_dxf(dxf_bytes(doc), "bar.dxf").part(), 2, angles)
+    return part_from_shape(read_dxf_file(dxf_bytes(doc), "f", "bar.dxf").shapes[0], 2, angles)
 
 
 def test_both_nesting_angles_keep_every_quarter_turn(drawing):

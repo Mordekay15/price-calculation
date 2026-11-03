@@ -3,10 +3,10 @@ shapes), the edge-gap diagram and the DXF part preview on a card."""
 
 import streamlit as st
 
-from core.dxf import DxfReport, is_slit
+from core.dxf import is_slit
 from core.geometry import rotate_translate
+from core.model import FlatShape
 from core.sheet_cost import SheetOption, fmt_m, product_label, utilization
-
 
 # ── Shared pieces ─────────────────────────────────────────────
 
@@ -302,7 +302,7 @@ def _ring_path(points, sh: float) -> str:
 BEND_UP_COLOR, BEND_DOWN_COLOR = "#16a34a", "#ea580c"
 
 
-def preview_svg(report: DxfReport, px: int = 260, bends: list | None = None) -> str:
+def preview_svg(shape: FlatShape, px: int = 260, bends: list | None = None) -> str:
     """Small preview of the part (drawing Y flipped).
 
     The part is filled (holes cut out), reference lines are dashed, slits
@@ -311,8 +311,8 @@ def preview_svg(report: DxfReport, px: int = 260, bends: list | None = None) -> 
     ``bends`` are bend lines from elsewhere (the STEP model), ``[(line, up)]``:
     dashed, green up and orange down.
     """
-    rings = ([report.outline.points] if report.outline else []) + [h.points for h in report.holes]
-    groups = (rings, report.reference_lines, report.open_lines)
+    rings = ([shape.outline] if shape.outline else []) + list(shape.holes)
+    groups = (rings, shape.markings, shape.open_cuts)
     pts = [p for group in groups for ring in group for p in ring]
     if not pts:
         return ""
@@ -342,12 +342,12 @@ def preview_svg(report: DxfReport, px: int = 260, bends: list | None = None) -> 
     if rings:
         out.append(f'<path d="{d(rings, True)}" fill="#3b82f6" fill-opacity="0.12" '
                    f'fill-rule="evenodd" stroke="#2563eb" stroke-width="{stroke:.2f}"/>')
-    if report.reference_lines:
-        out.append(f'<path d="{d(report.reference_lines, False)}" fill="none" '
+    if shape.markings:
+        out.append(f'<path d="{d(shape.markings, False)}" fill="none" '
                    f'stroke="#475569" stroke-width="{stroke * 0.7:.2f}" '
                    f'stroke-dasharray="{stroke * 4:.1f} {stroke * 3:.1f}"/>')
-    slits = [line for line in report.open_lines if is_slit(line)]
-    gaps = [line for line in report.open_lines if not is_slit(line)]
+    slits = [line for line in shape.open_cuts if is_slit(line)]
+    gaps = [line for line in shape.open_cuts if not is_slit(line)]
     if slits:
         out.append(f'<path d="{d(slits, False)}" fill="none" stroke="#2563eb" '
                    f'stroke-width="{stroke:.2f}"/>')

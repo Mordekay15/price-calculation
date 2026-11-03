@@ -15,11 +15,11 @@ import time
 from types import SimpleNamespace
 
 from core.archive import ArchiveError, is_zip, unpack
-from core.dxf import DxfFile, DxfReport
+from core.dxf import DxfFile
 from core.items import STEP_CHOICE, Source, choose, group_sources, score_dxf
 from core.linking import base_key
 from core.linking import bom_quantities as _bom_quantities
-from core.model import InputFile, Part, PartSource, file_kind
+from core.model import FlatShape, InputFile, Part, PartSource, file_kind
 from core.step import available as step_available
 from core.step import bends_on
 from view import assemblies, attachments, bom, bought, files, material_agent
@@ -27,11 +27,8 @@ from view.common import thicknesses_for
 from view.ui import ids_in, st
 from view.work import AUTO_SHOWN
 
-STORE   = "dxf_store"         # {card id: DxfFile}: each card's chosen shape
-REPORTS = "dxf_part_reports"  # {card id: DxfReport}
 PARTS   = "dxf_parts"         # {card id: Part}: each card's files and values
 _HIDDEN  = "dxf_hidden"        # model parts removed from the cards
-_SRC_REPORTS = "dxf_source_reports"  # {source id: DxfReport}, for choosing
 _BEND_LINES = "dxf_bend_lines"  # {(card, shape, flat): STEP bend lines on the DXF}
 _INBOX   = "dxf_inbox"         # bumped to give the uploader a fresh, empty key
 FILL_ASKED = "dxf_fill_asked" # the "same material for the others?" question is answered
@@ -314,22 +311,34 @@ def part(cid: str) -> Part | None:
     return parts().get(cid)
 
 
-def sync() -> list[tuple[str, DxfFile]]:
+def shape_of(sid: str) -> FlatShape | None:
+    """A source's part as its reader read it (a DXF or DWG file, or a body of
+    a STEP model, ``"{file id}|{body key}"``)."""
+    fid, _, body = sid.partition("|")
+    if body and not files.is_read(fid):
+        return None
+    res = files.result(fid)
+    return next((s for s in res.shapes if s.origin == sid), None) if res else None
+
+
+def cards() -> dict[str, FlatShape]:
+    """Every card's priced shape, ``{card id: FlatShape}``, in card order."""
+    return {cid: shape_of(p.chosen) for cid, p in parts().items()}
+
+
+def card_texts(cid: str) -> list[str]:
+    """The texts of the card's priced drawing (none for a STEP body)."""
+    p = part(cid)
+    return list(getattr(drawings().get(p.chosen if p else cid), "texts", []))
+
+
+def sync() -> list[tuple[str, FlatShape]]:
     """Group the dropped files into cards and choose each card's shape.
     A card's id is its first file's id, so it keeps its values while files
     are added; a card that a drawing joins passes its values on."""
     ss = st.session_state
     dwgs = drawings()
-    reports: dict = ss.setdefault(_SRC_REPORTS, {})
     old = parts()
-
-    def shape(sid: str) -> DxfFile:
-        return dwgs[sid] if sid in dwgs else bom.flat_file(sid)
-
-    def report(sid: str) -> DxfReport:
-        if sid not in reports:
-            reports[sid] = shape(sid).part()
-        return reports[sid]
 
     sources = ([Source(fid, d.name, "dxf", list(d.texts), folder=folder_of(fid))
                 for fid, d in dwgs.items()]
@@ -343,14 +352,12 @@ def sync() -> list[tuple[str, DxfFile]]:
         was = old.get(cid) or next((old[m] for m in members if m in old), None)
         models = [bom.source(m) for m in members if bom.is_source(m)]
         blank = models[0][2].blank_mm if models and models[0][2] is not None else None
-        scores = {sid: (score_dxf(report(sid), dwgs[sid].unit_guessed, dwgs[sid].texts, blank)
+        scores = {sid: (score_dxf(shape_of(sid), dwgs[sid].texts, blank)
                         if sid in dwgs else STEP_CHOICE) for sid in members}
         by_user = was.chosen_by_user if was is not None else None
         chosen = choose(scores, by_user) or members[0]
-        if cid in old and old[cid].chosen != chosen:
-            ss.get(REPORTS, {}).pop(cid, None)
-        store[cid] = shape(chosen)
-        sources = [PartSource(m, shape(m).name, linked.get(m, "part_number"), scores[m])
+        store[cid] = shape_of(chosen)
+        sources = [PartSource(m, shape_of(m).name, linked.get(m, "part_number"), scores[m])
                    for m in members]
         if was is None:
             new[cid] = Part(cid, sources, chosen, blank)
@@ -359,7 +366,7 @@ def sync() -> list[tuple[str, DxfFile]]:
                 was = copy.deepcopy(was)
             was.id, was.sources, was.chosen, was.blank = cid, sources, chosen, blank
             new[cid] = was
-    ss[STORE], ss[PARTS] = store, new
+    ss[PARTS] = new
     # A card gone (removed, or joined to another when a drawing came) takes
     # its Ostetut osat table with it.
     for cid in old.keys() - new.keys():
@@ -381,8 +388,6 @@ def resync() -> None:
     """After the models changed (K factor, a model removed): unfold and
     choose again."""
     st.session_state.pop(_BEND_LINES, None)
-    st.session_state.get(_SRC_REPORTS, {}).clear()
-    st.session_state.get(REPORTS, {}).clear()
     sync()
 
 
@@ -502,11 +507,11 @@ def step_flats(item: Part | None) -> list:
             if src is not None and src[2] is not None and src[2].is_sheet]
 
 
-def card_bends(report: DxfReport, item: Part | None) -> int:
+def card_bends(shape: FlatShape, item: Part | None) -> int:
     """The bends of a part: the STEP model's when the card has one (a flat
     DXF often has no bend lines), else the DXF's bend lines."""
     flats = step_flats(item)
-    return len(flats[0].bends) if flats else report.bends
+    return len(flats[0].bends) if flats else len(shape.bends)
 
 
 def card_forms(item: Part | None) -> int:
@@ -526,7 +531,6 @@ def evict(fid: str) -> None:
     for sid in (item.members if item else [fid]):
         if files.get(sid) is not None and files.get(sid).kind in ("dxf", "dwg"):
             files.remove(sid)
-        ss.get(_SRC_REPORTS, {}).pop(sid, None)
         src = bom.source(sid)
         if src is not None:
             model_id = sid.split("|", 1)[0]
@@ -538,8 +542,6 @@ def evict(fid: str) -> None:
     for d in doc_links.get(fid, []):
         if d not in others:
             attachments.remove_doc(d)
-    ss.get(STORE, {}).pop(fid, None)
-    ss.get(REPORTS, {}).pop(fid, None)
     for key in (*(material_keys(item) if item else ()), f"dxf_unit_ok_{fid}",
                 f"dxf_src_{fid}",
                 f"dxf_turn_{fid}"):
@@ -552,28 +554,27 @@ def evict(fid: str) -> None:
 
 def evict_all() -> None:
     """The "Poista kaikki" button: every card's "Poista" at once."""
-    for fid in list(st.session_state.get(STORE, {})):
+    for fid in list(parts()):
         evict(fid)
     for doc_id in list(attachments.docs()):
         attachments.remove_doc(doc_id)
-    for key in (bom.MODELS, *files.KEYS, PARTS, _HIDDEN, _SRC_REPORTS, FILL_ASKED,
+    for key in (*files.KEYS, PARTS, _HIDDEN, FILL_ASKED,
                 _DUPES, _SKIPPED,   # these warnings name files that are gone
                 _BEND_LINES,
                 AUTO_SHOWN, bought.SEEDS, *material_agent.KEYS, *assemblies.KEYS):
         st.session_state.pop(key, None)
 
 
-def model_bends(fid: str, report: DxfReport, item: Part | None) -> list | None:
+def model_bends(fid: str, shape: FlatShape, item: Part | None) -> list | None:
     """The card's STEP bend lines on its DXF (a flat DXF often has no bend
     lines of its own), worked out once per shape."""
     flats = step_flats(item)
-    if not flats or report.bends or report.outline is None:
+    if not flats or shape.bends or not shape.outline:
         return None
     cache = st.session_state.setdefault(_BEND_LINES, {})
     key = (fid, item.chosen, id(flats[0]))
     if key not in cache:
-        cache[key] = bends_on(flats[0], [report.outline.points]
-                              + [h.points for h in report.holes])
+        cache[key] = bends_on(flats[0], [shape.outline, *shape.holes])
     return cache[key]
 
 
@@ -615,12 +616,3 @@ def apply_material(cid: str, material: str, thickness: str | None) -> None:
     p.material.set(material)
     p.thickness.set(thickness)
     p.version += 1
-
-
-def card_report(fid: str, dxf: DxfFile) -> DxfReport:
-    """The part from the default cut layers, memoised (building it scans every
-    point)."""
-    cache: dict = st.session_state.setdefault(REPORTS, {})
-    if fid not in cache:
-        cache[fid] = dxf.part()
-    return cache[fid]

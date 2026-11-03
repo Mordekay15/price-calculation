@@ -537,7 +537,8 @@ The app is built on `core/model.py`; data flows one way:
    - DXF: read when dropped.
    - DWG: converted (`DwgConversion`), then read exactly like a DXF.
    - STEP: through `view/bom.py`, with the K factor; each sheet body becomes
-     a FlatShape, and its card is built straight from it (`dxf_file_of`).
+     a FlatShape, checked and laid along its length like a DXF part. The
+     model is kept only as its file's ReadResult.
    - PDF: read the first time something asks (text, Material field,
      fasteners, BOM rows, called-out part numbers).
 3. **Facts** are what the rest of the app reads: a card's material and
@@ -546,8 +547,9 @@ The app is built on `core/model.py`; data flows one way:
    drawing's called-out parts and BOM kpl, the BOM quantities of loose
    parts, whether a file is a drawing sheet.
 4. **Part** (one card per part number, `view/dxf_files.py` keeps them): its
-   files as `PartSource`s, the one priced, and its material and thickness as
-   `Value`s: what the files say (with where from, or why they disagree) and
+   files as `PartSource`s, the one priced (its FlatShape is what the card
+   shows, Sparrow nests and the price measures), its quantity and work, its
+   own bought parts, and its material and thickness as `Value`s: what the files say (with where from, or why they disagree) and
    what was chosen by hand, which wins. **Assembly** (one per part number,
    with subassemblies, its `BoughtPart`s and `AssemblyWork`). All of these
    are in `core/model.py`; `core/items.py` and `core/assemblies.py` only

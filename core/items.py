@@ -108,15 +108,14 @@ def _drawings(groups: dict[str, list[Source]], is_drawing):
 LINKED_BY = {"part_number": "osanumero", "text": "tekstin osanumero", "folder": "kansio"}
 
 
-def score_dxf(report, unit_guessed: bool, texts: list[str],
-              blank_mm: tuple[float, float] | None) -> Choice:
+def score_dxf(shape, texts: list[str], blank_mm: tuple[float, float] | None) -> Choice:
     """How much a DXF/DWG looks like the part's flat pattern (higher is
-    better). ``report`` is its ``DxfReport``, ``blank_mm`` the STEP blank's
+    better). ``shape`` is its ``FlatShape``, ``blank_mm`` the STEP blank's
     size when the item has a model."""
-    if report.problems or report.outline is None:
+    if shape.problems or not shape.outline:
         return Choice(-1e9, "ei luettavaa ääriviivaa", valid=False)
-    w, h = sorted((report.outline.width_mm, report.outline.height_mm))
-    if w < _MIN_PART_MM and report.dropped_count:
+    w, h = sorted(shape.size_mm)
+    if w < _MIN_PART_MM and shape.outside_count:
         # A drawing sheet with no flat pattern on it (an assembly drawing):
         # the "part" found is one of its lines.
         return Choice(-1e9, NO_BLANK, valid=False)
@@ -124,13 +123,13 @@ def score_dxf(report, unit_guessed: bool, texts: list[str],
     if _is_paper(w, h):
         score -= 200
         notes.append("piirustuksen kehys")
-    outside = report.dropped_count
+    outside = shape.outside_count
     if outside:
         score -= 15 * min(outside, 10)
         notes.append(f"{outside} kuviota osan ulkopuolella")
     if texts:
         score -= 2 * min(len(texts), 20)
-    if unit_guessed:
+    if shape.unit_guessed:
         score -= 10
         notes.append("mittayksikkö puuttuu")
     if blank_mm is not None:
@@ -159,13 +158,14 @@ def choose(scored: dict[str, Choice], override: str | None = None) -> str | None
     return max(valid)[2] if valid else None
 
 
-def looks_like_drawing(report) -> bool:
-    """A drawing sheet rather than a part: unreadable, a paper-size frame, or
-    other views and the title block around the part."""
-    if report.problems or report.outline is None:
+def looks_like_drawing(shape) -> bool:
+    """A drawing sheet rather than a part (``shape``: its ``FlatShape``):
+    unreadable, a paper-size frame, or other views and the title block
+    around the part."""
+    if shape.problems or not shape.outline:
         return True
-    w, h = sorted((report.outline.width_mm, report.outline.height_mm))
-    return _is_paper(w, h) or report.dropped_count >= 3
+    w, h = sorted(shape.size_mm)
+    return _is_paper(w, h) or shape.outside_count >= 3
 
 
 _NUMBER = re.compile(r"(?<![\d.,])\d{2,5}(?:[.,]\d{1,2})?(?![\d])")

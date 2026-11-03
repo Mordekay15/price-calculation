@@ -26,5 +26,5 @@ labels = {fid: f"#{i + 1} · {d.name}" for i, (fid, d) in enumerate(parts)}
 bom.render_bom({sid: labels[cid] for cid, item in cards().items()
                 for sid in item.members}, resync)
 products = _render_part_cards(parts, ["S235"], {("2", "S235 | 1000x2000"): 900.0}, False)
-st.session_state["cards"] = [(p["name"], p["qty"], p["report"].bends,
+st.session_state["cards"] = [(p["name"], p["qty"], len(p["shape"].bends),
                               round(p["width"], 1), round(p["height"], 1)) for p in products]

@@ -49,12 +49,15 @@ def _callout_facts(text: str, own: str, file_id: str, page: int | None = None) -
 
 # ── DXF and DWG ───────────────────────────────────────────────────────────────
 
-def shape_from_report(report: DxfReport, origin: str,
-                      layers: list[str] | None = None) -> FlatShape:
+def shape_from_report(report: DxfReport, origin: str, layers: list[str] | None = None,
+                      unit_guessed: bool = False) -> FlatShape:
     """The part the DXF reader built, as a FlatShape. Its point lists are the
-    report's own, not copies (the report is kept too, see ``ReadResult``)."""
+    report's own, not copies."""
+    about = {"name": report.name, "unit_label": report.unit_label,
+             "unit_guessed": unit_guessed, "outside_count": report.dropped_count}
     if report.outline is None:
-        return FlatShape(origin, [], problems=list(report.problems) or ["ei ääriviivaa"])
+        return FlatShape(origin, [], problems=list(report.problems) or ["ei ääriviivaa"],
+                         **about)
     return FlatShape(
         origin=origin,
         outline=report.outline.points,
@@ -63,9 +66,10 @@ def shape_from_report(report: DxfReport, origin: str,
         markings=report.reference_lines,
         bends=[FlatBend() for _ in range(report.bends)],
         threads=report.threads,
-        outside_count=report.dropped_count,
         layers_used=layers,
         problems=list(report.problems),
+        drawn_blank_mm=report.drawn_blank_mm,
+        **about,
     )
 
 
@@ -75,6 +79,7 @@ def _from_dxf_file(f: DxfFile, file_id: str, name: str, record=None) -> ReadResu
     report = f.part()
     layers = f.suggested_layers() if f.pieces else None
     f.forget_lines()                    # the part is all that's used after (memory)
+    shape = shape_from_report(report, file_id, layers, f.unit_guessed)
     text = "\n".join(f.texts)
     own = base_key(name)
     facts = [Fact("part_number", own, file_id, name)]
@@ -82,9 +87,8 @@ def _from_dxf_file(f: DxfFile, file_id: str, name: str, record=None) -> ReadResu
     facts += [Fact("fastener", {"name": n, "kpl": k}, file_id, f"{n} X{k}KPL")
               for n, k in fastener_lines(f.texts)]
     facts += _callout_facts(text, own, file_id)
-    result = ReadResult(file_id, shapes=[shape_from_report(report, file_id, layers)],
-                        facts=facts, problems=list(f.problems),
-                        is_drawing=looks_like_drawing(report),
+    result = ReadResult(file_id, shapes=[shape], facts=facts, problems=list(f.problems),
+                        is_drawing=looks_like_drawing(shape),
                         record=f if record is None else record)
     result.is_assembly = result.is_drawing and len({f.value for f in result.of("called_out")}) >= 2
     return result
@@ -121,13 +125,19 @@ def read_dwg_file(data: bytes, file_id: str, name: str) -> ReadResult:
 
 # ── STEP ──────────────────────────────────────────────────────────────────────
 
-def shape_from_flat(flat, origin: str) -> FlatShape:
-    """A STEP body's unfolded flat as a FlatShape: bends with their angle,
-    radius and direction, nothing guessed back from a drawing."""
+def shape_from_flat(flat, origin: str, name: str = "") -> FlatShape:
+    """A STEP body's unfolded flat as a FlatShape: checked and laid along its
+    length by the DXF reader's own steps (``dxf_file_of``), its bends with
+    their angle, radius and direction, nothing guessed back from a drawing."""
     bends = [FlatBend(tuple(map(tuple, b.line)), b.angle_deg, b.inner_radius_mm, b.up)
              for b in flat.bends]
-    return FlatShape(origin, list(flat.outline), holes=[list(h) for h in flat.holes],
-                     markings=[list(b.line) for b in bends], bends=bends)
+    raw = FlatShape(origin, list(flat.outline), holes=[list(h) for h in flat.holes],
+                    markings=[list(b.line) for b in bends], bends=bends)
+    shape = shape_from_report(dxf_file_of(raw, name, flat.thickness_mm).part(), origin)
+    # The bend lines, laid along with the part, are its markings, in order.
+    shape.bends = [FlatBend(tuple(map(tuple, line[:2])), b.angle_deg, b.inner_radius_mm, b.up)
+                   for b, line in zip(bends, shape.markings)]
+    return shape
 
 
 def dxf_file_of(shape: FlatShape, name: str, thickness_mm: float | None = None) -> DxfFile:
@@ -168,15 +178,34 @@ def read_step_file(data: bytes, file_id: str, name: str,
     from core import step
 
     model = step.read_step(data, name)
+    return step_result(model, unfold_all(model, k_factor), file_id)
+
+
+def unfold_all(model, k_factor: float | None = None, bodies: dict | None = None) -> dict:
+    """Every body of a STEP model unfolded with the K factor (``bodies``: the
+    3D bodies by key, when the model's own were let go)."""
+    from core import step
+
     k = step.DEFAULT_K_FACTOR if k_factor is None else k_factor
-    flats = {p.key: step.unfold(p.shape, k) for p in model.parts}
+    shapes = bodies if bodies is not None else {p.key: p.shape for p in model.parts}
+    return {key: step.unfold(shape, k) for key, shape in shapes.items()}
+
+
+def step_result(model, flats: dict, file_id: str) -> ReadResult:
+    """A STEP model's ReadResult from its unfolded bodies (``unfold_all``)."""
+    from core import step
+
+    def on_card(part) -> str:
+        """A body's name on its card: the file's for a file of one body."""
+        return model.name if len(model.parts) == 1 else f"{step.safe_name(part.name)}.step"
+
     result = ReadResult(file_id, problems=list(model.problems), record=(model, flats))
     for part in model.parts:
         sid = f"{file_id}|{part.key}"
-        flat = flats[part.key]
+        flat = flats.get(part.key)
         key = base_key(part.name)
         if flat is not None and flat.is_sheet and flat.outline:
-            result.shapes.append(shape_from_flat(flat, sid))
+            result.shapes.append(shape_from_flat(flat, sid, on_card(part)))
             result.facts.append(Fact("part_number", key, file_id, part.name, body=part.key))
             if flat.thickness_mm:
                 result.facts.append(Fact("thickness", round(flat.thickness_mm, 2), file_id,

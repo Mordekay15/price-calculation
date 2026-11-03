@@ -104,7 +104,7 @@ def test_dropped_files_become_cards_and_poista_removes_one():
         import streamlit as st
 
         from tests.conftest import dxf_bytes
-        from view.dxf_files import STORE, evict, ingest
+        from view.dxf_files import cards, evict, ingest
 
         doc = ezdxf.new()
         doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 50), (0, 50)], close=True)
@@ -114,7 +114,7 @@ def test_dropped_files_become_cards_and_poista_removes_one():
         if st.session_state.get("remove"):
             evict(st.session_state.pop("remove"))
         st.session_state["new"] = ingest(files)
-        st.session_state["shown"] = list(st.session_state.get(STORE, {}))
+        st.session_state["shown"] = list(cards())
 
     at = AppTest.from_function(page)
     at.session_state["drop"] = ["a", "b"]
@@ -279,7 +279,7 @@ def test_poista_kaikki_removes_every_card_and_its_settings():
     assert "dxf_del_all" not in [b.key for b in dxf_page(1).button]   # one part: its own Poista
     at = fill_first_card(dxf_page(2))
     at.button(key="dxf_del_all").click().run()
-    assert at.session_state["dxf_store"] == {} and not at.session_state["materials"]
+    assert not at.session_state["materials"]
     assert "dxf_parts" not in at.session_state or not at.session_state["dxf_parts"]
     assert not [k for k in at.session_state if k.startswith(("dxf_mat_", "dxf_q_"))]
 
@@ -295,7 +295,7 @@ def test_a_margin_change_reprices_without_running_sparrow_again():
         import streamlit as st
 
         import view.dxf_nesting as tab
-        from core.dxf import read_dxf
+        from core.readers import read_dxf_file
         from tests.conftest import dxf_bytes
         from tests.test_sparrow import fake_solver
         from view.common import SheetSettings
@@ -309,8 +309,8 @@ def test_a_margin_change_reprices_without_running_sparrow_again():
         doc = ezdxf.new()
         doc.header["$INSUNITS"] = 4
         doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 50), (0, 50)], close=True)
-        report = read_dxf(dxf_bytes(doc), "p.dxf").part()
-        prods = [{"id": "p", "name": "p.dxf", "report": report, "qty": 30, "angles": (0, 90)}]
+        shape = read_dxf_file(dxf_bytes(doc), "p", "p.dxf").shapes[0]
+        prods = [{"id": "p", "name": "p.dxf", "shape": shape, "qty": 30, "angles": (0, 90)}]
         lookup = {("2", "S235 | 1000x2000"): 900.0}
         totals = st.session_state.setdefault("totals", [])
         real, tab.run_sparrow = tab.run_sparrow, counting
@@ -341,7 +341,7 @@ def test_price_only_changes_update_without_the_calculate_button():
         import streamlit as st
 
         import view.dxf_nesting as tab
-        from core.dxf import read_dxf
+        from core.readers import read_dxf_file
         from core.sheet_cost import group_products
         from tests.conftest import dxf_bytes
         from tests.test_sparrow import fake_solver
@@ -357,14 +357,14 @@ def test_price_only_changes_update_without_the_calculate_button():
         doc = ezdxf.new()
         doc.header["$INSUNITS"] = 4
         doc.modelspace().add_lwpolyline([(0, 0), (300, 0), (300, 200), (0, 200)], close=True)
-        report = read_dxf(dxf_bytes(doc), "p.dxf").part()
+        shape = read_dxf_file(dxf_bytes(doc), "p", "p.dxf").shapes[0]
         lookup = {}
         for t in ("2", "3"):
             lookup[(t, "S235 | 1000x2000")] = 900.0
             lookup[(t, "S235 | 1250x2500")] = step.get("price", 870.0)
         prods = [{"id": "p", "name": "p.dxf", "material": "S235",
                   "thickness": step.get("thickness", "2"), "width": 300, "height": 200,
-                  "qty": step.get("qty", 40), "angles": (0, 90), "report": report}]
+                  "qty": step.get("qty", 40), "angles": (0, 90), "shape": shape}]
         settings = tab._Settings("combined", SheetSettings(), 4, step.get("margin", 15.0), lookup)
         cache = st.session_state.setdefault(tab._CACHE, {})
         real, tab.run_sparrow = tab.run_sparrow, counting
@@ -414,11 +414,10 @@ def test_a_parts_numbered_files_and_drawing_make_one_card():
         from types import SimpleNamespace
 
         import ezdxf
-        import streamlit as st
         from reportlab.pdfgen import canvas
 
         from tests.conftest import dxf_bytes
-        from view.dxf_files import STORE, ingest
+        from view.dxf_files import cards, ingest
         from view.dxf_tab import _render_part_cards
 
         doc = ezdxf.new()
@@ -429,17 +428,17 @@ def test_a_parts_numbered_files_and_drawing_make_one_card():
         pdf = canvas.Canvas(buf)
         pdf.drawString(72, 720, "3AUA0000098622")
         pdf.save()
-        if not st.session_state.get(STORE):
+        if not cards():
             ingest([SimpleNamespace(file_id=f"f{i}", name=f"3aua0000098622_{i}.dxf",
                                     getvalue=lambda: data) for i in (1, 2)]
                    + [SimpleNamespace(file_id="d", name="3AUA0000098622.pdf",
                                       getvalue=lambda: buf.getvalue())])
-        _render_part_cards(list(st.session_state[STORE].items()), ["S235"],
+        _render_part_cards(list(cards().items()), ["S235"],
                            {("2", "S235 | 1000x2000"): 900.0}, False)
 
     at = AppTest.from_function(page, default_timeout=30).run()
     assert not at.exception
-    assert list(at.session_state["dxf_store"]) == ["f1"]
+    assert list(at.session_state["dxf_parts"]) == ["f1"]
     assert sum("3AUA0000098622.pdf" in e.label for e in at.expander) == 1
     files = " ".join(m.proto.help for m in at.markdown if m.value.startswith("**#1**"))
     assert "✓ 3aua0000098622_1.dxf" in files and "3aua0000098622_2.dxf" in files
@@ -453,11 +452,10 @@ def test_a_unitless_dxf_is_confirmed_by_its_pdf_drawing():
         from types import SimpleNamespace
 
         import ezdxf
-        import streamlit as st
         from reportlab.pdfgen import canvas
 
         from tests.conftest import dxf_bytes
-        from view.dxf_files import STORE, ingest
+        from view.dxf_files import cards, ingest
         from view.dxf_tab import _render_part_cards
 
         doc = ezdxf.new()
@@ -469,12 +467,12 @@ def test_a_unitless_dxf_is_confirmed_by_its_pdf_drawing():
         pdf = canvas.Canvas(buf)
         pdf.drawString(72, 720, "3AUA0000098622 (516.4)")
         pdf.save()
-        if not st.session_state.get(STORE):
+        if not cards():
             ingest([SimpleNamespace(file_id="f", name="3aua0000098622_2.dxf",
                                     getvalue=lambda: data),
                     SimpleNamespace(file_id="d", name="3AUA0000098622.pdf",
                                     getvalue=lambda: buf.getvalue())])
-        _render_part_cards(list(st.session_state[STORE].items()), ["S235"],
+        _render_part_cards(list(cards().items()), ["S235"],
                            {("2", "S235 | 1000x2000"): 900.0}, False)
 
     at = AppTest.from_function(page, default_timeout=30).run()
@@ -526,7 +524,7 @@ def test_files_the_app_cant_use_are_skipped_and_named():
         import streamlit as st
 
         from tests.conftest import dxf_bytes
-        from view.dxf_files import STORE, ingest
+        from view.dxf_files import cards, ingest
 
         doc = ezdxf.new()
         doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 50), (0, 50)], close=True)
@@ -536,7 +534,7 @@ def test_files_the_app_cant_use_are_skipped_and_named():
             ingest([SimpleNamespace(file_id=i, name=n, getvalue=lambda: data) for i, n in
                     [("a", "3aua0000098622.prt.1"), ("b", "a4_v_abb_form.frm.1"),
                      ("c", "3aua0000098622_2.dxf")]])
-        st.session_state["shown"] = list(st.session_state.get(STORE, {}))
+        st.session_state["shown"] = list(cards())
         st.session_state["skipped"] = st.session_state.get("dxf_skipped")
 
     at = AppTest.from_function(page).run()

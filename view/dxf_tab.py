@@ -6,7 +6,7 @@ batch size and the downloads). Above each, a status strip says what is still
 missing and where, and leads to the next step. A card shows a part's preview, measured size,
 material, thickness, quantity and work, and returns the product dict the
 pricing uses, or None (with the reasons shown) when the part cannot be
-priced. The card and the pricing share the same DxfReport, so what the card
+priced. The card and the pricing share the same FlatShape, so what the card
 shows is exactly what Sparrow nests.
 
 Only the open screen is drawn, but every screen runs the cards, the
@@ -16,9 +16,9 @@ quote bar above the tabs shows the live total on each."""
 from dataclasses import dataclass
 
 from core.assemblies import per_unit
-from core.dxf import DxfFile, DxfReport, is_slit
+from core.dxf import is_slit
 from core.items import LINKED_BY, NO_BLANK, confirm_unit
-from core.model import Part
+from core.model import FlatShape, Part
 from core.pricing import build_lookup
 from core.sheet_cost import is_ready
 from view import assemblies, attachments, bom
@@ -31,7 +31,6 @@ from view.common import (
 from view.drawing import preview_svg
 from view.dxf_files import (
     FILL_ASKED,
-    REPORTS,
     apply_material,
     auto_fill_materials,
     bom_quantities,
@@ -39,7 +38,7 @@ from view.dxf_files import (
     card_docs,
     card_fastener_lines,
     card_forms,
-    card_report,
+    card_texts,
     empty_cards,
     evict,
     evict_all,
@@ -307,8 +306,8 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
     assemblies.render(card_of, draw_assembly, evict,
                       {fid: f"#{i + 1} · {part.name}" for i, (fid, part) in enumerate(parts)
                        if fid not in drawing_of.values()})
-    for idx, (fid, dxf) in enumerate(parts):
-        rows.setdefault(fid, {"#": idx + 1, "Osa": dxf.name, "Tila": _DRAWING})
+    for idx, (fid, shape) in enumerate(parts):
+        rows.setdefault(fid, {"#": idx + 1, "Osa": shape.name, "Tila": _DRAWING})
     ss[_ISSUES] = {fid: r["Tila"] for fid, r in rows.items()
                    if r["Tila"].startswith((_PROBLEM, _OPEN))}
     if table_slot is not None and not is_headless():
@@ -321,10 +320,10 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
 _DRAWING = "piirustus"
 
 
-def _row(fid: str, idx: int, dxf: DxfFile, status: str, **cells) -> None:
+def _row(fid: str, idx: int, shape: FlatShape, status: str, **cells) -> None:
     """The card's row in the parts table (and its state for the strip)."""
     st.session_state.setdefault(_ROWS, {})[fid] = {
-        "#": idx + 1, "Osa": dxf.name, "Tila": status, **cells}
+        "#": idx + 1, "Osa": shape.name, "Tila": status, **cells}
 
 
 def _render_table(fids: list[str], rows: dict[str, dict], materials: list[str],
@@ -389,13 +388,12 @@ def _render_item_files(fid: str, item: Part) -> None:
                                              if not sid else item.names[sid]))
     if (choice or None) != item.chosen_by_user:
         item.chosen_by_user = choice or None
-        st.session_state.get(REPORTS, {}).pop(fid, None)
         st.rerun()
 
 
 def _render_part_config(
     fid: str,
-    dxf: DxfFile,
+    shape: FlatShape,
     idx: int,
     materials: list[str],
     lookup: dict,
@@ -426,10 +424,10 @@ def _render_part_config(
             ["Tiedostot (hinnoiteltava muoto valitaan automaattisesti: puhdas tasoaihio "
              "ennen piirustusta, ja STEP-mallin kanssa samankokoinen DXF ennen muita):",
              *_file_lines(item)] if item is not None and len(item.members) > 1 else []) + (
-            ["Piirustuksen tekstit: " + " · ".join(dxf.texts)] if dxf.texts else [])
-        hdr[0].markdown(f"**#{idx + 1}** · {dxf.name}", help="  \n".join(about) or None)
+            ["Piirustuksen tekstit: " + " · ".join(texts)] if (texts := card_texts(fid)) else [])
+        hdr[0].markdown(f"**#{idx + 1}** · {shape.name}", help="  \n".join(about) or None)
         hdr[2].button("Poista", key=f"dxf_del_{fid}", args=(fid,),
-                      on_click=undoable(evict, f"#{idx + 1} {dxf.name}"))
+                      on_click=undoable(evict, f"#{idx + 1} {shape.name}"))
         src_col, docs_col, model_col = st.columns(3)
         if item is not None and len(item.members) > 1:
             with src_col:
@@ -443,7 +441,6 @@ def _render_part_config(
             render_waiting(list(doc_ids))
 
         preview_col, input_col = st.columns([1, 3])
-        report = card_report(fid, dxf)
         if item is not None and not any(c.valid for c in item.scores.values()) and any(
                 c.note == NO_BLANK for c in item.scores.values()):
             input_col.warning(
@@ -452,20 +449,20 @@ def _render_part_config(
                 "lataa osien omat DXF- tai STEP-tiedostot, niin niistä tulee kortit.")
             if not is_headless():
                 with preview_col:
-                    _render_preview(report)
-            _row(fid, idx, dxf, _DRAWING)
+                    _render_preview(shape)
+            _row(fid, idx, shape, _DRAWING)
             return None
         with input_col:
-            size = _checked_size(fid, dxf, report, hdr[1], _unit_reason(dxf, report, item, doc_ids))
+            size = _checked_size(fid, shape, hdr[1], _unit_reason(shape, item, doc_ids))
         if not is_headless():
             with preview_col:
-                _render_preview(report, model_bends(fid, report, item))
+                _render_preview(shape, model_bends(fid, shape, item))
                 if forms := card_forms(item):
                     st.caption(f"{forms} painomuotoa",
                                help="Painomuodot (esim. kidukset) STEP-mallissa: niitä ei "
                                     "lasketa taivutuksiksi.")
         if size is None:
-            _row(fid, idx, dxf, f"{_PROBLEM} ei hinnoiteltavissa" if report.problems
+            _row(fid, idx, shape, f"{_PROBLEM} ei hinnoiteltavissa" if shape.problems
                  else f"{_OPEN} vahvista mittayksikkö")
             return None
         with input_col:
@@ -474,11 +471,12 @@ def _render_part_config(
             if fill is not None:
                 _offer_same_material(fid, idx, material, thickness, fill)
             work = render_work_inputs(fid, material=material, thickness=thickness, qty=qty,
-                                      cut_length_m=report.cut_length_mm / 1000,
-                                      bends=card_bends(report, item), threads=report.threads,
+                                      cut_length_m=shape.cut_length_mm / 1000,
+                                      bends=card_bends(shape, item), threads=shape.threads,
                                       bought=(item, *card_fastener_lines(fid, item,
                                                                          list(doc_ids))),
                                       in_assembly=in_assembly)
+            item.work = work
         # Chosen on the Nestaus step, next to the run button (see
         # ``dxf_nesting._render_angle_controls``); read here for the product.
         with headless():
@@ -486,96 +484,95 @@ def _render_part_config(
         status = ("✓ valmis" if material and thickness
                   else f"{_OPEN} valitse paksuus" if material
                   else f"{_OPEN} valitse materiaali")
-        _row(fid, idx, dxf, status, Materiaali=material or "", Paksuus=thickness or "", Määrä=qty,
+        _row(fid, idx, shape, status, Materiaali=material or "", Paksuus=thickness or "", Määrä=qty,
              **{"Koko (mm)": f"{size[0]:g} × {size[1]:g}"})
 
     return {
         "id":        fid,
-        "name":      dxf.name,
-        "material":  material,
-        "thickness": thickness,
+        "name":      shape.name,
+        "material":  item.material.value,
+        "thickness": item.thickness.value,
         "width":     size[0],
         "height":    size[1],
-        "qty":       qty,
+        "qty":       item.qty.value,
         "angles":    angles,
-        "report":    report,
-        "work":      work,
+        "shape":     shape,
+        "work":      item.work,
         "source":    item.chosen if item is not None else fid,
     }
 
 
-def _render_preview(report: DxfReport, bends: list | None = None) -> None:
+def _render_preview(shape: FlatShape, bends: list | None = None) -> None:
     """The part as it will be cut, alone (shapes outside it are left out).
     ``bends`` are the STEP model's bend lines placed on it."""
-    preview = preview_svg(report, bends=bends)
+    preview = preview_svg(shape, bends=bends)
     if preview:
         st.markdown(preview, unsafe_allow_html=True)
     if bends:
         st.caption("Taivutuslinjat STEP-mallista: :green[ylös] · :orange[alas]")
-    slits = sum(map(is_slit, report.open_lines))
+    slits = sum(map(is_slit, shape.open_cuts))
     if slits:
         st.caption(f"{slits} rakoa", help="Suorat leikkaukset osan sisällä ovat mukana "
                                          "leikkuupituudessa.")
-    if report.drawn_blank_mm:
+    if shape.drawn_blank_mm:
         st.caption(f":orange[Aihion leveys avattu profiilista "
-                   f"(piirustuksessa {report.drawn_blank_mm:.1f} mm)]",
+                   f"(piirustuksessa {shape.drawn_blank_mm:.1f} mm)]",
                    help="Piirustuksen aihio ei vastaa sen profiilia, joten leveys on "
                         "laskettu profiilin poikkileikkauksesta (K = 0,44).")
-    if report.dropped_count:
-        st.caption(f"{report.dropped_count} kuviota ohitettu",
+    if shape.outside_count:
+        st.caption(f"{shape.outside_count} kuviota ohitettu",
                    help="Osan ulkopuolella olevat kuviot (esim. lisäkuvat tai irralliset "
                         "viivat) eivät ole osaa, eikä niitä näytetä esikatselussa.")
 
 
-def _unit_reason(dxf: DxfFile, report: DxfReport, item: Part | None, doc_ids) -> str | None:
+def _unit_reason(shape: FlatShape, item: Part | None, doc_ids) -> str | None:
     """Why the guessed unit of a card's DXF is right: its STEP model or PDF
     drawing agrees with the size (see ``core.items.confirm_unit``)."""
-    if not dxf.unit_guessed or report.outline is None:
+    if not shape.unit_guessed or not shape.outline:
         return None
-    return confirm_unit((report.outline.width_mm, report.outline.height_mm),
+    return confirm_unit(shape.size_mm,
                         item.blank if item is not None else None,
                         [attachments.text(d) for d in doc_ids])
 
 
-def _checked_size(fid: str, dxf: DxfFile, report: DxfReport, badge,
+def _checked_size(fid: str, shape: FlatShape, badge,
                   confirmed: str | None = None) -> tuple | None:
     """The part's ``(width, height)`` in mm, or None (with the reason shown)
     while it can't be priced. ``badge`` is the card header's status slot;
     ``confirmed`` why a guessed unit is right (see ``core.items.confirm_unit``)."""
-    if report.problems:
+    if shape.problems:
         badge.markdown(":red[ei hinnoiteltavissa]")
         st.error(
             "**Tätä osaa ei voi vielä hinnoitella:**\n\n"
-            + "\n".join(f"- {p}" for p in report.problems)
+            + "\n".join(f"- {p}" for p in shape.problems)
         )
         return None
 
-    width = round(report.outline.width_mm, 1)
-    height = round(report.outline.height_mm, 1)
+    width, height = (round(v, 1) for v in shape.size_mm)
 
     # No unit in the file: the part's other files (the STEP model, the PDF
     # drawing's dimensions) confirm the guess; else show the size the guess
     # gives and price only once the user confirms it. The warning goes above
     # the checkbox and only while it is unticked.
-    if dxf.unit_guessed and confirmed:
+    if shape.unit_guessed and confirmed:
         pass   # said on the size in the header, below
-    elif dxf.unit_guessed:
+    elif shape.unit_guessed:
         note = st.empty()
         if not st.checkbox(f"Koko {width:g} × {height:g} mm on oikein",
                            key=f"dxf_unit_ok_{fid}"):
             note.warning(
                 "Piirustuksesta puuttuu mittayksikkö. Oletimme yksiköksi "
-                f"**{report.unit_label}**, jolloin osan koko on "
+                f"**{shape.unit_label}**, jolloin osan koko on "
                 f"**{width:g} × {height:g} mm**. Tarkista mitat piirustuksesta."
             )
             badge.markdown(":orange[vahvista yksikkö]")
             return None
 
     # The drawing's own unit only when it isn't mm ("… mm · mm" said nothing).
-    drawn = "" if report.unit_label == "mm" else f" · piirretty: {report.unit_label}"
+    drawn = "" if shape.unit_label == "mm" else f" · piirretty: {shape.unit_label}"
     badge.markdown(f":gray[{width:g} × {height:g} mm{drawn}]",
-                   help=f"Yksikkö {report.unit_label} vahvistettu: {confirmed}. "
-                        "Mittayksikkö puuttuu tiedostosta." if dxf.unit_guessed and confirmed
+                   help=f"Yksikkö {shape.unit_label} vahvistettu: {confirmed}. "
+                        "Mittayksikkö puuttuu tiedostosta." if shape.unit_guessed and confirmed
                    else None)
     return width, height
 
@@ -619,9 +616,11 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict,
         why = ((f"{per_assembly} kpl / kokoonpano × " if per_assembly else "")
                + f"suurin eräkoko {batch} (Eräkoot, sivun ylälaidassa)")
     col = st.columns(2)[0]
-    qty = auto_input(col, "Määrä (kpl)", f"dxf_q_{fid}", auto, step=1.0, fmt="%.0f",
-                     help="Levyt nestataan tälle määrälle. Oletus: " + why + ".")
-    return material, thickness, max(int(qty), 1)
+    qty = max(int(auto_input(col, "Määrä (kpl)", f"dxf_q_{fid}", auto, step=1.0, fmt="%.0f",
+                             help="Levyt nestataan tälle määrälle. Oletus: " + why + ".")), 1)
+    p.qty.auto, p.qty.source = int(auto), why
+    p.qty.set(qty)
+    return material, thickness, qty
 
 
 @dataclass

@@ -47,6 +47,11 @@ def result(file_id: str) -> ReadResult | None:
     return results[file_id]
 
 
+def results() -> dict[str, ReadResult]:
+    """Every file read so far, ``{file id: ReadResult}``, in reading order."""
+    return st.session_state.get(RESULTS, {})
+
+
 def is_read(file_id: str) -> bool:
     return file_id in st.session_state.get(RESULTS, {})
 
