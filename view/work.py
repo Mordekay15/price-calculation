@@ -2,12 +2,12 @@
 inputs on every part card (both tabs), and each product's work cost with the
 per-sheet cutting minimum applied by group (see ``core.work``)."""
 
+from core.model import BoughtPart
 from core.pricing import parse_thickness_mm
 from core.work import (
     FASTENER_INSERT_EUR,
     LASER,
     PUNCH,
-    BoughtPart,
     LaserSpeed,
     WorkCost,
     WorkInputs,

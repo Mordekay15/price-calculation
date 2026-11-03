@@ -13,6 +13,8 @@ import bisect
 import re
 from dataclasses import dataclass, replace
 
+from core.model import BoughtPart
+
 LASER, PUNCH = "laser", "punch"
 
 # ── Laser cutting speeds ──────────────────────────────────────────────────────
@@ -104,22 +106,6 @@ class WorkRates:
     def weld_eur(self, metres: float) -> float:
         """Welding ``metres`` at the shop's speed and hourly rate."""
         return metres / self.weld_m_per_h * self.weld_eur_per_h if self.weld_m_per_h else 0.0
-
-
-@dataclass(frozen=True)
-class BoughtPart:
-    """One row of Ostetut osat: bought, and put in. ``qty`` is per owner: per
-    piece for a part's own (its fasteners), per assembly for an assembly's."""
-
-    name: str
-    qty: int
-    eur: float = 0.0              # one piece
-    fit_eur: float = 0.0          # putting one piece in (e.g. pressing a PEM nut)
-
-    @property
-    def unit(self) -> float:
-        """One piece, bought and put in."""
-        return self.eur + self.fit_eur
 
 
 @dataclass(frozen=True)

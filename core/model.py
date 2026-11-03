@@ -138,7 +138,8 @@ FACT_KINDS = ("material", "thickness", "part_number", "revision", "bom_qty",
 class Fact:
     """One thing a file states that is not a shape. ``value`` by kind:
 
-    - material: ``{"family", "grade"}``   - thickness: mm (float)
+    - material: ``{"family", "grade", "thickness_mm"}`` (thickness None when
+      the line gives none)                - thickness: mm (float)
     - part_number / revision / called_out: str
     - bom_qty: ``{"part_key", "kpl"}``    - fastener / bought_body: ``{"name", "kpl"}``
 
@@ -177,72 +178,111 @@ class ReadResult:
 
 @dataclass
 class Value(Generic[T]):
-    """A card value: what the files say (``auto``, with where from), what
-    was typed (``user``, wins when set), and why the files disagree."""
+    """A card value: what the files say (``auto``, with where from, or why
+    they disagree), and what was chosen by hand (``user``, wins when set;
+    "" is a value cleared by hand)."""
 
     auto: T | None = None
-    source: str = ""                            # e.g. "ITM-064555.pdf, s. 1: 6 PCS"
-    conflict: str = ""
+    source: str = ""                            # e.g. "ITM-064555.pdf, s. 1: S235 t=3"
+    conflict: str = ""                          # why the files disagree
     user: T | None = None
 
     @property
     def value(self) -> T | None:
-        return self.user if self.user is not None else self.auto
+        return (self.user or None) if self.user is not None else self.auto
+
+    def set(self, value: T | None) -> None:
+        """What the card's widget now holds: by hand unless it is the auto."""
+        self.user = None if value == self.auto else ("" if value is None else value)
+
+    def fill(self, value: T | None, source: str = "") -> None:
+        """What the files say; a hand choice is dropped (the files spoke)."""
+        self.auto, self.source, self.conflict, self.user = value, source, "", None
 
 
-@dataclass
-class BoughtPart:
-    """One row of Ostetut osat: bought, and put in. ``kpl`` is per owner:
-    per part for a part's fasteners, per assembly for an assembly's."""
+@dataclass(frozen=True)
+class Choice:
+    """How a part's file scored as the shape to price."""
 
-    name: str
-    kpl: Value[int]
-    eur: Value[float]
-    fit_eur: Value[float]
-    source: str = ""                            # "Mistä": the line it was read from, "" by hand
-
-    @property
-    def unit_eur(self) -> float:
-        """One piece, bought and put in."""
-        return float(self.eur.value or 0.0) + float(self.fit_eur.value or 0.0)
-
-    @property
-    def total_eur(self) -> float:
-        """All of them, per owner."""
-        return int(self.kpl.value or 0) * self.unit_eur
+    score: float
+    note: str                                   # why, in Finnish, for the card
+    valid: bool = True
 
 
 @dataclass
 class PartSource:
-    """One file on a part's card: a DXF, a DWG, a STEP body or a PDF.
-    Those with a shape compete to be priced (``score``, ``note``)."""
+    """One file on a part's card: a DXF/DWG, or a body of a STEP model, how it
+    came onto the card, and how it scored as the shape to price."""
 
     source_id: str                              # file id, or STEP file id|body key
-    file_id: str
-    linked_by: str                              # part_number | text | folder | hand
-    shape: FlatShape | None = None
-    score: float = 0.0
-    note: str = ""
-    hidden: bool = False
-    name: str = ""                              # as on the card: the file's, or the body's
-    valid: bool = True                          # its shape can be priced
+    name: str                                   # as on the card
+    linked_by: str                              # part_number | text | folder
+    choice: Choice
 
 
 @dataclass
-class Child:
-    """A part or a subassembly in an assembly, × kpl."""
+class Part:
+    """One card: one part number, however many files describe it. Its files
+    in drop order, the one priced (``chosen``; ``chosen_by_user`` when picked
+    by hand), the STEP blank's size, and its material and thickness."""
 
-    ref: str                                    # Part id or Assembly part number
-    kpl: Value[int]
-    is_assembly: bool = False
+    id: str                                     # its first file's id
+    sources: list[PartSource]
+    chosen: str
+    blank: tuple[float, float] | None = None    # mm
+    chosen_by_user: str | None = None
+    material: Value[str] = field(default_factory=Value)
+    thickness: Value[str] = field(default_factory=Value)
+    version: int = 0                            # bumped to give its widgets new keys
+
+    @property
+    def members(self) -> list[str]:
+        return [s.source_id for s in self.sources]
+
+    @property
+    def scores(self) -> dict[str, Choice]:
+        return {s.source_id: s.choice for s in self.sources}
+
+    @property
+    def names(self) -> dict[str, str]:
+        return {s.source_id: s.name for s in self.sources}
 
 
-@dataclass
+@dataclass(frozen=True)
+class BoughtPart:
+    """One row of Ostetut osat: bought, and put in. ``qty`` is per owner: per
+    piece for a part's own (its fasteners), per assembly for an assembly's."""
+
+    name: str
+    qty: int
+    eur: float = 0.0                            # one piece
+    fit_eur: float = 0.0                        # putting one piece in (e.g. pressing a PEM nut)
+
+    @property
+    def unit(self) -> float:
+        """One piece, bought and put in."""
+        return self.eur + self.fit_eur
+
+
+@dataclass(frozen=True)
+class AssemblyWork:
+    """Putting one assembly together."""
+
+    fit_min: float = 0.0                        # fitting, minutes per assembly
+    weld_m: float = 0.0                         # welding, metres per assembly
+    setup_min: float = 0.0                      # minutes per batch
+    eur_per_h: float = 0.0                      # fitting and setup
+    other_eur: float = 0.0                      # per assembly (packing, painting the whole…)
+
+
+@dataclass(frozen=True)
 class Assembly:
-    """One per part number, however many files describe it."""
+    """One per part number: its parts and subassemblies × kpl, its bought
+    parts and its work (see ``core.assemblies`` for its price)."""
 
-    part_number: str
-    name: str = ""
-    sources: list[tuple[str, str]] = field(default_factory=list)   # (kind, file id)
-    children: list[Child] = field(default_factory=list)
-    bought: list[BoughtPart] = field(default_factory=list)
+    id: str
+    name: str
+    members: tuple[tuple[str, int], ...] = ()      # (Part id, kpl / kokoonpano)
+    bought: tuple[BoughtPart, ...] = ()
+    work: AssemblyWork = AssemblyWork()
+    children: tuple[tuple[str, int], ...] = ()     # (subassembly id, kpl / kokoonpano)

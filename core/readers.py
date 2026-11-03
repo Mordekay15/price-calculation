@@ -29,13 +29,16 @@ _ASSEMBLY_TITLE = re.compile(r"\b(assembly|assy|kokoonpano|zsb|zusammenbau)\b", 
 
 def _material_facts(text: str, file_id: str, page: int | None = None,
                     strength: str = "text") -> list[Fact]:
+    """One fact per material line: ``material`` when it names one (with the
+    thickness it gives, if any), else ``thickness``."""
     out = []
     for h in extract_hints(text, file_id):
+        t = float(h.thickness_mm) if h.thickness_mm else None
         if h.family:
-            out.append(Fact("material", {"family": h.family, "grade": h.grade}, file_id,
-                            h.raw, page, strength))
-        if h.thickness_mm:
-            out.append(Fact("thickness", float(h.thickness_mm), file_id, h.raw, page, strength))
+            out.append(Fact("material", {"family": h.family, "grade": h.grade, "thickness_mm": t},
+                            file_id, h.raw, page, strength))
+        elif t:
+            out.append(Fact("thickness", t, file_id, h.raw, page, strength))
     return out
 
 

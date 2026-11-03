@@ -22,31 +22,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.work import BoughtPart, WorkRates
+from core.model import Assembly, AssemblyWork
+from core.work import WorkRates
 
-__all__ = ["Assembly", "AssemblyPrice", "AssemblyWork", "BoughtPart", "assembly_prices",
-           "counts", "fit_eur", "per_unit", "tops", "tree_prices", "work_eur"]
-
-
-@dataclass(frozen=True)
-class AssemblyWork:
-    """Putting one assembly together."""
-
-    fit_min: float = 0.0          # fitting, minutes per assembly
-    weld_m: float = 0.0           # welding, metres per assembly
-    setup_min: float = 0.0        # minutes per batch
-    eur_per_h: float = 0.0        # fitting and setup
-    other_eur: float = 0.0        # per assembly (packing, painting the whole…)
-
-
-@dataclass(frozen=True)
-class Assembly:
-    id: str
-    name: str
-    members: tuple[tuple[str, int], ...] = ()      # (part id, kpl / kokoonpano)
-    bought: tuple[BoughtPart, ...] = ()
-    work: AssemblyWork = AssemblyWork()
-    children: tuple[tuple[str, int], ...] = ()     # (subassembly id, kpl / kokoonpano)
+__all__ = ["AssemblyPrice", "assembly_prices", "counts", "fit_eur", "per_unit", "tops",
+           "tree_prices", "work_eur"]
 
 
 def fit_eur(work: AssemblyWork, q: int) -> float:

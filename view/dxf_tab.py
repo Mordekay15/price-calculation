@@ -17,10 +17,11 @@ from dataclasses import dataclass
 
 from core.assemblies import per_unit
 from core.dxf import DxfFile, DxfReport, is_slit
-from core.items import LINKED_BY, NO_BLANK, Item, confirm_unit
+from core.items import LINKED_BY, NO_BLANK, confirm_unit
+from core.model import Part
 from core.pricing import build_lookup
 from core.sheet_cost import is_ready
-from view import assemblies, attachments, bom, material_agent
+from view import assemblies, attachments, bom
 from view.common import (
     materials_with_copper,
     render_material_thickness,
@@ -29,9 +30,7 @@ from view.common import (
 )
 from view.drawing import preview_svg
 from view.dxf_files import (
-    CONFIG,
     FILL_ASKED,
-    ITEMS,
     REPORTS,
     apply_material,
     auto_fill_materials,
@@ -53,6 +52,9 @@ from view.dxf_files import (
     source_cards,
     sync,
     sync_assemblies,
+)
+from view.dxf_files import (
+    part as card_part,
 )
 from view.dxf_nesting import (
     ANGLE_MODE,
@@ -109,7 +111,7 @@ def render(data: dict, screen: str | None):
 
     materials = materials_with_copper(lookup)
     if screen == BOM:
-        auto_fill_materials(parts, materials, lookup)
+        auto_fill_materials(materials, lookup)
     # Per-part angles are chosen on the Nestaus step, by its switch.
     per_part = len(parts) > 1 and bool(st.session_state.get(ANGLE_MODE))
     with headless(screen != BOM):
@@ -366,29 +368,27 @@ def _render_page_picker(n: int, key: str = _PAGE) -> range:
              f"{n} osaa hinnoitellaan silti, myös piilossa olevat.")
 
 
-def _file_lines(item: Item) -> list[str]:
+def _file_lines(item: Part) -> list[str]:
     """The card's files: which one is priced (✓) and why, and what put each
     on the card (its part number, the part number in its text, its folder)."""
     return [f"{'✓ ' if s.source_id == item.chosen else ''}{s.name} ({s.choice.note}; "
             f"kortilla: {LINKED_BY[s.linked_by]})" for s in item.sources]
 
 
-def _render_item_files(fid: str, item: Item) -> None:
+def _render_item_files(fid: str, item: Part) -> None:
     """A choice to price another of the card's files, when it has several."""
     valid = [sid for sid in item.members if item.scores[sid].valid]
     if len(valid) < 2:
         return
-    cfg = st.session_state.setdefault(CONFIG, {}).setdefault(
-        fid, {"material": None, "thickness": None})
     options = ["", *valid]
-    current = cfg.get("source") if cfg.get("source") in valid else ""
+    current = item.chosen_by_user if item.chosen_by_user in valid else ""
     choice = st.selectbox(
         "Muoto tiedostosta", options, index=options.index(current), key=f"dxf_src_{fid}",
         label_visibility="collapsed",
         format_func=lambda sid: "Muoto: " + (f"automaattinen ({item.names[item.chosen]})"
                                              if not sid else item.names[sid]))
-    if (choice or None) != cfg.get("source"):
-        cfg["source"] = choice or None
+    if (choice or None) != item.chosen_by_user:
+        item.chosen_by_user = choice or None
         st.session_state.get(REPORTS, {}).pop(fid, None)
         st.rerun()
 
@@ -418,7 +418,7 @@ def _render_part_config(
     in_assembly = per_assembly > 0
     with st.container(border=True):
         hdr = st.columns([5, 3, 1], vertical_alignment="center")
-        item = st.session_state.get(ITEMS, {}).get(fid)
+        item = card_part(fid)
         folders = sorted({f for f in map(folder_of, item.members if item else [fid]) if f})
         # Where it came from, and the text in the drawing (Mat=…, Thk=…) to
         # cross-check the material: behind the name's tooltip.
@@ -526,7 +526,7 @@ def _render_preview(report: DxfReport, bends: list | None = None) -> None:
                         "viivat) eivät ole osaa, eikä niitä näytetä esikatselussa.")
 
 
-def _unit_reason(dxf: DxfFile, report: DxfReport, item: Item | None, doc_ids) -> str | None:
+def _unit_reason(dxf: DxfFile, report: DxfReport, item: Part | None, doc_ids) -> str | None:
     """Why the guessed unit of a card's DXF is right: its STEP model or PDF
     drawing agrees with the size (see ``core.items.confirm_unit``)."""
     if not dxf.unit_guessed or report.outline is None:
@@ -587,26 +587,27 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict,
     batch size (in an assembly, ``per_assembly`` kpl in each), unless another
     quantity is typed.
 
-    Material + thickness are persisted per file: the selectboxes are seeded
-    from the stored choice, then the current choice is written back.
+    Material and thickness are the card's ``Part`` values: the selectboxes
+    start from them, and what they hold is written back (``Value.set``).
     """
-    cfg = st.session_state.setdefault(CONFIG, {}).setdefault(
-        fid, {"material": None, "thickness": None})
-    mat_key, thick_key, _ = material_keys(fid, cfg)
+    p = card_part(fid)
+    mat_key, thick_key, _ = material_keys(p)
     # Filled in automatically: said in the material box's tooltip, while the
     # boxes (as they now stand) still hold what was filled in.
     ss = st.session_state
-    note = material_agent.auto_note(fid, ss.get(mat_key, cfg["material"]),
-                                    ss.get(thick_key, cfg["thickness"]))
+    auto = (p.material.auto, p.thickness.auto)
+    note = (p.material.source if p.material.source and auto[0]
+            and (ss.get(mat_key, p.material.value), ss.get(thick_key, p.thickness.value)) == auto
+            else None)
     material, thickness = render_material_thickness(
         materials, lookup,
         mat_key=mat_key, thick_key=thick_key,
-        mat_default=cfg["material"], thick_default=cfg["thickness"],
+        mat_default=p.material.value, thick_default=p.thickness.value,
         help=f"Täytetty automaattisesti: {note}" if note else None,
     )
-    cfg["material"] = material
-    cfg["thickness"] = thickness
-    if not note and not material and (check := material_agent.check_note(fid)):
+    p.material.set(material)
+    p.thickness.set(thickness)
+    if not note and not material and (check := p.material.conflict):
         st.warning(f"Piirustukset eivät ole yksimielisiä materiaalista ({check}). "
                    "Valitse materiaali itse.")
     batch = max(current_sizes())

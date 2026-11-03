@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import re
 
-from core.work import FASTENER_INSERT_EUR, BoughtPart, fastener_price
+from core.model import BoughtPart
+from core.work import FASTENER_INSERT_EUR, fastener_price
 from view.ui import is_headless, st
 
 NAME, KPL, EUR, FIT, FROM = "name", "kpl", "eur", "fit", "from"

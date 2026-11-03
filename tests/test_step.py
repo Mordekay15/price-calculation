@@ -234,7 +234,7 @@ def test_a_card_takes_its_bends_from_the_model_and_its_material_from_the_pdf():
                      ("b", "ITM-072558_A.pdf", buf.getvalue())]])
         parts = sync()
         lookup = {("2", "S235 | 1000x2000"): 900.0, ("3", "S235 | 1000x2000"): 950.0}
-        auto_fill_materials(parts, ["S235"], lookup)
+        auto_fill_materials(["S235"], lookup)
         products = _render_part_cards(parts, ["S235"], lookup, False)
         st.session_state["cards"] = [(p["name"], p["material"], p["thickness"],
                                       p["report"].bends, p["work"].bends) for p in products]

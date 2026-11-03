@@ -540,12 +540,18 @@ The app is built on `core/model.py`; data flows one way:
      a FlatShape, and its card is built straight from it (`dxf_file_of`).
    - PDF: read the first time something asks (text, Material field,
      fasteners, BOM rows, called-out part numbers).
-3. **Facts** are what the rest of the app reads: a card's fasteners (its
-   Ostetut osat), an assembly drawing's called-out parts and BOM kpl, the
-   BOM quantities of loose parts, whether a file is a drawing sheet.
-4. **Cards** (`core.items.Item`, one per part number, its files as
-   `PartSource`s) and **assemblies** (`core.assemblies`, one per part
-   number, with subassemblies).
+3. **Facts** are what the rest of the app reads: a card's material and
+   thickness (DXF/DWG texts, its PDFs' Material field and text, the STEP
+   model's measured sheet), its fasteners (its Ostetut osat), an assembly
+   drawing's called-out parts and BOM kpl, the BOM quantities of loose
+   parts, whether a file is a drawing sheet.
+4. **Part** (one card per part number, `view/dxf_files.py` keeps them): its
+   files as `PartSource`s, the one priced, and its material and thickness as
+   `Value`s: what the files say (with where from, or why they disagree) and
+   what was chosen by hand, which wins. **Assembly** (one per part number,
+   with subassemblies, its `BoughtPart`s and `AssemblyWork`). All of these
+   are in `core/model.py`; `core/items.py` and `core/assemblies.py` only
+   group, score and price them.
 5. Nesting and price, computed.
 
 ## How a DXF file is read

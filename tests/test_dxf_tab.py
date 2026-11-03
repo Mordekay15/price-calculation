@@ -280,7 +280,7 @@ def test_poista_kaikki_removes_every_card_and_its_settings():
     at = fill_first_card(dxf_page(2))
     at.button(key="dxf_del_all").click().run()
     assert at.session_state["dxf_store"] == {} and not at.session_state["materials"]
-    assert not at.session_state["dxf_part_config"]
+    assert "dxf_parts" not in at.session_state or not at.session_state["dxf_parts"]
     assert not [k for k in at.session_state if k.startswith(("dxf_mat_", "dxf_q_"))]
 
 
@@ -488,30 +488,32 @@ def test_empty_cards_get_their_drawings_material_once_and_conflicts_wait():
     from streamlit.testing.v1 import AppTest
 
     def page():
-        from types import SimpleNamespace
-
         import streamlit as st
 
+        from core.items import STEP_CHOICE
+        from core.model import Fact, Part, PartSource
+        from core.readers import _material_facts
         from view import material_agent
 
-        parts = [("a", SimpleNamespace(name="a.dxf", texts=["MAT=S355MC", "t=3 mm"])),
-                 ("b", SimpleNamespace(name="b.dxf", texts=["MAT=S355MC", "MAT=AISI 304"])),
-                 ("c", SimpleNamespace(name="c.dxf", texts=[], step_thickness=2.0))]
-        applied = st.session_state.setdefault("applied", [])
-        material_agent.auto_fill(
-            parts, {}, {}, ["S355MC", "RST 304"], lambda m: ["2", "3"],
-            lambda fid, m, t: applied.append((fid, m, t)),
-            lambda fid: fid in st.session_state.get("filled", ()))
-        st.session_state["to_check"] = [p for p in parts
-                                        if material_agent.check_note(p[0])]
+        facts = {"a": _material_facts("MAT=S355MC\nt=3 mm", "a"),
+                 "b": _material_facts("MAT=S355MC\nMAT=AISI 304", "b"),
+                 "c": [Fact("thickness", 2.0, "c", "t = 2 mm", strength="measured")]}
+        cards = st.session_state.setdefault("cards", {
+            cid: Part(cid, [PartSource(cid, f"{cid}.dxf", "part_number", STEP_CHOICE)], cid)
+            for cid in facts})
+        material_agent.auto_fill(cards, facts.get, lambda fid: f"{fid}.dxf",
+                                 ["S355MC", "RST 304"], lambda m: ["2", "3"])
 
     at = AppTest.from_function(page, default_timeout=30).run()
     assert not at.exception
-    assert at.session_state["applied"] == [("a", "S355MC", "3")]
-    assert [p[0] for p in at.session_state["to_check"]] == ["b"]
-    at.session_state["filled"] = ()       # the user cleared card a: it stays clear
+    cards = at.session_state["cards"]
+    assert (cards["a"].material.value, cards["a"].thickness.value) == ("S355MC", "3")
+    assert "a.dxf (DXF)" in cards["a"].material.source
+    assert cards["b"].material.value is None and cards["b"].material.conflict
+    assert not cards["c"].material.value
+    cards["a"].material.set(None)         # the user cleared card a: it stays clear
     at.run()
-    assert at.session_state["applied"] == [("a", "S355MC", "3")]
+    assert at.session_state["cards"]["a"].material.value is None
 
 
 def test_files_the_app_cant_use_are_skipped_and_named():
@@ -556,7 +558,7 @@ def test_a_zip_of_item_folders_becomes_one_card_per_folder():
         from reportlab.pdfgen import canvas
 
         from tests.conftest import dxf_bytes
-        from view.dxf_files import ITEMS, card_docs, ingest, sync
+        from view.dxf_files import card_docs, ingest, parts, sync
 
         def part(w, h, frame=False):
             doc = ezdxf.new()
@@ -585,9 +587,9 @@ def test_a_zip_of_item_folders_becomes_one_card_per_folder():
             st.session_state["done"] = True
             ingest([SimpleNamespace(file_id="z", name="tilaus.zip",
                                     getvalue=lambda: buf.getvalue())])
-        parts = sync()
-        items = st.session_state[ITEMS]
-        st.session_state["cards"] = [sorted(items[cid].names.values()) for cid, _ in parts]
+        cards = sync()
+        items = parts()
+        st.session_state["cards"] = [sorted(items[cid].names.values()) for cid, _ in cards]
         st.session_state["links"] = {items[c].names[c]: len(ids)
                                      for c, ids in card_docs().items()}
         st.session_state["skipped"] = st.session_state.get("dxf_skipped")

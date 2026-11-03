@@ -10,7 +10,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import date
 
-from core.assemblies import Assembly, fit_eur, per_unit, tops, tree_prices
+from core.assemblies import fit_eur, per_unit, tops, tree_prices
 from core.batches import (
     DEFAULT_BATCH_SIZES,
     BatchPart,
@@ -18,6 +18,7 @@ from core.batches import (
     batch_prices,
     parse_batch_sizes,
 )
+from core.model import Assembly
 from core.quote import (
     DEFAULT_DXF_NAME,
     CleanPart,

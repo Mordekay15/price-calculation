@@ -39,9 +39,9 @@ import uuid
 from collections.abc import Callable
 from dataclasses import fields
 
-from core.assemblies import Assembly, AssemblyWork
 from core.items import NO_BLANK
 from core.linking import base_key
+from core.model import Assembly, AssemblyWork
 from view import bom, bought
 from view.ui import is_headless, st
 from view.undo import undoable
@@ -108,7 +108,7 @@ def part_number(name: str) -> str:
 
 def sync_from_drawings(items: dict, facts: Callable[[str], list]) -> None:
     """Make an assembly of every assembly drawing among the cards: ``items``
-    are the cards (``core.items.Item`` by card id), ``facts(card id)`` what
+    are the cards (``core.model.Part`` by card id), ``facts(card id)`` what
     the readers read from its drawings (``core.model.Fact``: the part numbers
     it calls out, its BOM lines). Each part number it calls out is a card in it, or
     a subassembly when that number is another assembly's; × the kpl its BOM

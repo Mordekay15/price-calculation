@@ -1,83 +1,66 @@
-"""Materials on the DXF tab: each card's material and thickness are read
-from its own files (DXF texts, the linked PDFs' Material field and text, the
-STEP model's sheet) and filled in when they agree (see ``core.materials``)."""
+"""Materials on the DXF tab: each card's material and thickness come from
+what the readers read from its own files (``core.model.Fact``: the DXF and
+DWG texts, the linked PDFs' Material field and text, the STEP model's
+measured sheet) and are filled in when they agree (see ``core.materials``).
+What was filled in, from where, and why the files disagree is kept on the
+card's ``Part`` (``Value.auto``, ``.source``, ``.conflict``)."""
 
 from __future__ import annotations
 
-from dataclasses import replace
+from core.materials import Hint, propose
+from core.model import Fact, Part
+from view.ui import st
 
-import streamlit as st
-
-from core.materials import Hint, Proposal, extract_hints, propose
-from view import attachments
-
-_AUTO = "dxf_material_auto"          # {card id: what it was filled from (see auto_fill)}
-_AUTO_NOTE = "dxf_material_auto_note"  # {card id: (material, thickness, sources)}
-_CHECK = "dxf_material_check"        # {card id: why its files disagree}
-AUTO_KEYS = (_AUTO, _AUTO_NOTE, _CHECK)
+_SEARCHED = "dxf_material_searched"   # {card id: the facts it was last searched with}
+KEYS = (_SEARCHED,)
 
 
-def auto_fill(parts: list[tuple[str, object]], doc_links: dict[str, list[str]],
-              docs: dict[str, dict], materials: list[str], thicknesses_for, apply,
-              filled) -> None:
+def hints(facts: list[Fact], name_of) -> list[Hint]:
+    """The facts about material and thickness, as ``core.materials`` reads
+    them; ``name_of(file id)`` names where each came from."""
+    out = []
+    for f in facts:
+        if f.strength == "measured":
+            out.append(Hint("STEP-malli", f"levyn paksuus {f.value:g} mm", thickness_mm=f.value))
+            continue
+        where = name_of(f.file_id) + (" (DXF)" if f.page is None else f", s. {f.page}")
+        where += ", Material-kenttä" if f.strength == "field" else ""
+        field = f.strength == "field"
+        if f.kind == "material":
+            out.append(Hint(where, f.raw, f.value["family"], f.value["grade"],
+                            f.value["thickness_mm"], field))
+        elif f.kind == "thickness":
+            out.append(Hint(where, f.raw, thickness_mm=f.value, field=field))
+    return out
+
+
+def _signature(facts: list[Fact]) -> tuple:
+    return tuple((f.kind, f.file_id, f.raw, f.page, f.strength, f.body) for f in facts)
+
+
+def auto_fill(cards: dict[str, Part], facts_of, name_of, materials: list[str],
+              thicknesses_for) -> None:
     """Give the cards that have no material yet the one their own files name,
-    without asking: a proposal with nothing to check is applied; when the
-    files disagree the card is left empty and says why (``check_note``). A
-    card is searched again only when its files change (so a material the
-    user clears stays clear).
-    ``filled(card id)`` says whether a card already has a material."""
-    done = st.session_state.setdefault(_AUTO, {})
-    todo = []
-    for fid, dxf in parts:
-        sig = (tuple(dxf.texts), tuple(doc_links.get(fid, [])),
-               getattr(dxf, "step_thickness", None))
-        if not filled(fid) and done.get(fid) != sig:
-            done[fid] = sig
-            todo.append((fid, dxf))
-    if not todo:
-        return
-    notes = st.session_state.setdefault(_AUTO_NOTE, {})
-    checks = st.session_state.setdefault(_CHECK, {})
-    for p in _search(todo, doc_links, docs, materials, thicknesses_for):
-        checks.pop(p.part_id, None)
+    without asking: a proposal with nothing to check is filled in
+    (``Value.fill``, with where it came from); when the files disagree the
+    card is left empty and says why (``Value.conflict``). A card is searched
+    again only when its facts change (so a material cleared by hand stays
+    clear). ``facts_of(card id)`` are the material and thickness facts of
+    its files."""
+    done = st.session_state.setdefault(_SEARCHED, {})
+    todo = {}
+    for cid, part in cards.items():
+        facts = facts_of(cid)
+        sig = _signature(facts)
+        if not part.material.value and done.get(cid) != sig:
+            done[cid] = sig
+            todo[cid] = (part.names[part.chosen], hints(facts, name_of))
+    for p in propose(todo, materials, thicknesses_for):
+        part = cards[p.part_id]
         if p.material and not p.conflict:
-            apply(p.part_id, p.material, p.thickness)
-            notes[p.part_id] = (p.material, p.thickness,
-                                "; ".join(f"{h.source}: {h.raw}" for h in p.evidence))
-        elif p.conflict:
-            checks[p.part_id] = p.conflict
-
-
-def auto_note(fid: str, material: str | None, thickness: str | None) -> str | None:
-    """The card's line saying where its material came from, while it is
-    still the one filled in automatically."""
-    note = st.session_state.get(_AUTO_NOTE, {}).get(fid)
-    if not note or (note[0], note[1]) != (material, thickness):
-        return None
-    return note[2]
-
-
-def check_note(fid: str) -> str | None:
-    """Why the card's material wasn't filled in: its files disagree."""
-    return st.session_state.get(_CHECK, {}).get(fid)
-
-
-def _search(parts, doc_links, docs, materials, thicknesses_for) -> list[Proposal]:
-    by_part = {}
-    for fid, dxf in parts:
-        hints = extract_hints("\n".join(dxf.texts), f"{dxf.name} (DXF)")
-        step_t = getattr(dxf, "step_thickness", None)
-        if step_t:
-            hints.append(Hint("STEP-malli", f"levyn paksuus {step_t:g} mm",
-                              thickness_mm=round(step_t, 2)))
-        for d in doc_links.get(fid, []):
-            doc = docs.get(d)
-            if doc is None or doc["kind"] != "pdf":
-                continue
-            for page, text in attachments.pages(d, doc):
-                hints += extract_hints(text, f"{doc['name']}, s. {page}")
-            for page, text in attachments.material_fields(d, doc):
-                hints += [replace(h, field=True) for h in
-                          extract_hints(text, f"{doc['name']}, s. {page}, Material-kenttä")]
-        by_part[fid] = (dxf.name, hints)
-    return propose(by_part, materials, thicknesses_for)
+            source = "; ".join(f"{h.source}: {h.raw}" for h in p.evidence)
+            part.material.fill(p.material, source)
+            part.thickness.fill(p.thickness, source)
+            part.version += 1           # its selectboxes start from the new values
+        else:
+            part.material.conflict = p.conflict or ""

@@ -6,15 +6,9 @@ import io
 import openpyxl
 import pytest
 
-from core.assemblies import (
-    Assembly,
-    AssemblyWork,
-    BoughtPart,
-    assembly_prices,
-    per_unit,
-    work_eur,
-)
+from core.assemblies import assembly_prices, per_unit, work_eur
 from core.batches import BatchPart, GroupSheets, batch_prices
+from core.model import Assembly, AssemblyWork, BoughtPart
 from core.quote import QuoteInfo, QuoteLine, quote_pdf, quote_xlsx
 from core.work import LaserSpeed, WorkInputs, WorkRates
 
@@ -77,7 +71,7 @@ def test_the_quote_table_shows_an_assembly_line_with_its_parts():
 
     def page():
 
-        from core.assemblies import Assembly, BoughtPart
+        from core.model import Assembly, BoughtPart
         from core.work import LaserSpeed, WorkInputs
         from view.quote import render_batch_prices
 
@@ -116,7 +110,7 @@ def test_the_quote_table_shows_a_subassembly_inside_its_parent_only():
     from streamlit.testing.v1 import AppTest
 
     def page():
-        from core.assemblies import Assembly, BoughtPart
+        from core.model import Assembly, BoughtPart
         from core.work import LaserSpeed, WorkInputs
         from view.quote import render_batch_prices
 
@@ -327,7 +321,7 @@ def test_on_the_page_a_parts_fasteners_are_its_own_bought_parts_wherever_it_goes
 
 
 def test_a_parts_own_bought_parts_are_rows_under_it_in_the_price_table():
-    from core.work import BoughtPart
+    from core.model import BoughtPart
     from view.quote import _bought_rows
 
     work = WorkInputs(fasteners=4, bought=(BoughtPart("M5-PURISTEMUTTERIT", 4, 0.05, 0.20),))

@@ -56,8 +56,8 @@ def test_a_dxf_gives_its_part_and_the_facts_in_its_texts():
     assert shape.net_area_mm2 == pytest.approx(300 * 200 - 3.1416 * 100, rel=1e-3)
     assert shape.cut_length_mm == pytest.approx(1000 + 2 * 3.1416 * 10, rel=1e-3)
     assert r.of("part_number")[0].value == "itm-064555"
-    assert any(f.value["grade"] == "S355" for f in r.of("material"))
-    assert [f.value for f in r.of("thickness")] == [3.0]
+    assert [(f.value["grade"], f.value["thickness_mm"]) for f in r.of("material")] \
+        == [("S355", 3.0)]
     assert r.of("fastener")[0].value == {"name": "M5-PURISTEMUTTERIT", "kpl": 4}
     assert not r.is_drawing and not r.is_assembly
 
@@ -123,13 +123,20 @@ def test_read_file_picks_the_reader_by_kind():
     assert read_file(InputFile("z", "a.zip", "zip", load=lambda: b"")).shapes == []
 
 
-def test_value_user_wins_and_bought_parts_add_up():
-    v = Value(auto=6, source="ITM-064555.pdf, s. 1: 6 PCS")
-    assert v.value == 6
-    v.user = 4
-    assert v.value == 4
-    pem = BoughtPart("PEM-FH-M4-12", Value(6), Value(0.05), Value(0.20))
-    assert pem.unit_eur == pytest.approx(0.25) and pem.total_eur == pytest.approx(1.50)
+def test_a_value_chosen_by_hand_wins_until_the_files_speak_again():
+    v = Value()
+    v.fill("S235", "ITM-064555.pdf, s. 1: S235")
+    assert v.value == "S235"
+    v.set("S235")                   # the widget holds the auto: nothing by hand
+    assert v.user is None
+    v.set("RST")
+    assert v.value == "RST"
+    v.set(None)                     # cleared by hand stays clear
+    assert v.value is None and v.auto == "S235"
+    v.fill("AL", "x.dxf")
+    assert v.value == "AL" and v.user is None
+    pem = BoughtPart("PEM-FH-M4-12", 6, 0.05, 0.20)
+    assert pem.unit == pytest.approx(0.25)
 
 
 def test_an_empty_shape_is_not_priceable():

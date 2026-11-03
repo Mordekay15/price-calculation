@@ -24,6 +24,7 @@ import re
 from dataclasses import dataclass, field
 
 from core.linking import base_key, link_by_text
+from core.model import Choice
 
 # Paper sheets (mm, short × long): an outline this size is a drawing frame.
 _PAPER = [(210, 297), (297, 420), (420, 594), (594, 841), (841, 1189)]
@@ -104,47 +105,7 @@ def _drawings(groups: dict[str, list[Source]], is_drawing):
             yield key, members
 
 
-@dataclass
-class Choice:
-    score: float
-    note: str                          # why, in Finnish, for the card
-    valid: bool = True
-
-
-@dataclass
-class PartSource:
-    """One file on a card: a DXF/DWG, or a body of a STEP model, how it came
-    onto the card, and how it scored as the shape to price."""
-
-    source_id: str                     # file id, or STEP file id|body key
-    name: str                          # as on the card
-    linked_by: str                     # part_number | text | folder
-    choice: Choice
-
-
 LINKED_BY = {"part_number": "osanumero", "text": "tekstin osanumero", "folder": "kansio"}
-
-
-@dataclass
-class Item:
-    """One card (one part number): its files in drop order, the one priced,
-    and the STEP blank's size."""
-
-    sources: list[PartSource]
-    chosen: str
-    blank: tuple[float, float] | None = None   # mm
-
-    @property
-    def members(self) -> list[str]:
-        return [s.source_id for s in self.sources]
-
-    @property
-    def scores(self) -> dict[str, Choice]:
-        return {s.source_id: s.choice for s in self.sources}
-
-    @property
-    def names(self) -> dict[str, str]:
-        return {s.source_id: s.name for s in self.sources}
 
 
 def score_dxf(report, unit_guessed: bool, texts: list[str],
