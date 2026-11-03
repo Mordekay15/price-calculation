@@ -407,7 +407,7 @@ def _render_prices(products: list[Product], priced: tuple | None, margin_pct: fl
                                margin_pct=margin_pct, missing=bool(missing))
 
 
-def _clean_part(product: dict) -> CleanPart:
+def _clean_part(product: Product) -> CleanPart:
     """A part's cut geometry for the clean-DXF export, as the card shows it."""
     shape: FlatShape = product.shape
     return CleanPart(product.name, product.material or "", product.thickness or "",

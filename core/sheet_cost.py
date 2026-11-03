@@ -392,13 +392,13 @@ def cheapest_index(options: list[SheetOption]) -> int | None:
 
 # ── Products: grouping and per-piece cost ─────────────────────────────────────
 
-def product_label(product: dict) -> str:
+def product_label(product: Product) -> str:
     """A product as the layout legend and messages name it: its name, or its
     running number (``Tuote #3``) when it has none."""
     return product.name or f"Tuote #{product.index + 1}"
 
 
-def is_ready(prod: dict) -> bool:
+def is_ready(prod: Product) -> bool:
     """A product can be priced once it has a material, thickness and size."""
     return bool(prod.material and prod.thickness
                 and prod.width > 0 and prod.height > 0)
@@ -428,7 +428,7 @@ class PieceCost:
     are billed at (a group's ``bill_rate_ppt``), None while unpriced."""
 
     index: int                      # position in the products list
-    product: dict
+    product: Product
     kg: float                       # one piece
     ppt: float | None
 
