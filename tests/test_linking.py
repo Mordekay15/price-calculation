@@ -38,6 +38,7 @@ def test_a_page_links_a_pdf_by_its_text():
         import streamlit as st
         from reportlab.pdfgen import canvas
 
+        from core.model import InputFile
         from view import attachments
 
         buf = io.BytesIO()
@@ -46,7 +47,7 @@ def test_a_page_links_a_pdf_by_its_text():
         pdf.drawString(72, 700, "DRW-023179.A")
         pdf.save()
         if not attachments.docs():
-            attachments.add_doc("d1", "DRW-023179.A.pdf", buf.getvalue())
+            attachments.add_doc(InputFile("d1", "DRW-023179.A.pdf", "pdf", None), buf.getvalue())
         st.session_state["links"] = attachments.links(
             {"f1": "ITM-072558_A.dxf", "f2": "ITM-072560_A.dxf"})
 
@@ -82,7 +83,13 @@ def test_an_assembly_drawing_calls_out_its_items():
 
 
 def test_a_bom_row_gives_its_parts_quantity():
-    from core.linking import bom_quantities
+    from core.linking import bom_quantities as by_rows
+    from core.readers import _bom_facts
+
+    def bom_quantities(cards, texts):     # the PDF reader's BOM rows, then the cards
+        rows = {d: [(f.value["part_key"], f.value["kpl"]) for f in _bom_facts(t, d, 1, "")]
+                for d, t in texts.items()}
+        return by_rows(cards, rows)
 
     bom = ("Pos ID.Rev Thumbnail Name and Description EN Qty Unit QRCode\n"
            "PH-002620.1 031 - Subcontractor Laser cutting Stencil 1\n"

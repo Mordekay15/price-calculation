@@ -11,9 +11,9 @@ prices like a dropped DXF.
    radius ``inner radius + K × thickness``. The result is the flat outline,
    its holes and the bend lines. A body that isn't sheet (a bought or
    machined part) comes back with ``is_sheet`` False and a reason.
-3. ``flat_file`` makes the flat part a card's ``DxfFile`` straight from it,
-   with no DXF written and read back: outline and holes on ``CUT``, bend
-   lines on ``BEND_UP`` / ``BEND_DOWN``, and a note with the thickness.
+3. The STEP reader (``core.readers.read_step_file``) makes each sheet body a
+   FlatShape, and its card's ``DxfFile`` is built straight from that
+   (``core.readers.dxf_file_of``), with no DXF written and read back.
 4. ``mesh`` triangulates a body for the 3D preview.
 """
 
@@ -813,38 +813,6 @@ def _thin(points: list, n: int = 240) -> list:
 # ── Output ────────────────────────────────────────────────────────────────────
 
 BEND_UP, BEND_DOWN = "BEND_UP", "BEND_DOWN"
-
-
-def flat_file(flat: FlatPart, name: str):
-    """The flat part as the cards' ``core.dxf.DxfFile``, built straight from
-    it: no DXF is written and read back. Its part (``DxfFile.part``) is the
-    unfolded outline, holes and bend lines, laid along its length as the DXF
-    reader lays a drawn part; its lines stay on ``CUT`` / ``BEND_UP`` /
-    ``BEND_DOWN`` so a card can still pick layers, and its note gives the
-    thickness to the material panel."""
-    from core.dxf import (
-        Contour,
-        DxfFile,
-        DxfReport,
-        _lay_along_length,
-        _part_problems,
-        _Piece,
-    )
-    from core.geometry import area
-
-    lines = [(list(b.line), BEND_UP if b.up else BEND_DOWN) for b in flat.bends]
-    note = f"{name.rsplit('.', 1)[0]} | t = {flat.thickness_mm:g} mm | {len(flat.bends)} taivutusta (STEP)"
-    f = DxfFile(name, unit_label="mm", texts=[note],
-                pieces=[_Piece(list(c), True, "CUT", True) for c in (flat.outline, *flat.holes)]
-                + [_Piece(line, False, layer, True) for line, layer in lines])
-    report = DxfReport(name=name, unit_label="mm", bends=len(flat.bends),
-                       outline=Contour(list(flat.outline), True, abs(area(flat.outline))),
-                       holes=[Contour(list(h), True, abs(area(h)), 1) for h in flat.holes],
-                       reference_lines=[line for line, _ in lines])
-    report.problems += _part_problems(report)
-    _lay_along_length(report)
-    f._default = report
-    return f
 
 
 def mesh(shape, deflection: float = 0.2) -> tuple[list[tuple], list[tuple]]:

@@ -1,4 +1,4 @@
-"""DWG drawings: converted to DXF, then read like any DXF (``core.dxf``).
+"""DWG drawings converted to DXF, for the DWG reader (``core.readers.read_dwg_file``).
 
 Python can't read DWG (AutoCAD's closed format), so a converter does it, the
 first one found of:
@@ -26,8 +26,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-
-from core.dxf import DxfFile, read_dxf
 
 _TIMEOUT_S = 60
 _BIN = pathlib.Path(__file__).resolve().parent.parent / "bin"
@@ -173,25 +171,3 @@ def _with_units(minimal: bytes, full: bytes) -> bytes:
     text = minimal.replace(b"\r\n", b"\n")
     at += len(marker)
     return text[:at] + b"\n".join(found) + b"\n" + text[at:]
-
-
-def read_drawing(data: bytes, name: str) -> DxfFile:
-    """Read a DXF, or a DWG converted to DXF. Never raises: a file that can't be
-    read comes back with problems."""
-    if not is_dwg(name):
-        return read_dxf(data, name)
-    try:
-        full = dwg_to_dxf(data)
-        f = read_dxf(full, name)
-        if f.problems and not f.pieces and converter() == "LibreDWG":
-            # LibreDWG's full DXF can carry tables ezdxf can't read; its
-            # minimal DXF holds just the entities, which is all we need, plus
-            # the drawing's unit, taken from the full one.
-            minimal = read_dxf(_with_units(dwg_to_dxf(data, minimal=True), full), name)
-            if minimal.pieces:
-                return minimal
-    except ConversionError as exc:
-        return DxfFile(name=name, problems=[f"{exc} {SAVE_AS_DXF}"])
-    if f.problems and not f.pieces:
-        f.problems = [f"{p} {SAVE_AS_DXF}" for p in f.problems]
-    return f

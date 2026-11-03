@@ -6,9 +6,9 @@ from types import SimpleNamespace
 import ezdxf
 import streamlit as st
 
-from core.dxf import read_dxf
+from core.model import InputFile
 from tests.conftest import dxf_bytes
-from view.dxf_files import FILES, STORE, ingest, sync
+from view.dxf_files import STORE, add_drawing, ingest, sync
 from view.dxf_nesting import ANGLE_MODE, _render_angle_controls
 from view.dxf_tab import _render_part_cards
 
@@ -18,8 +18,8 @@ doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 50), (0, 50)], close=Tr
 data = dxf_bytes(doc)
 if "seeded" not in st.session_state:
     st.session_state["seeded"] = True
-    st.session_state[FILES] = {f"f{i}": read_dxf(data, f"p{i}.dxf")
-                               for i in range(st.session_state.get("n", 1))}
+    for i in range(st.session_state.get("n", 1)):
+        add_drawing(InputFile(f"f{i}", f"p{i}.dxf", "dxf", None), data)
     sync()
 store = st.session_state.get(STORE, {})
 # "add": drop that many more files

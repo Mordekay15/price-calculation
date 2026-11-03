@@ -41,8 +41,12 @@ def test_a_price_set_later_nests_a_changed_price_only_prices():
     # Copper first unpriced has no sheet size to nest on: priced later, it is
     # nested. A changed €/kg keeps the nesting (it is priced again), as does a
     # price for another material.
-    from core.pricing import (COPPER_MATERIAL, COPPER_THICKNESSES, build_copper_section,
-                              build_lookup)
+    from core.pricing import (
+        COPPER_MATERIAL,
+        COPPER_THICKNESSES,
+        build_copper_section,
+        build_lookup,
+    )
 
     def copper(price_kg, **other):
         return settings(lookup=build_lookup({**build_copper_section(price_kg), **other}))

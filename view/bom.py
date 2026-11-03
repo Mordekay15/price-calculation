@@ -27,17 +27,19 @@ def is_step(name: str) -> bool:
 
 
 def add_model(file_id: str, name: str, data: bytes) -> step.StepModel:
-    """Read a dropped STEP file and unfold its parts. The 3D bodies are let
-    go after unfolding when the file is kept (``attachments``): they are read
+    """Read a dropped STEP file with the STEP reader (``core.readers``): its
+    parts, each one unfolded with the K factor. The 3D bodies are let go
+    after unfolding when the file is kept (``view.files``): they are read
     again for a 3D view or a new K factor (see ``shapes``)."""
-    from view import attachments
+    from core.readers import read_step_file
+    from view import files
 
-    model = step.read_step(data, name)
-    k = st.session_state.get(K_FACTOR, step.DEFAULT_K_FACTOR)
+    res = read_step_file(data, file_id, name, st.session_state.get(K_FACTOR))
+    model, flats = res.record
+    files.keep(file_id, res)
     st.session_state.setdefault(MODELS, {})[file_id] = {
-        "name": name, "model": model,
-        "flats": {p.key: step.unfold(p.shape, k) for p in model.parts}}
-    if file_id in attachments.docs():
+        "name": name, "model": model, "flats": flats}
+    if files.get(file_id) is not None:
         for p in model.parts:
             p.shape = None
     return model
@@ -104,12 +106,16 @@ def sources(hidden: set[str], folder_of=lambda sid: "") -> list[Source]:
 
 
 def flat_file(source_id: str):
-    """A model part's flat pattern as a ``DxfFile`` (made once per K factor),
-    straight from the unfolded body (``core.step.flat_file``)."""
+    """A model part's flat pattern as the cards' ``DxfFile`` (made once per K
+    factor), straight from the STEP reader's FlatShape for it
+    (``core.readers.dxf_file_of``)."""
+    from core.readers import dxf_file_of, shape_from_flat
+
     m, part, flat = source(source_id)
     cache = m.setdefault("cards", {})
     if part.key not in cache:
-        cache[part.key] = step.flat_file(flat, _file_name(m, part))
+        cache[part.key] = dxf_file_of(shape_from_flat(flat, source_id), _file_name(m, part),
+                                      flat.thickness_mm)
     return cache[part.key]
 
 
@@ -133,8 +139,19 @@ def _keys(m: dict, part: step.StepPart) -> set[str]:
 
 def refold(k: float) -> None:
     """Unfold every model again with a new K factor."""
+    from core.readers import read_step_file
+    from view import files
+
     for file_id, m in models().items():
-        m["flats"] = {key: step.unfold(shape, k) for key, shape in shapes(file_id).items()}
+        f = files.get(file_id)
+        if f is not None and f.load is not None:
+            res = read_step_file(f.load(), file_id, m["name"], k)
+            files.keep(file_id, res)
+            m["model"], m["flats"] = res.record
+            for p in m["model"].parts:
+                p.shape = None
+        else:       # a model given without its file keeps its bodies
+            m["flats"] = {key: step.unfold(shape, k) for key, shape in shapes(file_id).items()}
         m.pop("cards", None)
 
 

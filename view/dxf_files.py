@@ -13,8 +13,7 @@ import time
 from types import SimpleNamespace
 
 from core.archive import ArchiveError, is_zip, unpack
-from core.dwg import read_drawing
-from core.dxf import DxfFile, DxfReport, fastener_lines
+from core.dxf import DxfFile, DxfReport
 from core.items import (
     STEP_CHOICE,
     Item,
@@ -22,14 +21,14 @@ from core.items import (
     Source,
     choose,
     group_sources,
-    looks_like_drawing,
     score_dxf,
 )
 from core.linking import base_key
 from core.linking import bom_quantities as _bom_quantities
+from core.model import InputFile, file_kind
 from core.step import available as step_available
 from core.step import bends_on
-from view import assemblies, attachments, bom, material_agent
+from view import assemblies, attachments, bom, files, material_agent
 from view.common import thicknesses_for
 from view.ui import ids_in, st
 from view.work import AUTO_SHOWN, PART_BOUGHT
@@ -37,7 +36,6 @@ from view.work import AUTO_SHOWN, PART_BOUGHT
 STORE   = "dxf_store"         # {card id: DxfFile}: each card's chosen shape
 REPORTS = "dxf_part_reports"  # {card id: DxfReport}
 CONFIG  = "dxf_part_config"   # {card id: {"material", "thickness", "source"}}
-FILES   = "dxf_files"         # {file id: DxfFile}: every dropped DXF/DWG, in drop order
 ITEMS   = "dxf_items"         # {card id: Item}: the files on each card
 _HIDDEN  = "dxf_hidden"        # model parts removed from the cards
 _SRC_REPORTS = "dxf_source_reports"  # {source id: DxfReport}, for choosing
@@ -47,8 +45,6 @@ FILL_ASKED = "dxf_fill_asked" # the "same material for the others?" question is 
 _DUPES   = "dxf_dupes"         # (names of dropped files already on a card, warn until)
 _DUPE_WARNING_S = 15           # how long that warning stays
 _SKIPPED = "dxf_skipped"       # names of the last drop's files that aren't used
-_FOLDERS = "dxf_folders"       # {file id: folder in the dropped ZIP}
-_WAITING = "dxf_waiting_models"  # big STEP files of a large drop, read when asked
 _BIG_STEP_BYTES = 5 << 20        # a STEP file this big waits, in a drop of many files
 _USED = ("dxf", "dwg", "pdf", "step", "stp")
 _SKIPPED_SHOWN = 12            # names listed in the skipped line
@@ -138,18 +134,17 @@ def _render_files(labels: dict[str, str]) -> None:
 
 def _waiting(doc_ids=None) -> list[str]:
     """The big STEP files not read yet (of ``doc_ids``, or all)."""
-    docs = attachments.docs()
-    waiting = st.session_state.get(_WAITING, set())
-    return [d for d in (docs if doc_ids is None else doc_ids) if d in waiting and d in docs]
+    waiting = {fid for fid, f in files.of_kind("step").items() if f.status == "waiting"}
+    return [d for d in (waiting if doc_ids is None else doc_ids) if d in waiting]
 
 
 def _read_waiting(doc_ids: list[str]) -> None:
     """Read the waiting STEP models: their parts, bends and thickness join
     the cards."""
-    docs, waiting = attachments.docs(), st.session_state.get(_WAITING, set())
     for d in doc_ids:
-        bom.add_model(d, docs[d]["name"], docs[d]["load"]())
-        waiting.discard(d)
+        f = files.get(d)
+        bom.add_model(d, f.name, f.load())
+        f.status = "read"
     sync()
 
 
@@ -159,15 +154,14 @@ def render_waiting(doc_ids: list[str] | None) -> None:
     waiting = _waiting(doc_ids)
     if not waiting:
         return
-    docs = attachments.docs()
-    mb = sum(docs[d]["size"] for d in waiting) / (1 << 20)
+    mb = sum(files.get(d).size_bytes for d in waiting) / (1 << 20)
     if doc_ids is None:
         label = f"Lue isot STEP-mallit ({len(waiting)} kpl, {mb:.0f} Mt)"
         text = (f"{len(waiting)} isoa STEP-mallia odottaa, jotta lataus olisi nopeampi. "
                 "Ne voi lukea kortilla yksi kerrallaan tai kaikki kerralla.")
         key = "dxf_read_waiting"
     else:
-        label = "Lue 3D-malli: " + ", ".join(docs[d]["name"] for d in waiting) + f" ({mb:.0f} Mt)"
+        label = "Lue 3D-malli: " + ", ".join(files.get(d).name for d in waiting) + f" ({mb:.0f} Mt)"
         text = ("Iso STEP-malli luetaan vasta pyydett채ess채 (kest채채 hetken). Siit채 tulevat "
                 "taivutukset, paksuus ja mitan tarkistus.")
         key = f"dxf_read_waiting_{'_'.join(waiting)}"
@@ -214,12 +208,9 @@ def ingest(uploaded) -> bool:
     start a new one). A file whose name was dropped already is not added
     again; its name goes to ``_DUPES`` for the warning (a drop without one
     clears it). True when something was dropped."""
-    files: dict = st.session_state.setdefault(FILES, {})
-    folders: dict = st.session_state.setdefault(_FOLDERS, {})
-    docs = attachments.docs()
-    dropped = [up for up in uploaded or [] if up.file_id not in files and up.file_id not in docs]
-    names = ({(folders.get(f, ""), dxf.name) for f, dxf in files.items()}
-             | {(folders.get(d, ""), doc["name"]) for d, doc in docs.items()})
+    known = files.inputs()
+    dropped = [up for up in uploaded or [] if up.file_id not in known]
+    names = {(f.folder, f.name) for f in known.values()}
     dupes, skipped = [], []
     todo = _unzipped(dropped, skipped)
     bar = st.progress(0.0) if len(todo) > 5 else None
@@ -234,20 +225,21 @@ def ingest(uploaded) -> bool:
         if (folder, up.name) in names:
             dupes.append(up.name)
             continue
-        if folder:
-            folders[up.file_id] = folder
         data = up.getvalue()
-        if attachments.is_doc(up.name):
-            attachments.add_doc(up.file_id, up.name, data,
-                                load=up.getvalue if hasattr(up, "folder") else None)
-            if bom.is_step(up.name) and step_available():
+        # A file of a ZIP is read from it again when needed; a file dropped on
+        # its own is kept only when it is read later (a PDF or STEP model).
+        again = up.getvalue if hasattr(up, "folder") else None
+        f = InputFile(up.file_id, up.name, file_kind(up.name), again, folder=folder,
+                      size_bytes=len(data))
+        if f.kind in ("pdf", "step"):
+            attachments.add_doc(f, data)
+            if f.kind == "step" and step_available():
                 if len(todo) > 5 and len(data) > _BIG_STEP_BYTES:
-                    st.session_state.setdefault(_WAITING, set()).add(up.file_id)
+                    f.status = "waiting"
                 else:
                     bom.add_model(up.file_id, up.name, data)
         else:
-            files[up.file_id] = read_drawing(data, up.name)
-            files[up.file_id].forget_lines()   # the part is all that's used (memory)
+            add_drawing(f, data)
         names.add((folder, up.name))
     if bar is not None:
         bar.empty()
@@ -260,6 +252,26 @@ def ingest(uploaded) -> bool:
     if len(dropped) > len(dupes) + len(skipped):
         st.session_state.pop(FILL_ASKED, None)  # new empty parts: ask again
     return bool(dropped)
+
+
+def add_drawing(f: InputFile, data: bytes) -> None:
+    """A dropped DXF or DWG: read now by its reader (``core.readers``), the
+    cards need its part."""
+    files.add(f)
+    load, f.load = f.load, (lambda: data)
+    files.result(f.id)
+    f.load = load
+    f.status = "read" if files.result(f.id).shapes else "failed"
+
+
+def drawings() -> dict[str, DxfFile]:
+    """Every dropped DXF/DWG as its reader read it, in drop order."""
+    out = {}
+    for fid in files.of_kind("dxf", "dwg"):
+        res = files.result(fid)
+        if res is not None:
+            out[fid] = res.record[1] if isinstance(res.record, tuple) else res.record
+    return out
 
 
 def _release_memory() -> None:
@@ -306,13 +318,13 @@ def sync() -> list[tuple[str, DxfFile]]:
     A card's id is its first file's id, so it keeps its settings while files
     are added; a card that a drawing joins passes its settings on."""
     ss = st.session_state
-    files: dict = ss.setdefault(FILES, {})
+    dwgs = drawings()
     reports: dict = ss.setdefault(_SRC_REPORTS, {})
     config: dict = ss.setdefault(CONFIG, {})
     old: dict = ss.get(ITEMS, {})
 
     def shape(sid: str) -> DxfFile:
-        return files[sid] if sid in files else bom.flat_file(sid)
+        return dwgs[sid] if sid in dwgs else bom.flat_file(sid)
 
     def report(sid: str) -> DxfReport:
         if sid not in reports:
@@ -320,11 +332,11 @@ def sync() -> list[tuple[str, DxfFile]]:
         return reports[sid]
 
     sources = ([Source(fid, d.name, "dxf", list(d.texts), folder=folder_of(fid))
-                for fid, d in files.items()]
+                for fid, d in dwgs.items()]
                + bom.sources(ss.setdefault(_HIDDEN, set()), folder_of))
     linked: dict[str, str] = {}
-    groups = group_sources(sources, lambda sid: sid in files
-                           and looks_like_drawing(report(sid)), _pdf_texts(), linked)
+    groups = group_sources(sources, lambda sid: sid in dwgs and files.result(sid).is_drawing,
+                           _pdf_texts(), linked)
     store, items = {}, {}
     for members in groups:
         cid = members[0]
@@ -334,8 +346,8 @@ def sync() -> list[tuple[str, DxfFile]]:
                 config[cid] = dict(inherited)
         models = [bom.source(m) for m in members if bom.is_source(m)]
         blank = models[0][2].blank_mm if models and models[0][2] is not None else None
-        scores = {sid: (score_dxf(report(sid), files[sid].unit_guessed, files[sid].texts, blank)
-                        if sid in files else STEP_CHOICE) for sid in members}
+        scores = {sid: (score_dxf(report(sid), dwgs[sid].unit_guessed, dwgs[sid].texts, blank)
+                        if sid in dwgs else STEP_CHOICE) for sid in members}
         chosen = choose(scores, config.get(cid, {}).get("source")) or members[0]
         if cid in old and old[cid].chosen != chosen:
             ss.get(REPORTS, {}).pop(cid, None)
@@ -374,13 +386,16 @@ def resync() -> None:
 def sync_assemblies() -> None:
     """The assemblies made from the dropped STEP models and assembly drawings."""
     assemblies.sync_from_models()
-    links, store = card_docs(), st.session_state.get(STORE, {})
+    links, items = card_docs(), st.session_state.get(ITEMS, {})
 
-    def texts(cid: str) -> str:
-        return "\n".join([*(attachments.text(d) for d in links.get(cid, [])),
-                          *(store[cid].texts if cid in store else [])])
-    items = st.session_state.get(ITEMS, {})
-    assemblies.sync_from_drawings(items, texts)
+    def facts(cid: str) -> list:
+        """What the readers read from the card's drawings and its PDFs."""
+        ids = [m for m in items[cid].members if files.get(m) is not None
+               and files.get(m).kind in ("dxf", "dwg")]
+        ids += [d for d in links.get(cid, []) if files.get(d) is not None
+                and files.get(d).kind == "pdf"]
+        return [f for fid in ids for f in files.result(fid).facts]
+    assemblies.sync_from_drawings(items, facts)
     config = st.session_state.get(CONFIG, {})
     # A part's own fasteners stay on its card (its Ostetut osat); only an
     # assembly drawing's notes are its assembly's.
@@ -395,13 +410,14 @@ def card_fastener_lines(cid: str, item: Item | None,
     """The fasteners the card's drawings call out, ``(name, kpl / osa)``, and
     the file they were read from: of its PDFs and files, the one that asks
     for the most (a flat and its drawing repeat the same note)."""
-    files, store = st.session_state.get(FILES, {}), st.session_state.get(STORE, {})
-    all_docs = attachments.docs()
-    sources = [(attachments.fasteners(d), all_docs.get(d, {}).get("name", d)) for d in docs]
-    sources += [(fastener_lines(files[m].texts), files[m].name)
-                for m in (item.members if item else []) if m in files]
-    if cid in store:
-        sources.append((fastener_lines(store[cid].texts), store[cid].name))
+    ids = [*docs, *(item.members if item else [cid])]
+    sources = []
+    for fid in dict.fromkeys(ids):
+        f = files.get(fid)
+        if f is None or f.kind not in ("pdf", "dxf", "dwg"):
+            continue
+        res = files.result(fid)
+        sources.append(([(x.value["name"], x.value["kpl"]) for x in res.of("fastener")], f.name))
     best = max(sources, key=lambda s: sum(n for _, n in s[0]), default=([], ""))
     return (best if best[0] else ([], ""))
 
@@ -415,14 +431,15 @@ def source_cards() -> dict[str, str]:
 def folder_of(sid: str) -> str:
     """The ZIP folder a file came in ("" when dropped on its own); a STEP
     model's part is in its file's folder."""
-    return st.session_state.get(_FOLDERS, {}).get(sid.split("|", 1)[0], "")
+    return files.folder(sid)
 
 
 def card_docs() -> dict[str, list[str]]:
     """Each card's PDFs (see ``attachments.links``)."""
     card_folders = {cid: {f for f in map(folder_of, item.members) if f}
                     for cid, item in st.session_state.get(ITEMS, {}).items()}
-    return attachments.links(_card_names(), card_folders, st.session_state.get(_FOLDERS, {}))
+    return attachments.links(_card_names(), card_folders,
+                             {fid: f.folder for fid, f in files.inputs().items() if f.folder})
 
 
 # A PDF named as a parts list: read for its quantities even when it links to
@@ -433,12 +450,14 @@ _BOM_NAME = re.compile(r"bom|osaluettelo|kappaleluettelo|parts?[\s_\-]?list|st[�
 
 def bom_quantities() -> dict[str, tuple[int, list[str]]]:
     """The quantity each card's BOMs ask for, ``{card id: (kpl, [BOM
-    names])}`` (see ``core.linking.bom_quantities``). The PDFs read are the
-    ones already read for linking and the ones named as a parts list."""
-    read = st.session_state.get(attachments.TEXTS, {})
-    texts = {doc["name"]: attachments.text(d) for d, doc in attachments.docs().items()
-             if doc["kind"] == "pdf" and (d in read or _BOM_NAME.search(doc["name"]))}
-    return _bom_quantities(_card_names(), texts)
+    names])}``, from the PDF reader's BOM rows (see
+    ``core.linking.bom_quantities``). The PDFs are the ones already read and
+    the ones named as a parts list."""
+    rows = {f.name: [(x.value["part_key"], x.value["kpl"])
+                     for x in files.result(fid).of("bom_qty")]
+            for fid, f in files.of_kind("pdf").items()
+            if files.is_read(fid) or _BOM_NAME.search(f.name)}
+    return _bom_quantities(_card_names(), rows)
 
 
 def _card_names() -> dict[str, list[str]]:
@@ -451,13 +470,13 @@ def _with_all_texts(parts: list[tuple[str, DxfFile]]) -> list[tuple[str, object]
     """The cards for the material search: the texts of all their files (the
     drawing's title block names the material, the flat pattern may not) and
     the STEP model's sheet thickness."""
-    files = st.session_state.get(FILES, {})
+    dwgs = drawings()
     items = st.session_state.get(ITEMS, {})
     out = []
     for cid, dxf in parts:
         item = items.get(cid)
-        texts = [t for m in (item.members if item else [cid]) if m in files
-                 for t in files[m].texts] or list(dxf.texts)
+        texts = [t for m in (item.members if item else [cid]) if m in dwgs
+                 for t in dwgs[m].texts] or list(dxf.texts)
         flats = step_flats(item)
         out.append((cid, SimpleNamespace(
             name=dxf.name, texts=texts,
@@ -503,10 +522,9 @@ def evict(fid: str) -> None:
     ss = st.session_state
     item = ss.get(ITEMS, {}).get(fid)
     doc_links = card_docs()
-    files = ss.get(FILES, {})
     for sid in (item.members if item else [fid]):
-        files.pop(sid, None)
-        ss.get(_FOLDERS, {}).pop(sid, None)
+        if files.get(sid) is not None and files.get(sid).kind in ("dxf", "dwg"):
+            files.remove(sid)
         ss.get(_SRC_REPORTS, {}).pop(sid, None)
         src = bom.source(sid)
         if src is not None:
@@ -538,9 +556,8 @@ def evict_all() -> None:
         evict(fid)
     for doc_id in list(attachments.docs()):
         attachments.remove_doc(doc_id)
-    for key in (bom.MODELS, FILES, ITEMS, _HIDDEN, _SRC_REPORTS, FILL_ASKED,
+    for key in (bom.MODELS, *files.KEYS, ITEMS, _HIDDEN, _SRC_REPORTS, FILL_ASKED,
                 _DUPES, _SKIPPED,   # these warnings name files that are gone
-                _FOLDERS, _WAITING,
                 _BEND_LINES,
                 AUTO_SHOWN, PART_BOUGHT, *material_agent.AUTO_KEYS, *assemblies.KEYS):
         st.session_state.pop(key, None)

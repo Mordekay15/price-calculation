@@ -10,14 +10,12 @@ import io
 import streamlit as st
 
 from core.linking import link_by_text, link_files
+from core.model import InputFile
+from view import files
 from view.common import render_page_picker
 
-DOCS = "dxf_docs"            # {doc id: {"name", "size", "kind", "load"}}
 _MANUAL = "dxf_doc_links"    # {doc id: part id or "" (= no part)}, set by hand
 _PREVIEWS = "dxf_doc_previews"  # {doc id: PNG bytes of page 1}
-TEXTS = "dxf_doc_texts"      # {doc id: [(page, text)]}, see core.materials.pdf_text
-FIELDS = "dxf_doc_fields"    # {doc id: [(page, Material field)]}, see material_fields
-FASTENERS = "dxf_doc_fasteners"  # {doc id: [(name, kpl)]}, see core.fasteners
 
 DOC_TYPES = {"pdf": "pdf", "step": "step", "stp": "step"}
 
@@ -26,31 +24,31 @@ def is_doc(name: str) -> bool:
     return name.rsplit(".", 1)[-1].lower() in DOC_TYPES
 
 
-def add_doc(file_id: str, name: str, data: bytes, load=None) -> None:
-    """Keep a dropped PDF or STEP file. With ``load`` (a file of a ZIP or a
-    folder, read again when needed) its bytes aren't kept: a big RFQ's
-    drawings and models are hundreds of MB."""
-    st.session_state.setdefault(DOCS, {})[file_id] = {
-        "name": name, "size": len(data), "kind": DOC_TYPES[name.rsplit(".", 1)[-1].lower()],
-        "load": load or (lambda: data)}
+def add_doc(f: InputFile, data: bytes) -> None:
+    """Keep a dropped PDF or STEP file (``view.files``). A file of a ZIP is
+    read from it again when needed (``f.load``), so its bytes aren't kept: a
+    big RFQ's drawings and models are hundreds of MB."""
+    if f.load is None:
+        f.load = lambda: data
+    f.size_bytes = f.size_bytes or len(data)
+    files.add(f)
 
 
 def data(doc_id: str) -> bytes:
     """A kept file's bytes."""
-    return docs()[doc_id]["load"]()
+    return files.get(doc_id).load()
 
 
 def remove_doc(doc_id: str) -> None:
-    st.session_state.get(DOCS, {}).pop(doc_id, None)
+    files.remove(doc_id)
     st.session_state.get(_MANUAL, {}).pop(doc_id, None)
     st.session_state.get(_PREVIEWS, {}).pop(doc_id, None)
-    st.session_state.get(TEXTS, {}).pop(doc_id, None)
-    st.session_state.get(FIELDS, {}).pop(doc_id, None)
-    st.session_state.get(FASTENERS, {}).pop(doc_id, None)
 
 
 def docs() -> dict[str, dict]:
-    return st.session_state.get(DOCS, {})
+    """The PDF and STEP files, ``{id: {"name", "size", "kind", "load"}}``."""
+    return {fid: {"name": f.name, "size": f.size_bytes, "kind": f.kind, "load": f.load}
+            for fid, f in files.of_kind("pdf", "step").items()}
 
 
 def _linkable() -> dict[str, dict]:
@@ -106,40 +104,17 @@ def text(doc_id: str) -> str:
     return _text(doc_id, doc) if doc is not None and doc["kind"] == "pdf" else ""
 
 
-def pages(doc_id: str, doc: dict) -> list[tuple[int, str]]:
-    """A PDF's first pages, ``[(page, text)]``, read once for the card links
-    and the material proposals."""
-    from core.materials import pdf_text
-
-    cache = st.session_state.setdefault(TEXTS, {})
-    if doc_id not in cache:
-        cache[doc_id] = pdf_text(doc["load"]())
-    return cache[doc_id]
+def pages(doc_id: str, doc: dict | None = None) -> list[tuple[int, str]]:
+    """A PDF's first pages, ``[(page, text)]``, as the PDF reader read them."""
+    res = files.result(doc_id)
+    return res.record[0] if res is not None and res.record else []
 
 
-def fasteners(doc_id: str) -> list[tuple[str, int]]:
-    """A linked PDF's fastener callouts ``[(name, kpl)]``, read once ([] for
-    other files, see ``core.fasteners``)."""
-    from core.fasteners import pdf_fasteners
-
-    doc = docs().get(doc_id)
-    if doc is None or doc["kind"] != "pdf":
-        return []
-    cache = st.session_state.setdefault(FASTENERS, {})
-    if doc_id not in cache:
-        cache[doc_id] = pdf_fasteners(doc["load"]())
-    return cache[doc_id]
-
-
-def material_fields(doc_id: str, doc: dict) -> list[tuple[int, str]]:
-    """A PDF's title block Material field, ``[(page, text)]``, read once (see
-    ``core.materials.material_field``)."""
-    from core.materials import pdf_material_fields
-
-    cache = st.session_state.setdefault(FIELDS, {})
-    if doc_id not in cache:
-        cache[doc_id] = pdf_material_fields(doc["load"]())
-    return cache[doc_id]
+def material_fields(doc_id: str, doc: dict | None = None) -> list[tuple[int, str]]:
+    """A PDF's title block Material field, ``[(page, text)]``, as the PDF
+    reader read it."""
+    res = files.result(doc_id)
+    return res.record[1] if res is not None and res.record else []
 
 
 def _text(doc_id: str, doc: dict) -> str:

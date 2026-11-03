@@ -5,6 +5,14 @@ import ezdxf
 import pytest
 
 from core import dwg
+from core.readers import read_dwg_file, read_dxf_file
+
+
+def read_drawing(data: bytes, name: str):
+    """What the DXF/DWG readers give the cards: the file as read."""
+    if dwg.is_dwg(name):
+        return read_dwg_file(data, "f", name).record[1]
+    return read_dxf_file(data, "f", name).record
 from tests.conftest import dxf_bytes, rect
 
 
@@ -22,14 +30,14 @@ def no_oda(monkeypatch):
 
 
 def test_a_dxf_is_read_as_before(plate_dxf, no_oda):
-    f = dwg.read_drawing(plate_dxf, "plate.DXF")
+    f = read_drawing(plate_dxf, "plate.DXF")
     assert f.problems == [] and f.part().outline is not None
 
 
 def test_without_a_converter_the_card_says_to_save_as_dxf(no_oda, monkeypatch):
     monkeypatch.setattr(dwg, "libredwg_executable", lambda: None)
     assert dwg.converter() is None
-    f = dwg.read_drawing(b"AC1032...", "part.dwg")
+    f = read_drawing(b"AC1032...", "part.dwg")
     assert len(f.problems) == 1 and dwg.SAVE_AS_DXF in f.problems[0]
     assert f.part().problems == f.problems        # nothing else piled on
 
@@ -43,7 +51,7 @@ def test_libredwg_converts_when_oda_is_missing(plate_dxf, no_oda, monkeypatch, t
     fake.chmod(0o755)
     monkeypatch.setenv("LIBREDWG_BIN", str(fake))
     assert dwg.converter() == "LibreDWG"
-    f = dwg.read_drawing(b"AC1032...", "plate.dwg")
+    f = read_drawing(b"AC1032...", "plate.dwg")
     assert f.problems == [] and f.name == "plate.dwg"
     assert round(f.part().outline.width_mm) == 300
 
@@ -53,7 +61,7 @@ def test_a_failed_conversion_is_a_problem_not_a_crash(no_oda, monkeypatch, tmp_p
     fake.write_text('#!/bin/sh\necho "ERROR: unsupported version" >&2\nexit 1\n')
     fake.chmod(0o755)
     monkeypatch.setenv("LIBREDWG_BIN", str(fake))
-    f = dwg.read_drawing(b"AC1032...", "bad.dwg")
+    f = read_drawing(b"AC1032...", "bad.dwg")
     assert "unsupported version" in f.problems[0] and dwg.SAVE_AS_DXF in f.problems[0]
 
 
@@ -131,9 +139,9 @@ def test_a_dwg_with_a_broken_objects_section_reads_in_full(no_oda, monkeypatch, 
                     f'else cp "{full}" "$3"; fi\n')
     fake.chmod(0o755)
     monkeypatch.setenv("LIBREDWG_BIN", str(fake))
-    f = dwg.read_drawing(b"AC1015...", "plate.dwg")
+    f = read_drawing(b"AC1015...", "plate.dwg")
     assert f.problems == []
-    assert [p.solid for p in f.pieces].count(False) == 1     # the dashed line
+    assert len(f.part().reference_lines) == 1                # the dashed line, not cut
     part = f.part()
     assert round(part.outline.width_mm) == 300 and part.bends == 1
 

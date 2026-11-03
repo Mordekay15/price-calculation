@@ -5,11 +5,11 @@ in "work"."""
 import ezdxf
 import streamlit as st
 
-from core.dxf import read_dxf
+from core.model import InputFile
 from tests.conftest import dxf_bytes
 from tests.fastener_pdf import drawing_pdf
 from view import attachments
-from view.dxf_files import FILES, STORE, sync, sync_assemblies
+from view.dxf_files import STORE, add_drawing, sync, sync_assemblies
 from view.dxf_tab import _render_part_cards
 
 
@@ -25,12 +25,12 @@ def part(note: str | None, w: float) -> bytes:
 
 if "seeded" not in st.session_state:
     st.session_state["seeded"] = True
-    st.session_state[FILES] = {
-        "f0": read_dxf(part("M5-PURISTEMUTTERIT X4KPL", 100), "levy.dxf"),
-        "f1": read_dxf(part(None, 120), "kulma.dxf"),
-        "f2": read_dxf(part(None, 140), "kansi.dxf"),
-        "f3": read_dxf(part(None, 160), "kotelo.dxf")}
-    attachments.add_doc("d3", "kotelo.pdf", drawing_pdf())     # its fasteners on its PDF
+    for fid, note, w, name in [("f0", "M5-PURISTEMUTTERIT X4KPL", 100, "levy.dxf"),
+                               ("f1", None, 120, "kulma.dxf"), ("f2", None, 140, "kansi.dxf"),
+                               ("f3", None, 160, "kotelo.dxf")]:
+        add_drawing(InputFile(fid, name, "dxf", None), part(note, w))
+    # its fasteners on its PDF
+    attachments.add_doc(InputFile("d3", "kotelo.pdf", "pdf", None), drawing_pdf())
 sync()
 sync_assemblies()
 products = _render_part_cards(list(st.session_state[STORE].items()), ["S235"],

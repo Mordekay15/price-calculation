@@ -69,28 +69,24 @@ def _patterns(part_names) -> dict[str, re.Pattern]:
 _QTY = re.compile(r"(?<![\w.,])(\d{1,5})\s*(?:pcs|pc|pce|kpl|st|stk|ea)\b", re.IGNORECASE)
 
 
-def bom_quantities(part_names: dict[str, list[str]], texts: dict[str, str]
-                   ) -> dict[str, tuple[int, list[str]]]:
+def bom_quantities(part_names: dict[str, list[str]],
+                   rows: dict[str, list[tuple[str, int]]]) -> dict[str, tuple[int, list[str]]]:
     """How many of each part the BOMs ask for: ``part_names`` maps a card to
-    its file names, ``texts`` a PDF's name to its text. A BOM row names one
-    card's part number and a quantity with its unit (``1 ITM-064555.A Plate
-    … 2 pcs``). Returns ``{card: (kpl, [BOM names])}``, the kpl of all the
-    BOMs that list it added up (one BOM's first row for it)."""
-    patterns = _patterns(n for ns in part_names.values() for n in ns)
+    its file names, ``rows`` a BOM's name to its rows ``(part number, kpl)``
+    (the PDF reader's ``bom_qty`` facts). Returns ``{card: (kpl, [BOM
+    names])}``, the kpl of all the BOMs that list it added up (one BOM's
+    first row for it)."""
     card_of = {base_key(n): cid for cid, ns in part_names.items() for n in ns}
     out: dict[str, tuple[int, list[str]]] = {}
-    for doc, text in texts.items():
+    for doc, doc_rows in rows.items():
         seen = set()
-        for line in (text or "").splitlines():
-            qty = _QTY.findall(line)
-            if not qty:
-                continue
-            cards = {card_of[k] for k, pat in patterns.items() if pat.search(line)}
-            if len(cards) != 1 or (cid := cards.pop()) in seen:
+        for key, kpl in doc_rows:
+            cid = card_of.get(key)
+            if cid is None or cid in seen:
                 continue
             seen.add(cid)
             n, docs = out.get(cid, (0, []))
-            out[cid] = (n + int(qty[-1]), [*docs, doc])
+            out[cid] = (n + int(kpl), [*docs, doc])
     return out
 
 

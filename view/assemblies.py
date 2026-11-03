@@ -41,7 +41,7 @@ from dataclasses import fields
 
 from core.assemblies import Assembly, AssemblyWork
 from core.items import NO_BLANK
-from core.linking import base_key, bom_quantities, callouts
+from core.linking import base_key
 from view import bom, bought
 from view.ui import is_headless, st
 from view.undo import undoable
@@ -106,10 +106,11 @@ def part_number(name: str) -> str:
     return base_key(name.rsplit(".", 1)[0] if "." in name else name)
 
 
-def sync_from_drawings(items: dict, texts: Callable[[str], str]) -> None:
+def sync_from_drawings(items: dict, facts: Callable[[str], list]) -> None:
     """Make an assembly of every assembly drawing among the cards: ``items``
-    are the cards (``core.items.Item`` by card id), ``texts(card id)`` the
-    text of its drawings. Each part number it calls out is a card in it, or
+    are the cards (``core.items.Item`` by card id), ``facts(card id)`` what
+    the readers read from its drawings (``core.model.Fact``: the part numbers
+    it calls out, its BOM lines). Each part number it calls out is a card in it, or
     a subassembly when that number is another assembly's; × the kpl its BOM
     lines give, else 1. One assembly per part number: a drawing of a STEP
     assembly's number joins it."""
@@ -120,10 +121,15 @@ def sync_from_drawings(items: dict, texts: Callable[[str], str]) -> None:
         scores = item.scores.values()
         if any(c.valid for c in scores) or not any(c.note == NO_BLANK for c in scores):
             continue
-        text = texts(cid)
-        expects = [k for k in callouts(text) if k not in keys[cid]]
+        said = facts(cid)
+        expects = list(dict.fromkeys(f.value for f in said if f.kind == "called_out"
+                                     and f.value not in keys[cid]))
+        kpl: dict[str, int] = {}
+        for f in said:
+            if f.kind == "bom_qty":
+                kpl.setdefault(f.value["part_key"], f.value["kpl"])
         if expects:
-            drawings[cid] = (part_number(item.names[cid]), expects, _bom_kpl(text, expects))
+            drawings[cid] = (part_number(item.names[cid]), expects, kpl)
     for aid, a in list(store.items()):
         if a.get("drawing") and a["drawing"] not in drawings:
             _drop_source(aid, ("drawing", "drawn", "children", "awaited", "fasteners_read"))
@@ -140,12 +146,6 @@ def sync_from_drawings(items: dict, texts: Callable[[str], str]) -> None:
         named = {base_key(str(r.get(bought.NAME) or "")) for r in a["bought"]["rows"]}
         a["awaited"] = [k.upper() for k in expects
                         if k not in found and k not in a["children"] and k not in named]
-
-
-def _bom_kpl(text: str, keys: list[str]) -> dict[str, int]:
-    """The kpl the drawing's BOM lines give the part numbers it calls out
-    (read as any BOM is, ``core.linking.bom_quantities``)."""
-    return {k: n for k, (n, _) in bom_quantities({k: [k] for k in keys}, {"": text}).items()}
 
 
 def _table() -> dict:

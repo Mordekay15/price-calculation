@@ -364,6 +364,8 @@ core/                   pure logic, no Streamlit
   assemblies.py         assemblies: parts × kpl/kokoonpano, subassemblies, bought parts, work
   linking.py            part numbers from file names; files → parts by name or text
   archive.py            dropped ZIPs: files folder by folder, nested ZIPs, Finnish names
+  model.py              the data model: InputFile, FlatShape, Fact, ReadResult, PartSource…
+  readers.py            one reader per file type: DXF, DWG, STEP, PDF → shapes and facts
   items.py              one card per part (Item, PartSource): grouping its files, choosing the shape
   materials.py          material/thickness hints, the Material field, proposals
   step.py               STEP: BOM with quantities, sheet unfolding, a flat's card file, 3D mesh
@@ -383,6 +385,7 @@ view/                   Streamlit UI
   sidebar.py            price-list upload, supplier status, copper price
   calculator_tab.py     manual tab and its product cards
   dxf_tab.py            DXF tab: the order of the page and the part cards
+  files.py              the session's InputFiles and their ReadResults
   dxf_files.py          the DXF tab's dropped files, grouped into cards (ingest, sync, remove)
   dxf_nesting.py        the DXF tab's run row, the Sparrow runs, cached results and prices
   common.py             inputs, the per-group loop, totals, pieces summary
@@ -523,27 +526,27 @@ has no limit.
 
 ## Data model
 
-What is kept for a quote, one sitting, nothing saved. Every structure has
-one home and is built one way.
+The app is built on `core/model.py`; data flows one way:
 
-1. **Files.** A dropped file, or a file in a ZIP, is kept as a way to read it
-   (not its bytes). A DXF or DWG is read into a `core.dxf.DxfFile`; a DWG is
-   only converted first (`core.dwg`). A STEP model's sheet bodies are unfolded
-   (`core.step.FlatPart`) and each becomes a `DxfFile` straight from its flat
-   (`core.step.flat_file`), with no DXF written and read back. A PDF gives
-   text: material, part numbers, BOM lines and fastener callouts.
-2. **Cards** (`core.items.Item`): one per part number. Its files are
-   `PartSource`s: the file, how it came onto the card (its part number, the
-   part number in its text, or its folder) and how it scored as the shape to
-   price. The best one is priced.
-3. **Ostetut osat** (`core.work.BoughtPart`, edited in `view/bought.py`): on a
-   card, the part's own (its fasteners, per piece); on an assembly, its own
-   (per assembly). Fasteners never make an assembly.
-4. **Assemblies** (`core.assemblies.Assembly`): one per part number, from a
-   STEP model, an assembly drawing or both, or joined by hand. Its parts with
-   their kpl (STEP first, then the drawing's BOM lines, then 1), its
-   subassemblies, its bought parts and its work. A part sits in one place.
-5. **Nesting and price**, computed from the cards, assemblies and rates.
+1. **InputFile** (`view/files.py` keeps them, in drop order): every dropped
+   file and every file in a ZIP, with its kind, folder, size and status
+   (`read`, `failed`, `waiting` for a big STEP model of a large drop). Its
+   bytes are not copied: a file of a ZIP is read from it again when needed.
+2. **Readers** (`core/readers.py`), one per kind, each returning a
+   `ReadResult` of FlatShapes and Facts, kept per file in `view/files.py`:
+   - DXF: read when dropped.
+   - DWG: converted (`DwgConversion`), then read exactly like a DXF.
+   - STEP: through `view/bom.py`, with the K factor; each sheet body becomes
+     a FlatShape, and its card is built straight from it (`dxf_file_of`).
+   - PDF: read the first time something asks (text, Material field,
+     fasteners, BOM rows, called-out part numbers).
+3. **Facts** are what the rest of the app reads: a card's fasteners (its
+   Ostetut osat), an assembly drawing's called-out parts and BOM kpl, the
+   BOM quantities of loose parts, whether a file is a drawing sheet.
+4. **Cards** (`core.items.Item`, one per part number, its files as
+   `PartSource`s) and **assemblies** (`core.assemblies`, one per part
+   number, with subassemblies).
+5. Nesting and price, computed.
 
 ## How a DXF file is read
 

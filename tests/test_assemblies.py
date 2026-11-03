@@ -21,6 +21,14 @@ from core.work import LaserSpeed, WorkInputs, WorkRates
 RATES = WorkRates()          # welding 1.5 m/h at 60 €/h: 40 €/m
 
 
+
+def _facts(text: str) -> list:
+    """What the PDF reader reads from a drawing's text: the part numbers it
+    calls out and its BOM lines."""
+    from core.readers import _bom_facts, _callout_facts
+
+    return _callout_facts(text, "", "x") + _bom_facts(text, "x", 1, "")
+
 def test_a_part_in_an_assembly_is_priced_at_batch_times_its_count():
     work = WorkInputs(cut_length_m=1.0, laser=LaserSpeed(10, 0.05), setup_eur=40.0)
     group = {("S235", "2"): GroupSheets(total_eur=80.0, sheets=1, pieces_kg=40.0)}
@@ -68,7 +76,6 @@ def test_the_quote_table_shows_an_assembly_line_with_its_parts():
     from streamlit.testing.v1 import AppTest
 
     def page():
-        import streamlit as st
 
         from core.assemblies import Assembly, BoughtPart
         from core.work import LaserSpeed, WorkInputs
@@ -144,6 +151,7 @@ def test_an_assembly_drawing_becomes_an_assembly_awaiting_its_missing_items():
         import streamlit as st
 
         from core.items import NO_BLANK, Choice
+        from tests.test_assemblies import _facts as facts
         from view import assemblies
 
         drawing = SimpleNamespace(names={"d": "3axd50001139896.dxf"},
@@ -151,11 +159,11 @@ def test_an_assembly_drawing_becomes_an_assembly_awaiting_its_missing_items():
         plate = SimpleNamespace(names={"p": "3AXD50001016005.dxf"},
                                 scores={"p": Choice(100, "puhdas aihio")})
         text = "3AXD50001016005\n3AXD50000026889\nTitle 3AXD50001139896"
-        assemblies.sync_from_drawings({"d": drawing, "p": plate}, lambda cid: text)
+        assemblies.sync_from_drawings({"d": drawing, "p": plate}, lambda cid: facts(text))
         a = st.session_state[assemblies.ASSEMBLIES]["3axd50001139896"]
         st.session_state["got"] = (a["name"], a["drawn"], a["awaited"])
         # A loose plate's own drawing is no assembly.
-        assemblies.sync_from_drawings({"p": plate}, lambda cid: text)
+        assemblies.sync_from_drawings({"p": plate}, lambda cid: facts(text))
         st.session_state["left"] = list(st.session_state[assemblies.ASSEMBLIES])
 
     at = AppTest.from_function(page).run()
@@ -173,6 +181,7 @@ def test_one_assembly_per_part_number_with_its_subassemblies():
         import streamlit as st
 
         from core.items import NO_BLANK, Choice
+        from tests.test_assemblies import _facts as facts
         from view import assemblies
 
         def drawing(cid, name):
@@ -193,7 +202,7 @@ def test_one_assembly_per_part_number_with_its_subassemblies():
         store["asm-070100"] = {"name": "ASM-070100", "members": {"b": 4}, "auto": "s1",
                                "bought": {"rows": [], "seed": []}}
         for _ in range(2):
-            assemblies.sync_from_drawings(items, texts.get)
+            assemblies.sync_from_drawings(items, lambda cid: facts(texts.get(cid, "")))
         cards = {c: c for c in items}
         got = {a.id: (a.members, a.children) for a in assemblies.current(cards)}
         st.session_state["got"] = (sorted(store), got)
