@@ -10,7 +10,13 @@ first one found of:
    official build with its DLLs), or ``dwg2dxf`` on the ``PATH``.
 
 With neither, or when the conversion fails, the file comes back with a
-problem that says to save it as DXF."""
+problem that says to save it as DXF.
+
+The converted DXF's OBJECTS section is removed before it is read: it holds
+only settings the app never uses (groups, layouts, plot settings, image and
+style definitions), and LibreDWG can write it so that ezdxf refuses the whole
+file (M3440659-00.dwg: four nameless entries pointing at handle 0). ezdxf
+builds default ones in its place."""
 
 from __future__ import annotations
 
@@ -108,7 +114,7 @@ def dwg_to_dxf(data: bytes, *, minimal: bool = False) -> bytes:
             _with_libredwg(exe, src, dst, minimal)
         if not dst.is_file():
             raise ConversionError("Muunnin ei tuottanut DXF-tiedostoa.")
-        return _join_broken_values(dst.read_bytes())
+        return _without_objects(_join_broken_values(dst.read_bytes()))
 
 
 def _join_broken_values(dxf: bytes) -> bytes:
@@ -124,6 +130,28 @@ def _join_broken_values(dxf: bytes) -> bytes:
             continue
         out.append(line)
         code = not code
+    return b"\n".join(out)
+
+
+def _without_objects(dxf: bytes) -> bytes:
+    """``dxf`` less its OBJECTS section (see the module's docstring). The
+    file is walked as code / value line pairs, so a text that happens to read
+    "OBJECTS" is never taken for the section."""
+    lines = dxf.split(b"\n")
+    out: list[bytes] = []
+    skipping = False
+    i = 0
+    while i + 1 < len(lines):
+        code, value = lines[i].strip(), lines[i + 1].strip()
+        if (not skipping and code == b"0" and value == b"SECTION" and i + 3 < len(lines)
+                and lines[i + 2].strip() == b"2" and lines[i + 3].strip() == b"OBJECTS"):
+            skipping = True
+        if not skipping:
+            out += lines[i:i + 2]
+        elif code == b"0" and value == b"ENDSEC":
+            skipping = False
+        i += 2
+    out += lines[i:]
     return b"\n".join(out)
 
 

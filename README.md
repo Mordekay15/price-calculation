@@ -271,6 +271,13 @@ converted to DXF (`core/dwg.py`), by the first converter found:
 Without either, or when a conversion fails, the part's card says why and asks
 for the drawing as DXF.
 
+The converted DXF's OBJECTS section (groups, layouts, plot settings and other
+settings the app never reads) is removed before the DXF is read. LibreDWG can
+write it so that ezdxf refuses the whole file ("Invalid handle 0"), and the
+app then had to fall back to LibreDWG's minimal DXF, which loses the
+dimensions, dashed bend lines and blocks. That fallback is still there for a
+file that fails in another way.
+
 `bin/dwg2dxf` (Linux) is built from the LibreDWG source by the GitHub Actions
 workflow `.github/workflows/build-dwg2dxf.yml`, which also checks that a plate
 survives a round trip through DWG. Run it again (Actions → Build dwg2dxf) to

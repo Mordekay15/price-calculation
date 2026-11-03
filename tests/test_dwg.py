@@ -81,3 +81,71 @@ def test_a_text_broken_over_two_lines_by_libredwg_is_joined_back():
     assert _join_broken_values(broken).split(b"\n") == [
         b"  0", b"TEXT", b"  1", b"not to be reproduced without the representative thereof.",
         b"  7", b"STYLE", b""]
+
+
+def _broken_objects_dxf() -> bytes:
+    """A plate with a dashed bend line, whose OBJECTS section is written as
+    LibreDWG wrote M3440659-00.dwg's: nameless root-dictionary entries
+    pointing at handle 0, which ezdxf refuses ("Invalid handle 0")."""
+    doc = ezdxf.new("R2000", setup=["linetypes"])
+    doc.header["$INSUNITS"] = 4
+    msp = doc.modelspace()
+    rect(msp, 0, 0, 300, 200)
+    msp.add_line((100, 0), (100, 200), dxfattribs={"linetype": "DASHED"})
+    data = dxf_bytes(doc)
+    at = data.index(b"ACAD_GROUP")
+    at = data.rindex(b"\n", 0, data.rindex(b"\n", 0, at)) + 1    # the entry's "  3" line
+    return data[:at] + b"  3\n\n350\n0\n" * 2 + data[at:]
+
+
+def test_a_broken_objects_section_makes_ezdxf_refuse_the_file():
+    from core.dxf import read_dxf
+
+    f = read_dxf(_broken_objects_dxf(), "plate.dxf")
+    assert f.pieces == [] and "Invalid handle 0" in f.problems[0]
+
+
+def test_the_objects_section_is_removed_and_the_rest_kept():
+    data = _broken_objects_dxf()
+    out = dwg._without_objects(data)
+    assert b"\nOBJECTS\n" in data and b"\nOBJECTS\n" not in out
+    for section in (b"HEADER", b"TABLES", b"BLOCKS", b"ENTITIES"):
+        assert b"\n" + section + b"\n" in out
+    assert out.rstrip().endswith(b"EOF")
+    assert dwg._without_objects(b"  0\nSECTION\n  2\nENTITIES\n  0\nENDSEC\n") \
+        == b"  0\nSECTION\n  2\nENTITIES\n  0\nENDSEC\n"
+
+
+def test_a_dwg_with_a_broken_objects_section_reads_in_full(no_oda, monkeypatch, tmp_path):
+    # The full DXF reads once its OBJECTS section is gone: no fall back to the
+    # minimal DXF (here a fake that would lose the dashed line), so the bend
+    # line keeps its linetype and is counted.
+    full, minimal = tmp_path / "full.dxf", tmp_path / "minimal.dxf"
+    full.write_bytes(_broken_objects_dxf())
+    doc = ezdxf.new()
+    doc.header["$INSUNITS"] = 4
+    rect(doc.modelspace(), 0, 0, 300, 200)
+    minimal.write_bytes(dxf_bytes(doc))
+    fake = tmp_path / "dwg2dxf"
+    fake.write_text(f'#!/bin/sh\nif [ "$2" = -m ]; then cp "{minimal}" "$4"; '
+                    f'else cp "{full}" "$3"; fi\n')
+    fake.chmod(0o755)
+    monkeypatch.setenv("LIBREDWG_BIN", str(fake))
+    f = dwg.read_drawing(b"AC1015...", "plate.dwg")
+    assert f.problems == []
+    assert [p.solid for p in f.pieces].count(False) == 1     # the dashed line
+    part = f.part()
+    assert round(part.outline.width_mm) == 300 and part.bends == 1
+
+
+def test_an_embedded_ole_object_is_not_a_problem():
+    # M3440659-00.dwg's sheet has one (a picture from another program): left
+    # as unreadable, it kept the part from being priced.
+    from core.dxf import read_dxf
+
+    doc = ezdxf.new()
+    doc.header["$INSUNITS"] = 4
+    rect(doc.modelspace(), 0, 0, 300, 200)
+    doc.modelspace().new_entity("OLE2FRAME", {"layer": "0"})
+    f = read_dxf(dxf_bytes(doc), "plate.dxf")
+    assert f.unreadable == {} and f.part().problems == []

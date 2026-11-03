@@ -51,6 +51,7 @@ _ANNOTATION_TYPES = {
     "HATCH", "POINT", "VIEWPORT", "WIPEOUT",
     "SOLID", "TRACE",   # filled 2D shapes: a dimension's exploded arrowheads
     "IMAGE",            # a raster picture (a scanned view): nothing to cut
+    "OLE2FRAME",        # an object embedded from another program: nothing to cut
 }
 
 # Layer-name fragments that mark a layer as drawing furniture or reference
