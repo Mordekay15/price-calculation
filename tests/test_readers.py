@@ -134,3 +134,23 @@ def test_value_user_wins_and_bought_parts_add_up():
 
 def test_an_empty_shape_is_not_priceable():
     assert not FlatShape("x", []).priceable
+
+
+@needs_ocp
+def test_a_step_body_becomes_a_card_without_a_dxf_round_trip(monkeypatch):
+    from core import dxf
+    from core.readers import dxf_file_of, shape_from_flat
+    from tests.step_models import assembly_step
+
+    model = step.read_step(assembly_step(), "runko.step")
+    kulma = next(p for p in model.parts if p.name == "Kulma")
+    flat = step.unfold(kulma.shape, step.DEFAULT_K_FACTOR)
+    before = dxf.read_dxf(step.flat_dxf(flat, "Kulma"), "Kulma.step").part()
+    monkeypatch.setattr(dxf, "read_dxf", lambda *a, **k: pytest.fail("DXF read back"))
+    f = dxf_file_of(shape_from_flat(flat, "s1|kulma"), "Kulma.step", flat.thickness_mm)
+    part = f.part()
+    assert part.outline.area_mm2 == pytest.approx(before.outline.area_mm2)
+    assert part.cut_length_mm == pytest.approx(before.cut_length_mm)
+    assert (part.bends, len(part.holes), part.problems) == (before.bends, len(before.holes), [])
+    assert f.texts == ["Kulma | t = 2 mm | 1 taivutusta (STEP)"]
+    assert f.suggested_layers() == ["CUT"]

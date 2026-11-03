@@ -154,6 +154,33 @@ def shape_from_flat(flat, origin: str) -> FlatShape:
                      markings=[list(b.line) for b in bends], bends=bends)
 
 
+def dxf_file_of(shape: FlatShape, name: str, thickness_mm: float | None = None) -> DxfFile:
+    """A STEP body's FlatShape as the cards' ``DxfFile``, built straight from
+    it: no DXF written and read back, and its part (``DxfFile.part``) is the
+    shape itself, not found again among lines. Its lines are kept (cut on
+    CUT, bends on BEND_UP / BEND_DOWN) so a card can still pick layers."""
+    from core.dxf import Contour, _Piece
+    from core.geometry import area
+    from core.step import BEND_DOWN, BEND_UP
+
+    def bend_layer(b: FlatBend) -> str:
+        return BEND_UP if b.up else BEND_DOWN
+    note = (f"{name.rsplit('.', 1)[0]} | t = {thickness_mm:g} mm | "
+            f"{len(shape.bends)} taivutusta (STEP)" if thickness_mm else "")
+    f = DxfFile(name, unit_label="mm", texts=[note] if note else [],
+                pieces=[_Piece(list(c), True, "CUT", True) for c in (shape.outline, *shape.holes)]
+                + [_Piece(list(b.line), False, bend_layer(b), True)
+                   for b in shape.bends if b.line is not None])
+    report = DxfReport(name=name, unit_label="mm", problems=list(shape.problems),
+                       bends=len(shape.bends), threads=shape.threads,
+                       reference_lines=[list(b.line) for b in shape.bends if b.line is not None])
+    if shape.outline:
+        report.outline = Contour(list(shape.outline), True, abs(area(shape.outline)))
+        report.holes = [Contour(list(h), True, abs(area(h)), 1) for h in shape.holes]
+    f._default = report
+    return f
+
+
 def read_step_file(data: bytes, file_id: str, name: str,
                    k_factor: float | None = None) -> ReadResult:
     """A STEP model: a FlatShape per sheet body, its thickness (measured),

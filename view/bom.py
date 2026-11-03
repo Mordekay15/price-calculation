@@ -14,7 +14,6 @@ from __future__ import annotations
 import streamlit as st
 
 from core import step
-from core.dxf import read_dxf
 from core.items import Source
 from core.linking import base_key
 
@@ -105,11 +104,16 @@ def sources(hidden: set[str], folder_of=lambda sid: "") -> list[Source]:
 
 
 def flat_file(source_id: str):
-    """A model part's flat pattern as a ``DxfFile`` (made once per K factor)."""
+    """A model part's flat pattern as a ``DxfFile`` (made once per K factor),
+    straight from its FlatShape: no DXF round trip (see
+    ``core.readers.dxf_file_of``)."""
+    from core.readers import dxf_file_of, shape_from_flat
+
     m, part, flat = source(source_id)
     cache = m.setdefault("cards", {})
     if part.key not in cache:
-        cache[part.key] = read_dxf(step.flat_dxf(flat, part.name), _file_name(m, part))
+        cache[part.key] = dxf_file_of(shape_from_flat(flat, source_id),
+                                      _file_name(m, part), flat.thickness_mm)
     return cache[part.key]
 
 

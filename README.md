@@ -133,10 +133,12 @@ and in the whole model. Each body is checked for sheet metal:
 - A sheet part has two parallel skins at one thickness, made of flat flanges
   and cylindrical bends. One skin is laid flat face by face, with every bend
   at its neutral radius `inner radius + K × thickness` (the **K-kerroin**,
-  default 0.44). The flat outline, holes and bend lines become a part card,
-  with the model's total as its quantity. The card's bends come from the bend
-  lines (layers `BEND_UP` / `BEND_DOWN`), so the work cost uses them. The thickness note (`t = 2 mm`) is read
-  for the material.
+  default 0.44). The flat outline, holes and bend lines become a part card
+  straight from the unfolded body (a `FlatShape`, see `core.readers.dxf_file_of`):
+  no DXF is written and read back, so nothing is guessed again from lines.
+  Its quantity is the model's total, its bends (with angle, radius and
+  direction) price the bending, and its thickness (`t = 2 mm`) is the
+  model's, measured.
 - **What counts as a bend.** Each cylinder of the skin is a bend, as in
   FreeCAD's SheetMetal unfolder: tabs notched apart and the bridges either
   side of a slot each count. One cylinder exported as several faces (same

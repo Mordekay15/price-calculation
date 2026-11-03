@@ -11,10 +11,10 @@ prices like a dropped DXF.
    radius ``inner radius + K × thickness``. The result is the flat outline,
    its holes and the bend lines. A body that isn't sheet (a bought or
    machined part) comes back with ``is_sheet`` False and a reason.
-3. ``flat_dxf`` writes the flat part as a DXF: outline and holes on ``CUT``,
-   bend lines on ``BEND_UP`` / ``BEND_DOWN``, and a note with the thickness,
-   so that the DXF reader counts the bends and the material panel reads the
-   thickness.
+3. The flat part becomes a card straight from its ``FlatShape``
+   (``core.readers.dxf_file_of``). ``flat_dxf`` writes it as a DXF (outline
+   and holes on ``CUT``, bend lines on ``BEND_UP`` / ``BEND_DOWN``, a note with
+   the thickness) for a file to save.
 4. ``mesh`` triangulates a body for the 3D preview.
 """
 
