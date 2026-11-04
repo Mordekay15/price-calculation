@@ -728,3 +728,54 @@ def test_a_plate_with_part_of_its_edge_drawn_twice_is_still_a_plate(drawing):
     msp.add_line((0, 0), (150, 0))
     report = part_of(doc)
     assert report.problems == [] and round(report.outline.width_mm) == 300
+
+
+def _letters(msp, x, y, h=10.0):
+    """ "AO" engraved and exported as lines: A's three strokes, O's loop."""
+    msp.add_line((x, y), (x + h / 2, y + h))
+    msp.add_line((x + h / 2, y + h), (x + h, y))
+    msp.add_line((x + h / 4, y + h / 2), (x + 3 * h / 4, y + h / 2))
+    msp.add_circle((x + 1.8 * h, y + h / 2), h / 2)
+
+
+def test_engraved_text_exported_as_lines_is_marked_not_cut(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    msp.add_circle((250, 150), 10)                           # a real hole
+    _letters(msp, 50, 80)
+    report = part_of(doc)
+    assert report.problems == []
+    assert len(report.holes) == 1 and report.open_lines == []
+    assert len(report.reference_lines) == 3       # A (its strokes chain into two), O: marked
+
+
+def test_a_real_gap_in_a_cut_out_is_still_a_problem(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    msp.add_lwpolyline([(50, 50), (150, 50), (150, 120), (50, 120), (50, 52)])   # 2 mm open
+    report = part_of(doc)
+    assert report.problems and "aukko" in report.problems[0]
+
+
+def test_engraved_text_in_an_outline_font_is_marked_not_cut(drawing):
+    from ezdxf.addons import text2path
+
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    msp.add_circle((250, 150), 10)                           # a real hole
+    text = msp.add_text("PART 30300044", dxfattribs={"height": 8, "insert": (40, 90)})
+    for p in text2path.make_paths_from_entity(text):         # exploded to outlines
+        for sub in p.sub_paths():
+            msp.add_lwpolyline([(v.x, v.y) for v in sub.flattening(0.05)], close=True)
+    text.destroy()
+    report = part_of(doc)
+    assert report.problems == [] and len(report.holes) == 1
+
+
+def test_a_row_of_holes_is_cut_not_text(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    for x in range(40, 200, 12):
+        msp.add_circle((x, 100), 3)
+    report = part_of(doc)
+    assert report.problems == [] and len(report.holes) == 14

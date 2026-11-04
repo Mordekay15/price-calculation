@@ -392,6 +392,7 @@ class DxfFile:
                 _to_real_size(report, k)
             report.bends = report.bends or _section_bends(section.points)
             _blank_from_section(report, section)
+        _text_to_markings(report)
         report.problems += _part_problems(report)
         _trim_dropped(report)
         _lay_along_length(report)
@@ -1044,6 +1045,70 @@ def _point_segment_mm(p: Point, a: Point, b: Point) -> float:
     span = dx * dx + dy * dy
     s = 0.0 if span == 0 else max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / span))
     return math.hypot(p[0] - a[0] - s * dx, p[1] - a[1] - s * dy)
+
+
+_LETTER_MAX_MM = 30.0    # an engraved letter's strokes fit in this
+_TEXT_MIN_STROKES = 3
+
+
+def _text_to_markings(report: DxfReport) -> None:
+    """Text engraved on the part and exported as lines is marked, not cut:
+    moved from the open cuts and holes to the markings. A word is a row of
+    three or more letter-sized pieces close to each other, either
+    - strokes (a stroke font: SHX, ISOCP), at least half of them open, its
+      loops round (O, D, 8), or
+    - closed outlines (a TrueType font exploded), of several shapes, not one
+      hole repeated (a row of holes is cut)."""
+    small = [ln for ln in report.open_lines if _size(ln) <= _LETTER_MAX_MM]
+    loops = [h for h in report.holes if _size(h.points) <= _LETTER_MAX_MM]
+    items = [(True, ln) for ln in small] + [(False, h) for h in loops]
+    text: set[int] = set()
+    for members in _word_groups([x if is_open else x.points for is_open, x in items]):
+        if len(members) < _TEXT_MIN_STROKES:
+            continue
+        group = [items[i] for i in members]
+        n_open = sum(is_open for is_open, _ in group)
+        rings = [x for is_open, x in group if not is_open]
+        strokes = 2 * n_open >= len(group) and all(
+            max(r.width_mm, r.height_mm) <= 3 * min(r.width_mm, r.height_mm) for r in rings)
+        sizes = {(round(r.width_mm), round(r.height_mm)) for r in rings}
+        outlines = n_open == 0 and len(rings) >= 4 and len(sizes) >= 3
+        if strokes or outlines:
+            text.update(id(x) for _, x in group)
+    if not text:
+        return
+    report.reference_lines += [x if is_open else x.points for is_open, x in items if id(x) in text]
+    report.open_lines = [ln for ln in report.open_lines if id(ln) not in text]
+    report.holes = [h for h in report.holes if id(h) not in text]
+
+
+def _size(pts: list[Point]) -> float:
+    x0, y0, x1, y1 = bbox(pts)
+    return max(x1 - x0, y1 - y0)
+
+
+def _word_groups(pieces: list[list[Point]]) -> list[list[int]]:
+    """The pieces in groups of those within about half their size of each
+    other, like the letters of a word."""
+    boxes = [bbox(p) for p in pieces]
+    gap = [max(2.0, 0.6 * _size(p)) for p in pieces]
+    up = list(range(len(pieces)))
+
+    def root(i: int) -> int:
+        while up[i] != i:
+            up[i] = up[up[i]]
+            i = up[i]
+        return i
+
+    for i, a in enumerate(boxes):
+        for j in range(i + 1, len(boxes)):
+            b, g = boxes[j], max(gap[i], gap[j])
+            if not (b[0] > a[2] + g or a[0] > b[2] + g or b[1] > a[3] + g or a[1] > b[3] + g):
+                up[root(i)] = root(j)
+    groups: dict[int, list[int]] = defaultdict(list)
+    for i in range(len(pieces)):
+        groups[root(i)].append(i)
+    return list(groups.values())
 
 
 def _part_problems(report: DxfReport) -> list[str]:
