@@ -103,3 +103,13 @@ def test_a_bom_row_gives_its_parts_quantity():
     # Two BOMs that both need the part: their quantities add up.
     other = "10 ITM-064555 Plate 3 pcs"
     assert bom_quantities(cards, {"a.pdf": bom, "b.pdf": other})["c1"] == (5, ["a.pdf", "b.pdf"])
+
+
+def test_names_with_the_same_letters_written_two_ways_link():
+    # "ö" as one character (Windows) and as "o" + its dots (macOS, some ZIPs).
+    import unicodedata
+
+    dxf = unicodedata.normalize("NFC", "30300044 Pöydän kiinnityslevy SH2280.DXF")
+    pdf = unicodedata.normalize("NFD", "30300044 Pöydän kiinnityslevy SH2280.pdf")
+    assert dxf != pdf.replace(".pdf", ".DXF")
+    assert link_files({"c": dxf}, {"d": pdf}) == {"c": ["d"]}

@@ -5,6 +5,7 @@ number, pure (no Streamlit). ``100325.pdf``, ``100325-revA.pdf`` and
 from __future__ import annotations
 
 import re
+import unicodedata
 from pathlib import PurePath
 
 # A revision at the end of a name: -revA, _rev2, " rev B", -A, _B1 (one letter,
@@ -16,7 +17,7 @@ _REVISION = re.compile(r"(?:[\s_\-.]*rev[\s_\-.]*[a-z0-9]{1,3}|[\s_\-.]+[a-z][0-
 def part_key(file_name: str) -> str:
     """The part number a file name stands for: the stem, lower case, without
     a revision suffix. A stem that is only a revision-like letter keeps it."""
-    stem = PurePath(file_name).stem.strip().lower()
+    stem = _stem(file_name)
     stripped = _REVISION.sub("", stem)
     return stripped or stem
 
@@ -104,7 +105,8 @@ def link_by_text(part_names: dict[str, str], texts: dict[str, str],
     group = group or (lambda pid: pid)
     out: dict[str, list[str]] = {}
     for fid, text in texts.items():
-        found = {k for k, pat in patterns.items() if pat.search(text or "")}
+        text = unicodedata.normalize("NFC", text or "")
+        found = {k for k, pat in patterns.items() if pat.search(text)}
         pids = [pid for pid, name in part_names.items() if base_key(name) in found]
         if len({group(pid) for pid in pids}) != 1 and len(found) != 1:
             continue
@@ -114,7 +116,10 @@ def link_by_text(part_names: dict[str, str], texts: dict[str, str],
 
 
 def _stem(file_name: str) -> str:
-    return PurePath(file_name).stem.strip().lower()
+    """The name without its extension, lower case, its letters in one form:
+    an "ö" is one character or an "o" with two dots after it depending on
+    where the file was named (Windows, macOS, a ZIP), and the two must match."""
+    return unicodedata.normalize("NFC", PurePath(file_name).stem).strip().lower()
 
 
 

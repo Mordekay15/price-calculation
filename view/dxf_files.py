@@ -12,6 +12,7 @@ The card itself is drawn by ``view.dxf_tab``."""
 import copy
 import re
 import time
+import unicodedata
 from types import SimpleNamespace
 
 from core.archive import ArchiveError, is_zip, unpack
@@ -208,17 +209,18 @@ def ingest(uploaded) -> bool:
             bar.progress(n / len(todo), text=f"Luetaan tiedostoja {n + 1} / {len(todo)}: "
                                              f"{up.name}")
         folder = getattr(up, "folder", "")
-        if not _is_used(up.name):
-            skipped.append(up.name)     # e.g. Creo's part.prt.1, part.drw.1
+        name = unicodedata.normalize("NFC", up.name)   # "ö" one way, however it came
+        if not _is_used(name):
+            skipped.append(name)        # e.g. Creo's part.prt.1, part.drw.1
             continue
-        if (folder, up.name) in names:
-            dupes.append(up.name)
+        if (folder, name) in names:
+            dupes.append(name)
             continue
         data = up.getvalue()
         # A file of a ZIP is read from it again when needed; a file dropped on
         # its own is kept only when it is read later (a PDF or STEP model).
         again = up.getvalue if hasattr(up, "folder") else None
-        f = InputFile(up.file_id, up.name, file_kind(up.name), again, folder=folder,
+        f = InputFile(up.file_id, name, file_kind(name), again, folder=folder,
                       size_bytes=len(data))
         if f.kind in ("pdf", "step"):
             attachments.add_doc(f, data)
@@ -226,10 +228,10 @@ def ingest(uploaded) -> bool:
                 if len(todo) > 5 and len(data) > _BIG_STEP_BYTES:
                     f.status = "waiting"
                 else:
-                    bom.add_model(up.file_id, up.name, data)
+                    bom.add_model(up.file_id, name, data)
         else:
             add_drawing(f, data)
-        names.add((folder, up.name))
+        names.add((folder, name))
     if bar is not None:
         bar.empty()
     if dropped:
