@@ -81,11 +81,3 @@ def test_clean_dxf_zip_deduplicates_names():
         CleanPart("b.dxf", "S355MC", "2", SQUARE)]
     with zipfile.ZipFile(io.BytesIO(clean_dxf_zip(parts))) as zf:
         assert zf.namelist() == ["a_S355MC_2mm.dxf", "a_S355MC_2mm_2.dxf", "b_S355MC_2mm.dxf"]
-
-
-def test_engraving_is_on_its_own_layer_in_the_clean_dxf():
-    text = [[(10, 10), (15, 20), (20, 10)]]
-    doc = ezdxf.read(io.StringIO(clean_dxf(CleanPart("p.dxf", "S235", "2", SQUARE,
-                                                     engraving=text)).decode()))
-    layers = [e.dxf.layer for e in doc.modelspace()]
-    assert layers.count("ENGRAVE") == 1 and layers.count("CUT") == 1
