@@ -697,3 +697,24 @@ def test_a_plate_of_a_sheets_proportions_with_edge_to_edge_lines_is_still_a_plat
     report = part_of(doc)
     assert report.problems == [] and len(report.holes) == 4
     assert round(report.outline.width_mm) == 420
+
+
+def test_a_sheet_with_two_borders_is_read_from_the_inner_frame(drawing):
+    # 30300044 SH2280.DXF: the paper's edge, and inside it the frame the
+    # title block is joined to, with zone ticks between them. The inner
+    # frame used to be taken for the sheet's only view, so it was the part.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 420, 297)                                # the paper's edge
+    for x in (100, 200, 300):                                # zone ticks
+        msp.add_line((x, 0), (x, 5))
+    rect(msp, 5, 5, 410, 287)                                # the frame
+    msp.add_line((5, 55), (415, 55))                         # its title block
+    for x in (150, 250, 340):
+        msp.add_line((x, 5), (x, 55))
+    rect(msp, 60, 150, 25, 30)                               # the side view
+    msp.add_lwpolyline([(60, 150), (60, 100), (85, 100), (85, 150)])
+    _flat(msp)
+    msp.add_text("UP 90° R 2", dxfattribs={"insert": (280, 210)})
+    report = part_of(doc)
+    assert report.problems == [] and report.bends == 1
+    assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (100, 25)

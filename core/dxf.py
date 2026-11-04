@@ -286,6 +286,15 @@ class DxfFile:
         # A frame without a title block joined to it is found by the bend
         # note alone, as before.
         views = _sheet_views(main, contours, reference)
+        # A sheet drawn with two borders (the paper's edge, and the frame
+        # inside it that the title block is joined to): its only "view" is
+        # the inner frame. The sheet is read from that.
+        while (views is not None and len(views) == 1 and views[0].outline is not main
+               and _inner_frame(views[0].outline, main)):
+            main = views[0].outline
+            box = bbox(main.points)
+            views = _sheet_views(main, [c for c in contours if _box_in(bbox(c.points), box)],
+                                 [p for p in reference if _box_in(bbox(p.points), box)])
         view, section = None, None
         if views is None:
             view = _flat_view(main, contours, self.bend_notes)
@@ -765,6 +774,14 @@ def _near_ring(p: Point, ring: list[Point], tol: float) -> bool:
     if not (x0 - tol <= p[0] <= x1 + tol and y0 - tol <= p[1] <= y1 + tol):
         return False
     return _on_ring(p, ring, tol)
+
+
+def _inner_frame(c: Contour, frame: Contour) -> bool:
+    """A rectangle filling most of ``frame``: the drawing's own frame inside
+    the paper's edge, never a part."""
+    w, h = c.width_mm, c.height_mm
+    return (abs(c.area_mm2) >= 0.98 * w * h and w < frame.width_mm and h < frame.height_mm
+            and w * h >= 0.8 * frame.width_mm * frame.height_mm)
 
 
 def _paper_ratio(w: float, h: float) -> bool:
