@@ -652,3 +652,48 @@ def test_the_title_blocks_projection_symbol_is_never_the_part(drawing):
     report = part_of(doc)
     assert report.problems == [] and report.holes == []
     assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (440, 162)
+
+
+def _frame_with(msp, title_block):
+    """An A3 frame, its title block drawn by ``title_block(msp)``, a side
+    view and the flat pattern with its bend note."""
+    rect(msp, 0, 0, 420, 297)
+    title_block(msp)
+    rect(msp, 60, 150, 25, 30)                               # the side view
+    msp.add_lwpolyline([(60, 150), (60, 100), (85, 100), (85, 150)])
+    _flat(msp)
+    msp.add_text("UP 90° R 2", dxfattribs={"insert": (280, 210)})
+
+
+def _title_block(d=0.0, **kw):
+    def draw(msp):
+        msp.add_line((d, 50), (420 - d, 50), dxfattribs=kw)
+        for x in (150, 250, 340):
+            msp.add_line((x, d), (x, 50), dxfattribs=kw)
+    return draw
+
+
+@pytest.mark.parametrize("title_block", [
+    _title_block(1.0),                     # its lines stop 1 mm short of the frame
+    _title_block(-1.5),                    # … or run 1.5 mm past it
+    _title_block(layer="TITLE"),           # on a layer of its own, not cut
+    lambda msp: None,                      # no title block at all
+], ids=["gap", "past", "own-layer", "none"])
+def test_a_frame_is_never_the_part_however_its_title_block_is_drawn(drawing, title_block):
+    doc, msp = drawing()
+    _frame_with(msp, title_block)
+    report = part_of(doc)
+    assert report.problems == [] and report.bends == 1
+    assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (100, 25)
+
+
+def test_a_plate_of_a_sheets_proportions_with_edge_to_edge_lines_is_still_a_plate(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 420, 297)
+    msp.add_line((0, 150), (420, 150), dxfattribs={"linetype": "DASHED"})   # a bend line
+    msp.add_line((100, 0), (100, 297), dxfattribs={"layer": "TEXT"})
+    for x in (50, 150, 250, 350):
+        msp.add_circle((x, 60), 10)
+    report = part_of(doc)
+    assert report.problems == [] and len(report.holes) == 4
+    assert round(report.outline.width_mm) == 420

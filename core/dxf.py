@@ -399,6 +399,7 @@ def _flat_view(frame: Contour, contours: list[Contour], notes: list[Point]) -> C
 
 
 _ON_FRAME_MM = 0.5     # a title block line ending this close to the frame is joined to it
+_ON_FRAME_REL = 0.005  # … or this share of the sheet's short side (a 1.5 mm gap on A3)
 _VIEW_GAP_MM = 2.0     # lines this close together belong to the same view
 
 
@@ -420,31 +421,40 @@ def _sheet_views(frame: Contour, contours: list[Contour],
                  reference: list[_Piece]) -> list[_View] | None:
     """The views on a drawing sheet, or None when ``frame`` isn't a sheet's
     frame: a rectangle with lines joined to it from inside (its title block
-    and revision table). A plain plate's outline has none, so it stays the
-    part. The title block is every line joined to the frame, through each
-    other, and whatever is drawn inside their boxes (the projection
-    symbol); what is left is grouped into views by lines within 2 mm."""
+    and revision table), or with two or more views drawn on it. A plain
+    plate's outline has neither, so it stays the part. The title block is
+    every line joined to the frame (on any layer, ending within a 1.5 mm gap
+    on A3 or running past it), through each other, and whatever is drawn
+    inside their boxes (the projection symbol); what is left is grouped into
+    views by lines within 2 mm."""
     w, h = frame.width_mm, frame.height_mm
     if abs(frame.area_mm2) < 0.98 * w * h:
         return None
     rest = [c for c in contours if c is not frame]
-
-    def ends(c: Contour) -> list[Point]:
-        return c.points[::max(1, len(c.points) // 8)] if c.closed else [c.points[0], c.points[-1]]
-
-    joined: set[int] = set()
-    todo = [frame]
-    while todo:
-        ring = todo.pop()
-        for c in rest:
-            if id(c) not in joined and any(_near_ring(p, ring.points, _ON_FRAME_MM) for p in ends(c)):
-                joined.add(id(c))
-                todo.append(c)
+    frame_box = bbox(frame.points)
+    lines = [Contour(p.points, p.closed) for p in reference]
+    joined, tol = _joined(frame, rest, _ON_FRAME_MM, False), _ON_FRAME_MM
+    paper = _paper_ratio(w, h)
+    if not joined and paper:
+        # A sheet's title block may be on a layer of its own (solid lines,
+        # not cut), and its lines may stop a little short of the frame or
+        # run past it. Only on a sheet's proportions: a plate's bend lines
+        # run edge to edge too.
+        tol = max(_ON_FRAME_MM, _ON_FRAME_REL * min(w, h))
+        solid = [ln for ln, p in zip(lines, reference) if p.solid and not _is_bend_layer(p.layer)]
+        joined = _joined(frame, rest + solid, tol, True)
+        if len(joined) < 3:              # a title block is lines meeting each other
+            joined = set()
     if not joined:
-        return None
+        # No title block: still a sheet when its views are drawn on it (two
+        # or more, each with its own lines in it). A plate's holes hold nothing.
+        views = _views(rest, [], [p.points for p in reference], frame_box)
+        big = [v for v in views if v.outline.width_mm * v.outline.height_mm >= 0.01 * w * h
+               and len(v.cut) + len(v.reference) > 1]
+        return views if len(big) >= 2 and paper else None
     # The title block's boxes: each group of joined lines that meet each
     # other (the title block, the revision table) spans one box.
-    block = [c for c in rest if id(c) in joined]
+    block = [c for c in rest + lines if id(c) in joined]
     up = list(range(len(block)))
 
     def top(i: int) -> int:
@@ -456,20 +466,55 @@ def _sheet_views(frame: Contour, contours: list[Contour],
     for i, a in enumerate(block):
         for j in range(i + 1, len(block)):
             b = block[j]
-            if (any(_near_ring(p, b.points, _ON_FRAME_MM) for p in ends(a))
-                    or any(_near_ring(p, a.points, _ON_FRAME_MM) for p in ends(b))):
+            if (any(_near_ring(p, b.points, tol) for p in _ends(a))
+                    or any(_near_ring(p, a.points, tol) for p in _ends(b))):
                 up[top(i)] = top(j)
     spans: dict[int, list[Point]] = defaultdict(list)
     for i, c in enumerate(block):
         spans[top(i)] += c.points
     boxes = [bbox(pts) for pts in spans.values()]
     boxes = [b for b in boxes if (b[2] - b[0]) * (b[3] - b[1]) < 0.5 * w * h]
-    frame_box = bbox(frame.points)
-    cut = [c for c in rest if id(c) not in joined
-           and not any(_box_in(bbox(c.points), b) for b in boxes)]
-    ref = [p.points for p in reference if _box_in(bbox(p.points), frame_box)
-           and not any(_box_in(bbox(p.points), b) for b in boxes)]
+    ref = [ln.points for ln in lines if id(ln) not in joined]
+    return _views([c for c in rest if id(c) not in joined], boxes, ref, frame_box)
 
+
+def _ends(c: Contour) -> list[Point]:
+    return c.points[::max(1, len(c.points) // 8)] if c.closed else [c.points[0], c.points[-1]]
+
+
+def _joined(frame: Contour, candidates: list[Contour], tol: float, past: bool) -> set[int]:
+    """The ids of the lines joined to ``frame``, directly or through each
+    other: an end within ``tol`` of it, or with ``past``, an open line
+    running from inside the frame past its edge."""
+    box = bbox(frame.points)
+    inside = (box[0] + tol, box[1] + tol, box[2] - tol, box[3] - tol)
+
+    def crosses(c: Contour) -> bool:
+        if c.closed:
+            return False
+        out = [not _box_in((x, y, x, y), box, 0.0) for x, y in (c.points[0], c.points[-1])]
+        return any(out) and any(_box_in((x, y, x, y), inside, 0.0) for x, y in c.points) \
+            or all(out) and _crosses_box(c.points, inside)
+
+    joined: set[int] = set()
+    todo = [frame]
+    while todo:
+        ring = todo.pop()
+        for c in candidates:
+            if id(c) not in joined and (any(_near_ring(p, ring.points, tol) for p in _ends(c))
+                                        or past and ring is frame and crosses(c)):
+                joined.add(id(c))
+                todo.append(c)
+    return joined
+
+
+def _views(cut_lines: list[Contour], boxes: list, reference: list[list[Point]],
+           frame_box) -> list[_View]:
+    """The sheet's drawn lines outside the title block's ``boxes``, grouped
+    into views by lines within 2 mm."""
+    cut = [c for c in cut_lines if not any(_box_in(bbox(c.points), b) for b in boxes)]
+    ref = [r for r in reference if _box_in(bbox(r), frame_box)
+           and not any(_box_in(bbox(r), b) for b in boxes)]
     things = [(c, bbox(c.points)) for c in cut] + [(r, bbox(r)) for r in ref]
     parent = list(range(len(things)))
 
@@ -720,6 +765,19 @@ def _near_ring(p: Point, ring: list[Point], tol: float) -> bool:
     if not (x0 - tol <= p[0] <= x1 + tol and y0 - tol <= p[1] <= y1 + tol):
         return False
     return _on_ring(p, ring, tol)
+
+
+def _paper_ratio(w: float, h: float) -> bool:
+    """An ISO sheet's proportions (√2 : 1), at any scale."""
+    lo, hi = sorted((w, h))
+    return lo > 0 and abs(hi / lo - math.sqrt(2)) <= 0.05 * math.sqrt(2)
+
+
+def _crosses_box(points: list[Point], b) -> bool:
+    """A line whose two ends are outside the box ``b`` running through it."""
+    x0, y0, x1, y1 = bbox(points)
+    return x0 < b[0] and x1 > b[2] and b[1] < y0 <= y1 < b[3] \
+        or y0 < b[1] and y1 > b[3] and b[0] < x0 <= x1 < b[2]
 
 
 def _paper_size(frame: Contour) -> bool:
