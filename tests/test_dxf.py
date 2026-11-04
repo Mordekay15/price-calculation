@@ -746,7 +746,8 @@ def test_engraved_text_exported_as_lines_is_marked_not_cut(drawing):
     report = part_of(doc)
     assert report.problems == []
     assert len(report.holes) == 1 and report.open_lines == []
-    assert len(report.reference_lines) == 3       # A (its strokes chain into two), O: marked
+    assert len(report.engraving) == 3             # A (its strokes chain into two), O
+    assert report.reference_lines == []
 
 
 def test_a_real_gap_in_a_cut_out_is_still_a_problem(drawing):
@@ -770,6 +771,7 @@ def test_engraved_text_in_an_outline_font_is_marked_not_cut(drawing):
     text.destroy()
     report = part_of(doc)
     assert report.problems == [] and len(report.holes) == 1
+    assert len(report.engraving) >= 12 and report.reference_lines == []   # counters too
 
 
 def test_a_row_of_holes_is_cut_not_text(drawing):

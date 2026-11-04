@@ -412,7 +412,7 @@ def _clean_part(product: Product) -> CleanPart:
     shape: FlatShape = product.shape
     return CleanPart(product.name, product.material or "", product.thickness or "",
                      shape.outline, list(shape.holes), list(shape.open_cuts),
-                     list(shape.markings))
+                     list(shape.markings), list(shape.engraving))
 
 
 def _settings_of(entry: dict, settings: _Settings) -> _Settings:

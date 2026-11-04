@@ -30,6 +30,7 @@ _RATE_KEYS = {          # WorkRates field -> sidebar widget key
     "min_cut_eur_per_sheet": "work_min_cut",
     "weld_m_per_h":          "work_weld_m_per_h",
     "weld_eur_per_h":        "work_weld_eur_per_h",
+    "engrave_eur_per_m":     "work_engrave_eur_per_m",
 }
 _SETUP_KEYS = ("work_setup_1", "work_setup_2", "work_setup_3")
 RATE_KEYS = (*_RATE_KEYS.values(), *_SETUP_KEYS)    # the sidebar's, kept by "Tyhjennä kaikki"
@@ -54,6 +55,10 @@ def render_rates() -> None:
                         key=_RATE_KEYS["weld_m_per_h"])
         c2.number_input("Hitsaus (€/h)", min_value=0.0, value=d.weld_eur_per_h, step=5.0,
                         key=_RATE_KEYS["weld_eur_per_h"])
+        st.number_input("Kaiverrus (€/m)", min_value=0.0, value=d.engrave_eur_per_m,
+                        step=0.05, key=_RATE_KEYS["engrave_eur_per_m"],
+                        help="Osaan kaiverretun tekstin hinta sen viivojen pituuden mukaan "
+                             "(laserilla merkitään, ei leikata).")
         st.markdown("Asetus (€/erä) työvaiheiden mukaan",
                     help="Asetuskustannus ei riipu kappalemäärästä. Työvaiheita ovat "
                          "leikkaus, taivutus, kierteet, hitsaus ja alihankinta.")
@@ -102,12 +107,12 @@ def auto_input(col, label: str, key: str, auto: float | None, *, step: float,
 
 
 def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
-                       qty: int, cut_length_m: float, bends: int = 0,
+                       qty: int, cut_length_m: float, engrave_m: float = 0.0, bends: int = 0,
                        threads: int = 0, fasteners: int = 0,
                        bought: tuple[Part, list[tuple[str, int]], str] | None = None,
                        in_assembly: bool = False) -> WorkInputs:
     """The card's "Työvaiheet": cutting, bends, threads, fasteners,
-    welding, subcontracting and setup. ``cut_length_m``, ``bends``,
+    welding, subcontracting and setup. ``cut_length_m``, ``engrave_m``, ``bends``,
     ``threads`` and ``fasteners`` are what the drawing gives (the defaults,
     overwritable); the laser speed comes from the table. ``key`` makes the
     widget keys unique per card. ``bought`` (the DXF tab: the card's Part, the
@@ -140,7 +145,13 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
                 st.warning(f"Laserin leikkausaikaa ei ole taulukossa: "
                            f"{laser_family(material)[0]} {thickness} mm. Anna aika (s/m).")
             # Typed, the punch hits let the card compare the two methods.
-            hits = int(st.columns(4)[0].number_input(
+            c = st.columns(4)
+            if engrave_m:
+                engrave_m = auto_input(c[1], "Kaiverrus (m/kpl)", f"work_engrave_{key}",
+                                       engrave_m, step=0.01, fmt="%.3f",
+                                       help="Osaan kaiverretun tekstin viivat. Hinta "
+                                            "Työn hinnoista (€/m).")
+            hits = int(c[0].number_input(
                 "Levarin iskut (vertailuun)", min_value=0, value=0, step=1,
                 key=f"work_hits_{key}",
                 help="Jos annat iskujen määrän, kortti kertoo, olisiko levari halvempi."))
@@ -190,7 +201,9 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
         subcontract = c[0].number_input("Alihankinta (€/kpl)", min_value=0.0, value=0.0,
                                         step=0.5, key=f"work_sub_{key}",
                                         help="Esim. anodisointi tai sinkitys.")
-        inputs = WorkInputs(method=method, cut_length_m=cut_length_m, laser=laser, hits=hits,
+        inputs = WorkInputs(method=method, cut_length_m=cut_length_m,
+                            engrave_m=(engrave_m or 0.0) if method == LASER else 0.0,
+                            laser=laser, hits=hits,
                             bends=n_bends, eur_per_bend=eur_per_bend, threads=n_threads,
                             eur_per_thread=eur_per_thread, fasteners=n_fasteners,
                             eur_per_fastener=eur_per_fastener,
@@ -245,6 +258,8 @@ def _card_summary(inp: WorkInputs, cost: WorkCost) -> str:
     elif inp.laser is not None:
         bits.append(f"laser {inp.cut_length_m:.2f} m × {inp.laser.s_per_m:g} s/m "
                     f"= {cost.cut_seconds:.0f} s")
+    if inp.engrave_m:
+        bits.append(f"kaiverrus {inp.engrave_m:.2f} m {cost.engraving:.2f} €")
     if inp.bends:
         bits.append("1 taivutus" if inp.bends == 1 else f"{inp.bends} taivutusta")
     if inp.threads:

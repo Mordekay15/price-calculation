@@ -198,6 +198,7 @@ class CleanPart:
     holes: list = field(default_factory=list)
     open_lines: list = field(default_factory=list)
     markings: list = field(default_factory=list)
+    engraving: list = field(default_factory=list)
 
 
 def dxf_file_name(template: str, part: CleanPart, index: int) -> str:
@@ -215,17 +216,21 @@ def dxf_file_name(template: str, part: CleanPart, index: int) -> str:
 def clean_dxf(part: CleanPart, *, markings: bool = False) -> bytes:
     """One part as a clean DXF (R2010, mm): the outline and holes as closed
     polylines on layer ``CUT``, open cuts on ``CUT`` too, and the markings on
-    ``MARKING`` when asked for. Nothing else: no frame, texts or dimensions."""
+    ``MARKING`` when asked for, and engraved text on ``ENGRAVE`` (lasered, not
+    cut). Nothing else: no frame, texts or dimensions."""
     import ezdxf
 
     doc = ezdxf.new("R2010", units=4)   # 4 = mm
     doc.layers.add("CUT", color=7)
     doc.layers.add("MARKING", color=3)
+    doc.layers.add("ENGRAVE", color=1)
     msp = doc.modelspace()
     for loop in (part.outline, *part.holes):
         msp.add_lwpolyline([tuple(p) for p in loop], close=True, dxfattribs={"layer": "CUT"})
     for line in part.open_lines:
         msp.add_lwpolyline([tuple(p) for p in line], dxfattribs={"layer": "CUT"})
+    for line in part.engraving:
+        msp.add_lwpolyline([tuple(p) for p in line], dxfattribs={"layer": "ENGRAVE"})
     if markings:
         for line in part.markings:
             msp.add_lwpolyline([tuple(p) for p in line], dxfattribs={"layer": "MARKING"})

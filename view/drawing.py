@@ -307,12 +307,13 @@ def preview_svg(shape: FlatShape, px: int = 260, bends: list | None = None) -> s
 
     The part is filled (holes cut out), reference lines are dashed, slits
     (straight cuts inside the part) are drawn like the outline, other open
-    lines inside the part are red; geometry outside it is left out.
+    lines inside the part are red, engraved text is violet; geometry outside
+    it is left out.
     ``bends`` are bend lines from elsewhere (the STEP model), ``[(line, up)]``:
     dashed, green up and orange down.
     """
     rings = ([shape.outline] if shape.outline else []) + list(shape.holes)
-    groups = (rings, shape.markings, shape.open_cuts)
+    groups = (rings, shape.markings, shape.open_cuts, shape.engraving)
     pts = [p for group in groups for ring in group for p in ring]
     if not pts:
         return ""
@@ -346,6 +347,9 @@ def preview_svg(shape: FlatShape, px: int = 260, bends: list | None = None) -> s
         out.append(f'<path d="{d(shape.markings, False)}" fill="none" '
                    f'stroke="#475569" stroke-width="{stroke * 0.7:.2f}" '
                    f'stroke-dasharray="{stroke * 4:.1f} {stroke * 3:.1f}"/>')
+    if shape.engraving:
+        out.append(f'<path d="{d(shape.engraving, False)}" fill="none" '
+                   f'stroke="#7c3aed" stroke-width="{stroke * 0.8:.2f}"/>')
     slits = [line for line in shape.open_cuts if is_slit(line)]
     gaps = [line for line in shape.open_cuts if not is_slit(line)]
     if slits:

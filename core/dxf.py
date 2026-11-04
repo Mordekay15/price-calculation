@@ -168,6 +168,7 @@ class DxfReport:
     # drawn on the card and the layout, never cut.
     reference_lines: list[list[Point]] = field(default_factory=list)
     open_lines: list[list[Point]] = field(default_factory=list)   # inside the part
+    engraving: list[list[Point]] = field(default_factory=list)    # text, lasered not cut
     dropped: list[list[Point]] = field(default_factory=list)      # outside the part
     dropped_more: int = 0      # shapes outside the part not kept (see _trim_dropped)
     # Why this part cannot be priced (empty = it can).
@@ -392,7 +393,7 @@ class DxfFile:
                 _to_real_size(report, k)
             report.bends = report.bends or _section_bends(section.points)
             _blank_from_section(report, section)
-        _text_to_markings(report)
+        _find_engraving(report)
         report.problems += _part_problems(report)
         _trim_dropped(report)
         _lay_along_length(report)
@@ -832,7 +833,7 @@ def _to_real_size(report: DxfReport, k: float) -> None:
     for c in (report.outline, *report.holes):
         c.points = scaled(c.points)
         c.area_mm2 *= k * k
-    for lines in (report.reference_lines, report.open_lines, report.dropped):
+    for lines in (report.reference_lines, report.open_lines, report.engraving, report.dropped):
         lines[:] = [scaled(line) for line in lines]
 
 
@@ -886,7 +887,7 @@ def _lay_along_length(report: DxfReport) -> None:
 
     for c in (report.outline, *report.holes):
         c.points = turned(c.points)
-    for lines in (report.reference_lines, report.open_lines, report.dropped):
+    for lines in (report.reference_lines, report.open_lines, report.engraving, report.dropped):
         lines[:] = [turned(line) for line in lines]
 
 
@@ -1051,9 +1052,9 @@ _LETTER_MAX_MM = 30.0    # an engraved letter's strokes fit in this
 _TEXT_MIN_STROKES = 3
 
 
-def _text_to_markings(report: DxfReport) -> None:
-    """Text engraved on the part and exported as lines is marked, not cut:
-    moved from the open cuts and holes to the markings. A word is a row of
+def _find_engraving(report: DxfReport) -> None:
+    """Text engraved on the part and exported as lines is lasered, not cut:
+    moved from the open cuts and holes to the engraving. A word is a row of
     three or more letter-sized pieces close to each other, either
     - strokes (a stroke font: SHX, ISOCP), at least half of them open, its
       loops round (O, D, 8), or
@@ -1077,7 +1078,14 @@ def _text_to_markings(report: DxfReport) -> None:
             text.update(id(x) for _, x in group)
     if not text:
         return
-    report.reference_lines += [x if is_open else x.points for is_open, x in items if id(x) in text]
+    report.engraving += [x if is_open else x.points for is_open, x in items if id(x) in text]
+    # The letters' own counters (the hole in an A's outline) go with them.
+    loops = [x.points for is_open, x in items if not is_open and id(x) in text]
+    inner = [ln for ln in report.reference_lines
+             if any(point_in_polygon(ln[0], lp) for lp in loops)]
+    report.engraving += inner
+    report.reference_lines = [ln for ln in report.reference_lines
+                              if not any(ln is i for i in inner)]
     report.open_lines = [ln for ln in report.open_lines if id(ln) not in text]
     report.holes = [h for h in report.holes if id(h) not in text]
 

@@ -63,6 +63,7 @@ def shape_from_report(report: DxfReport, origin: str, layers: list[str] | None =
         holes=[h.points for h in report.holes],
         open_cuts=report.open_lines,
         markings=report.reference_lines,
+        engraving=report.engraving,
         bends=[FlatBend() for _ in range(report.bends)],
         threads=report.threads,
         layers_used=layers,

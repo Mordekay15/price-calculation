@@ -217,3 +217,12 @@ def test_a_missing_pdf_package_hides_its_download_not_the_page(tmp_path, monkeyp
     assert not at.exception
     assert any("10 kpl, €/kpl" in d.value.columns for d in at.dataframe)
     assert any("Asenna reportlab" in c.value for c in at.caption)
+
+
+def test_engraving_is_priced_by_its_length():
+    from core.work import WorkInputs, WorkRates, work_cost
+
+    cost = work_cost(WorkInputs(engrave_m=0.4), 10, WorkRates(engrave_eur_per_m=0.5))
+    assert cost.engraving == 0.2
+    assert cost.breakdown()["Kaiverrus"] == 0.2
+    assert cost.per_piece == work_cost(WorkInputs(), 10, WorkRates()).per_piece + 0.2
