@@ -14,11 +14,19 @@ _REVISION = re.compile(r"(?:[\s_\-.]*rev[\s_\-.]*[a-z0-9]{1,3}|[\s_\-.]+[a-z][0-
                        re.IGNORECASE)
 
 
+# What a CAD program adds to the name of an exported flat or sheet: SolidWorks'
+# "13025 - Flat pattern.DXF", "-Sheet1", "_flat", Finnish "levitys".
+_EXPORT_SUFFIX = re.compile(
+    r"[\s_\-.]+(?:flat[\s_\-.]*pattern|flat|sheet[\s_\-.]*\d+|levitys|aukikeritty)$",
+    re.IGNORECASE)
+
+
 def part_key(file_name: str) -> str:
     """The part number a file name stands for: the stem, lower case, without
-    a revision suffix. A stem that is only a revision-like letter keeps it."""
+    what the export added (``_EXPORT_SUFFIX``) or a revision suffix. A stem
+    that is only a revision-like letter keeps it."""
     stem = _stem(file_name)
-    stripped = _REVISION.sub("", stem)
+    stripped = _REVISION.sub("", _EXPORT_SUFFIX.sub("", stem))
     return stripped or stem
 
 
@@ -32,16 +40,32 @@ def link_files(part_names: dict[str, str], file_names: dict[str, str]) -> dict[s
     by_stem: dict[str, list[str]] = {}
     by_key: dict[str, list[str]] = {}
     by_base: dict[str, list[str]] = {}
+    by_number: dict[str, list[str]] = {}
     for pid, name in part_names.items():
         by_stem.setdefault(_stem(name), []).append(pid)
         by_key.setdefault(part_key(name), []).append(pid)
         by_base.setdefault(base_key(name), []).append(pid)
+        if (n := _leading_number(name)) is not None:
+            by_number.setdefault(n, []).append(pid)
     out: dict[str, list[str]] = {}
     for fid, name in file_names.items():
         key = part_key(name)
-        for pid in by_stem.get(_stem(name)) or by_key.get(key) or by_base.get(key, []):
+        pids = by_stem.get(_stem(name)) or by_key.get(key) or by_base.get(key)
+        if not pids and (n := _leading_number(name)) is not None:
+            # "30300044 Pöydän kiinnityslevy SH2280.DXF" and "30300044.pdf",
+            # or the same number with another description.
+            pids = by_number.get(n, [])
+        for pid in pids or []:
             out.setdefault(pid, []).append(fid)
     return out
+
+
+def _leading_number(file_name: str) -> str | None:
+    """The part number a descriptive name starts with: "30300044" of
+    "30300044 Pöydän kiinnityslevy SH2280" (four or more digits, then a space
+    or a dash); None when the name doesn't start so."""
+    m = re.match(r"(\d{4,}[a-z]?)(?:\s+-?\s*|$)", part_key(file_name))
+    return m.group(1) if m else None
 
 
 def base_key(file_name: str) -> str:

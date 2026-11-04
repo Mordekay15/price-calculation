@@ -113,3 +113,19 @@ def test_names_with_the_same_letters_written_two_ways_link():
     pdf = unicodedata.normalize("NFD", "30300044 Pöydän kiinnityslevy SH2280.pdf")
     assert dxf != pdf.replace(".pdf", ".DXF")
     assert link_files({"c": dxf}, {"d": pdf}) == {"c": ["d"]}
+
+
+def test_a_flat_pattern_export_links_to_its_part_numbers_pdf():
+    # SolidWorks names the exported flat "<part> - Flat pattern.DXF".
+    for dxf in ("13025 - Flat pattern.DXF", "13025-FlatPattern.dxf", "13025_flat.dxf",
+                "13025-Sheet1.dxf", "13025_A - Flat pattern.dxf"):
+        assert part_key(dxf) == "13025", dxf
+        assert link_files({"c": dxf}, {"d": "13025.pdf"}) == {"c": ["d"]}
+    assert part_key("flat.dxf") == "flat"               # nothing else to go by
+
+
+def test_a_name_with_a_description_links_by_its_leading_number():
+    assert link_files({"c": "30300044 Pöydän kiinnityslevy SH2280.DXF"},
+                      {"d": "30300044.pdf"}) == {"c": ["d"]}
+    assert link_files({"c": "30300044 Pöydän kiinnityslevy.DXF"},
+                      {"d": "30300045 Pöydän kiinnityslevy.pdf"}) == {}
