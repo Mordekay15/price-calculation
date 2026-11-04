@@ -448,3 +448,16 @@ def test_a_bend_exported_as_several_faces_is_one_bend():
         assert [c for p in split.bends[0].line for c in p] == pytest.approx(
             [c for p in one.bends[0].line for c in p], abs=1e-6)
         assert _size(split) == pytest.approx(_size(one), abs=1e-3)
+
+
+def test_the_3d_preview_draws_holes_round_and_outlines_every_edge():
+    from core.step import mesh, outline
+
+    bracket = l_bracket(hole=True)
+    verts, tris = mesh(bracket)
+    assert tris and all(max(t) < len(verts) for t in tris)
+    lines = outline(bracket)
+    # The hole's circle is drawn as many short pieces, not a few chords.
+    longest = max(len(line) for line in lines)
+    assert longest > 30
+    assert all(len(line) >= 2 for line in lines)
