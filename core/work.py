@@ -100,7 +100,6 @@ class WorkRates:
     min_cut_eur_per_sheet: float = 7.0    # cutting, at least this per sheet
     weld_m_per_h: float = 1.5
     weld_eur_per_h: float = 60.0
-    engrave_eur_per_m: float = 0.50       # engraved text, laser marking
     # Setup per batch by the number of work phases: 1, 2, 3 or more.
     setup_eur: tuple[float, float, float] = (40.0, 60.0, 80.0)
 
@@ -117,7 +116,6 @@ class WorkInputs:
 
     method: str = LASER
     cut_length_m: float = 0.0
-    engrave_m: float = 0.0                # engraved text, lasered not cut
     laser: LaserSpeed | None = None       # None: no speed known, laser unpriced
     hits: int = 0
     bends: int = 0
@@ -163,7 +161,6 @@ class WorkCost:
 
     qty: int
     cutting: float = 0.0
-    engraving: float = 0.0
     bending: float = 0.0
     threads: float = 0.0
     fasteners: float = 0.0
@@ -182,8 +179,7 @@ class WorkCost:
     @property
     def per_piece(self) -> float:
         """Work per piece, the batch costs shared over the quantity."""
-        return (self.cutting + self.cut_minimum + self.engraving + self.bending + self.threads
-                + self.fasteners
+        return (self.cutting + self.cut_minimum + self.bending + self.threads + self.fasteners
                 + self.welding + self.subcontract
                 + self.batch_fixed / self.qty)
 
@@ -195,13 +191,12 @@ class WorkCost:
         """The work per piece by phase (``BREAKDOWN`` names them), the batch
         costs left out; the cutting includes the per-sheet minimum."""
         return dict(zip(BREAKDOWN, (
-            self.cutting + self.cut_minimum, self.engraving, self.bending, self.threads,
-            self.fasteners,
+            self.cutting + self.cut_minimum, self.bending, self.threads, self.fasteners,
             self.welding, self.subcontract)))
 
 
 # The phases of ``WorkCost.breakdown``, as the tables and exports name them.
-BREAKDOWN = ("Leikkaus", "Kaiverrus", "Taivutus", "Kierteet", "Ostetut osat", "Hitsaus", "Alihankinta")
+BREAKDOWN = ("Leikkaus", "Taivutus", "Kierteet", "Ostetut osat", "Hitsaus", "Alihankinta")
 
 
 def work_cost(inp: WorkInputs, qty: int, rates: WorkRates) -> WorkCost:
@@ -212,7 +207,6 @@ def work_cost(inp: WorkInputs, qty: int, rates: WorkRates) -> WorkCost:
     return WorkCost(
         qty=qty,
         cutting=cutting_eur(inp, inp.method, rates) or 0.0,
-        engraving=inp.engrave_m * rates.engrave_eur_per_m,
         bending=inp.bends * inp.eur_per_bend,
         threads=inp.threads * inp.eur_per_thread,
         fasteners=bought_eur(inp),
