@@ -1,6 +1,5 @@
-"""The quote in the UI: the bar above the tabs (the quote's name, the batch
-sizes, the quote's details behind a button, and the live total at each batch
-size), and under each tab's results the price per
+"""The quote in the UI: the bar above the tabs (the batch sizes and the live
+total at each batch size), and under each tab's results the price per
 batch size with the downloads: the quote PDF, the Excel export and, on the
 DXF tab, the clean DXFs for production (see ``core.batches``, ``core.quote``)."""
 
@@ -8,7 +7,6 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass
-from datetime import date
 
 from core.assemblies import fit_eur, per_unit, tops, tree_prices
 from core.batches import (
@@ -22,7 +20,6 @@ from core.model import Assembly, Product
 from core.quote import (
     DEFAULT_DXF_NAME,
     CleanPart,
-    QuoteInfo,
     QuoteLine,
     clean_dxf_zip,
     fmt_eur,
@@ -35,13 +32,6 @@ from view.ui import is_headless, st
 from view.work import current_rates
 
 _SIZES_KEY = "quote_batch_sizes"
-_FIELDS = {                           # QuoteInfo field -> widget key
-    "number": "quote_number", "customer": "quote_customer",
-    "customer_address": "quote_customer_address", "contact": "quote_contact",
-    "seller": "quote_seller", "company": "quote_company",
-    "company_address": "quote_company_address", "payment_terms": "quote_payment",
-    "delivery": "quote_delivery", "notes": "quote_notes",
-}
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
@@ -58,46 +48,24 @@ class Totals:
 
 
 def render_header(clear_all=None):
-    """The bar above the tabs: the quote's name, the batch sizes, the quote's
-    details behind a button and, given ``clear_all`` (a callback), "Tyhjennä
-    kaikki" behind one confirming click. Returns the place for the totals, filled
-    once the open tab has priced (``render_totals``). Both tabs read it back
-    with ``current_info`` and ``current_sizes``."""
-    d = QuoteInfo()
-    ss = st.session_state
+    """The bar above the tabs: the batch sizes and, given ``clear_all`` (a
+    callback), "Tyhjennä kaikki" behind one confirming click. Returns the place
+    for the totals, filled once the open tab has priced (``render_totals``).
+    Both tabs read the sizes back with ``current_sizes``."""
     bar = st.container(border=True)
     with bar:
-        name, sizes, details, clear = st.columns([5, 2, 2, 2], vertical_alignment="bottom")
-        title = " · ".join(filter(None, [
-            "Tarjous " + ss["quote_number"] if ss.get("quote_number") else "Uusi tarjous",
-            ss.get("quote_customer")]))
-        name.markdown(f"#### {title}")
+        name, sizes, clear = st.columns([7, 2, 2], vertical_alignment="bottom")
+        name.markdown("#### Tarjous")
         sizes.text_input("Eräkoot (kpl)", value=" ".join(map(str, DEFAULT_BATCH_SIZES)),
                          key=_SIZES_KEY,
                          help="Jokainen osa hinnoitellaan näillä kappalemäärillä, esim. "
                               "\"1 5 10\". Osakortin määrä on se, jolla levyt nestataan; "
                               "muiden eräkokojen materiaali arvioidaan siitä.")
-        with details.popover("Tarjouksen tiedot", width="stretch"):
-            c = st.columns(2)
-            c[0].text_input("Tarjousnumero", key=_FIELDS["number"])
-            c[1].text_input("Asiakas", key=_FIELDS["customer"])
-            c[0].text_input("Yhteyshenkilö", key=_FIELDS["contact"])
-            c[1].text_input("Myyjä", key=_FIELDS["seller"])
-            c[0].text_input("Asiakkaan osoite", key=_FIELDS["customer_address"])
-            c[1].date_input("Tarjouspäivä", value=date.today(), key="quote_date",
-                            format="DD.MM.YYYY")
-            c[0].number_input("Voimassa (pv)", min_value=1, value=d.valid_days, step=1,
-                              key="quote_valid_days")
-            c[1].text_input("Maksuehto", value=d.payment_terms, key=_FIELDS["payment_terms"])
-            c[0].text_input("Toimitus", value=d.delivery, key=_FIELDS["delivery"])
-            c[1].text_input("Yritys", value=d.company, key=_FIELDS["company"])
-            st.text_input("Yrityksen osoite", key=_FIELDS["company_address"])
-            st.text_area("Lisätiedot tarjoukseen", key=_FIELDS["notes"], height=68)
         if clear_all is not None:
             with clear.popover("Tyhjennä kaikki", width="stretch"):
                 st.button("Kyllä, tyhjennä", key="ui_clear_all", type="primary",
                           on_click=clear_all, width="stretch",
-                          help="Poistaa tiedostot, osat ja tarjouksen tiedot. Hinnastot ja "
+                          help="Poistaa tiedostot ja osat. Hinnastot ja "
                                "työn hinnat sivupalkissa jäävät.")
         return st.container()
 
@@ -125,16 +93,6 @@ def current_sizes() -> list[int]:
     or when nothing usable is typed)."""
     return (parse_batch_sizes(st.session_state.get(_SIZES_KEY))
             or list(DEFAULT_BATCH_SIZES))
-
-
-def current_info() -> QuoteInfo:
-    ss = st.session_state
-    d = QuoteInfo()
-    return QuoteInfo(
-        **{f: str(ss.get(k, getattr(d, f)) or "") for f, k in _FIELDS.items()},
-        quote_date=ss.get("quote_date") or date.today(),
-        valid_days=int(ss.get("quote_valid_days", d.valid_days)),
-    )
 
 
 # ── Prices per batch size ─────────────────────────────────────────────────────
@@ -225,38 +183,31 @@ def render_batch_prices(products: list[Product], prices: dict[str, float],
         _render_table(lines, subs, sizes, lead)
     _render_breakdown(costs, names, by_part, priced, sizes, rates, key, folded=table)
 
-    info = current_info()
-    stem = f"tarjous_{info.number or 'uusi'}".replace(" ", "_")
+    stem = "tarjous"
     c1, c2, c3 = st.columns([2, 2, 3])
     show_material = c3.checkbox("Näytä materiaali PDF:ssä", value=True,
                                 key=f"quote_pdf_mat_{key}")
-    pdf = _file(lambda: quote_pdf(info, lines, sizes, line_totals,
+    pdf = _file(lambda: quote_pdf(lines, sizes, line_totals,
                                   show_material=show_material), "reportlab", c1)
     if pdf is not None:
         c1.download_button("Lataa tarjous-PDF", type="primary", key=f"quote_pdf_{key}",
                            data=pdf, file_name=f"{stem}.pdf", mime="application/pdf")
-    xlsx = _file(lambda: quote_xlsx(info, lines, sizes), "openpyxl", c2)
+    xlsx = _file(lambda: quote_xlsx(lines, sizes), "openpyxl", c2)
     if xlsx is not None:
         c2.download_button("Excel-vienti", key=f"quote_xlsx_{key}",
                            data=xlsx, file_name=f"{stem}.xlsx",
                            mime="application/vnd.openxmlformats-officedocument."
                                 "spreadsheetml.sheet")
-    _render_customer_view(info, lines, sizes, line_totals, key)
+    _render_customer_view(lines, sizes, line_totals, key)
     if clean_parts:
         _render_clean_dxfs(clean_parts, key)
     return result
 
 
-def _render_customer_view(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int],
+def _render_customer_view(lines: list[QuoteLine], sizes: list[int],
                           totals: list[float | None], key: str) -> None:
-    """The quote as the customer gets it in the PDF: the header, then each
-    line's €/kpl at each batch size and the totals."""
+    """The quote as the customer gets it in the PDF: each line's €/kpl at each batch size and the totals."""
     with st.expander("Esikatsele tarjous asiakkaan näkymänä"):
-        head = " · ".join(filter(None, [
-            f"Tarjous {info.number}" if info.number else "Tarjous",
-            info.customer, info.quote_date.strftime("%d.%m.%Y"),
-            f"voimassa {info.valid_days} pv"]))
-        st.markdown(f"**{head}**")
         rows = []
         for line in lines:
             row = {"Nimike": ("🧩 " if line.is_assembly else "") + line.name,

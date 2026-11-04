@@ -1,4 +1,4 @@
-"""The customer quote, pure (no Streamlit): its header, its lines (a price per
+"""The customer quote, pure (no Streamlit): its lines (a price per
 batch size for every part) and the files made from it: the quote PDF, the
 Excel export and the clean DXFs for production."""
 
@@ -8,32 +8,9 @@ import io
 import re
 import zipfile
 from dataclasses import dataclass, field
-from datetime import date, timedelta
 
 from core.batches import BatchPrice
 from core.work import BREAKDOWN
-
-
-@dataclass(frozen=True)
-class QuoteInfo:
-    """The quote's header, as typed in the "Tarjous" section."""
-
-    number: str = ""
-    customer: str = ""
-    customer_address: str = ""
-    contact: str = ""
-    seller: str = ""
-    company: str = "Stremet Oy"
-    company_address: str = ""
-    quote_date: date = field(default_factory=date.today)
-    valid_days: int = 30
-    payment_terms: str = "14 pv netto"
-    delivery: str = "Sisältyy"
-    notes: str = ""
-
-    @property
-    def valid_until(self) -> date:
-        return self.quote_date + timedelta(days=self.valid_days)
 
 
 @dataclass(frozen=True)
@@ -67,15 +44,11 @@ def fmt_eur(value: float | None) -> str:
     return f"{value:,.2f} €".replace(",", " ").replace(".", ",")
 
 
-def _fmt_date(d: date) -> str:
-    return f"{d.day}.{d.month}.{d.year}"
-
-
 # ── PDF ───────────────────────────────────────────────────────────────────────
 
-def quote_pdf(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int],
+def quote_pdf(lines: list[QuoteLine], sizes: list[int],
               totals: list[float | None], *, show_material: bool = True) -> bytes:
-    """The quote as a PDF: the header, one block of rows per part (a row per
+    """The quote as a PDF: one block of rows per part (a row per
     batch size: quantity, unit price, sum) and the totals per batch size."""
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
@@ -87,35 +60,11 @@ def quote_pdf(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int],
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm,
                             topMargin=16 * mm, bottomMargin=16 * mm,
-                            title=f"Tarjous {info.number}".strip())
+                            title="Tarjous")
     styles = getSampleStyleSheet()
     small = styles["Normal"].clone("small", fontSize=9, leading=11)
-    story = []
-
-    head = Table([
-        [Paragraph(f"<b>{_esc(info.company)}</b><br/>{_esc(info.company_address)}",
-                   styles["Normal"]),
-         Paragraph(f"<font size=18><b>Tarjous</b></font><br/>{_esc(info.number)}",
-                   styles["Normal"])],
-    ], colWidths=[100 * mm, 74 * mm])
-    head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
-                              ("ALIGN", (1, 0), (1, 0), "RIGHT")]))
-    story += [head, Spacer(1, 6 * mm)]
-
-    facts = [
-        ("Tarjottu", "\n".join(filter(None, (info.customer, info.customer_address)))),
-        ("Yhteyshenkilö", info.contact),
-        ("Tarjouspäivä", _fmt_date(info.quote_date)),
-        ("Tarjous voimassa", _fmt_date(info.valid_until)),
-        ("Maksuehto", info.payment_terms),
-        ("Toimitus", info.delivery),
-        ("Myyjä", info.seller),
-    ]
-    facts_table = Table([[Paragraph(f"<b>{k}</b>", small), Paragraph(_esc(v, br=True), small)]
-                         for k, v in facts if v], colWidths=[36 * mm, 138 * mm])
-    facts_table.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
-                                     ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
-    story += [facts_table, Spacer(1, 6 * mm),
+    story = [Paragraph("<font size=18><b>Tarjous</b></font>", styles["Normal"]),
+              Spacer(1, 8 * mm),
               Paragraph("<b>Tarjotut nimikkeet</b>", styles["Heading3"])]
 
     rows = [["Nimike", "Eräkoko", "Yksikköhinta", "Summa (ALV 0 %)"]]
@@ -156,23 +105,19 @@ def quote_pdf(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int],
                             ("ALIGN", (1, 0), (1, -1), "RIGHT"),
                             ("LINEBELOW", (0, 0), (-1, 0), 0.75, colors.black)]))
     story.append(tt)
-    if info.notes:
-        story += [Spacer(1, 6 * mm), Paragraph("<b>Lisätiedot</b>", small),
-                  Paragraph(_esc(info.notes, br=True), small)]
     story += [Spacer(1, 4 * mm),
               Paragraph("Hinnat ilman arvonlisäveroa (ALV 0 %).", small)]
     doc.build(story)
     return buf.getvalue()
 
 
-def _esc(text: str | None, br: bool = False) -> str:
-    out = (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    return out.replace("\n", "<br/>") if br else out
+def _esc(text: str | None) -> str:
+    return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 # ── Excel ─────────────────────────────────────────────────────────────────────
 
-def quote_xlsx(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int]) -> bytes:
+def quote_xlsx(lines: list[QuoteLine], sizes: list[int]) -> bytes:
     """The quote as an Excel workbook: "Tarjous" (a row per part and batch
     size) and "Erittely" (the cost breakdown per piece)."""
     from openpyxl import Workbook
@@ -181,13 +126,6 @@ def quote_xlsx(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int]) -> byt
     wb = Workbook()
     ws = wb.active
     ws.title = "Tarjous"
-    for k, v in (("Tarjous", info.number), ("Asiakas", info.customer),
-                 ("Tarjouspäivä", _fmt_date(info.quote_date)),
-                 ("Voimassa", _fmt_date(info.valid_until)),
-                 ("Maksuehto", info.payment_terms), ("Toimitus", info.delivery),
-                 ("Myyjä", info.seller)):
-        ws.append([k, v])
-    ws.append([])
     header = ["Nimike", "Materiaali", "Paksuus (mm)", "Eräkoko (kpl)",
               "Yksikköhinta (€)", "Summa (€, ALV 0 %)"]
     ws.append(header)

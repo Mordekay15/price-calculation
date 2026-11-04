@@ -154,7 +154,7 @@ _KEPT = ("upload_", "copper_", "manual_route", "menu", "dxf_inbox")
 
 def clear_all() -> None:
     """Everything of the quote at once: the files, the cards, the nesting, the
-    quote's details and the calculator (and any "Kumoa" still offered)."""
+    batch sizes and the calculator (and any "Kumoa" still offered)."""
     ss = st.session_state
     keep = set(RATE_KEYS)
     for key in [k for k in ss.keys() if isinstance(k, str)]:

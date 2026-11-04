@@ -9,7 +9,7 @@ import pytest
 from core.assemblies import assembly_prices, per_unit, work_eur
 from core.batches import BatchPart, GroupSheets, batch_prices
 from core.model import Assembly, AssemblyWork, BoughtPart
-from core.quote import QuoteInfo, QuoteLine, quote_pdf, quote_xlsx
+from core.quote import QuoteLine, quote_pdf, quote_xlsx
 from core.work import LaserSpeed, WorkInputs, WorkRates
 
 RATES = WorkRates()          # welding 1.5 m/h at 60 €/h: 40 €/m
@@ -58,9 +58,8 @@ def test_an_assembly_is_one_line_in_the_pdf_and_excel():
     a = Assembly("x", "Runko", {"p1": 1}, [BoughtPart("Tappi", 6, 0.5)])
     line = QuoteLine("Runko", prices=tuple(assembly_prices(a, {"p1": [10.0]}, [1], RATES)),
                      parts=("Pohja.dxf × 1", "Tappi × 6"))
-    info = QuoteInfo(number="T-2")
-    assert quote_pdf(info, [line], [1], [13.0]).startswith(b"%PDF")
-    wb = openpyxl.load_workbook(io.BytesIO(quote_xlsx(info, [line], [1])))
+    assert quote_pdf([line], [1], [13.0]).startswith(b"%PDF")
+    wb = openpyxl.load_workbook(io.BytesIO(quote_xlsx([line], [1])))
     assert wb.sheetnames == ["Tarjous", "Erittely", "Kokoonpanot"]
     row = [c.value for c in wb["Kokoonpanot"][2]]
     assert row == ["Runko", 1, 10.0, 3.0, 0.0, 13.0, "Pohja.dxf × 1, Tappi × 6"]

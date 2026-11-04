@@ -183,12 +183,12 @@ def test_clear_all_empties_the_quote_and_keeps_the_rates():
     at = AppTest.from_file("../app.py", default_timeout=60)
     _drop(at, {"f0": ("p.dxf", dxf_bytes(doc))})
     at.run()
-    at.text_input(key="quote_customer").set_value("Asiakas Oy").run()
+    at.text_input(key="quote_batch_sizes").set_value("2 4").run()
     at.number_input(key="work_weld_eur_per_h").set_value(99.0).run()
     at.button(key="ui_clear_all").click().run()
     assert not at.exception
     assert not at.session_state["inputs"]
-    assert at.text_input(key="quote_customer").value == ""
+    assert at.text_input(key="quote_batch_sizes").value == "1 5 10"
     assert at.number_input(key="work_weld_eur_per_h").value == 99.0     # the sidebar stays
     assert not any(n.key == "dxf_q_f0" for n in at.number_input)
     assert not any(b.key == "ui_undo_do" for b in at.button)       # nothing more to answer
