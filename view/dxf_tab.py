@@ -472,7 +472,6 @@ def _render_part_config(
                 _offer_same_material(fid, idx, material, thickness, fill)
             work = render_work_inputs(fid, material=material, thickness=thickness, qty=qty,
                                       cut_length_m=shape.cut_length_mm / 1000,
-                                      engrave_m=shape.engraving_length_mm / 1000,
                                       bends=card_bends(shape, item), threads=shape.threads,
                                       bought=(item, *card_fastener_lines(fid, item,
                                                                          list(doc_ids))),
@@ -505,10 +504,6 @@ def _render_preview(shape: FlatShape, bends: list | None = None) -> None:
     if slits:
         st.caption(f"{slits} rakoa", help="Suorat leikkaukset osan sisällä ovat mukana "
                                          "leikkuupituudessa.")
-    if shape.engraving:
-        st.caption(f":violet[Kaiverrus {shape.engraving_length_mm / 1000:.2f} m]",
-                   help="Osaan kaiverrettu teksti: laserilla merkitään, ei leikata. Se on "
-                        "tuotannon DXF:ssä omalla ENGRAVE-tasollaan.")
     if shape.drawn_blank_mm:
         st.caption(f":orange[Aihion leveys avattu profiilista "
                    f"(piirustuksessa {shape.drawn_blank_mm:.1f} mm)]",

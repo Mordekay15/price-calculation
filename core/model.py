@@ -103,7 +103,6 @@ class FlatShape:
     holes: list[list[Point]] = field(default_factory=list)
     open_cuts: list[list[Point]] = field(default_factory=list)
     markings: list[list[Point]] = field(default_factory=list)   # drawn, never cut
-    engraving: list[list[Point]] = field(default_factory=list)  # text, lasered not cut
     bends: list[FlatBend] = field(default_factory=list)
     threads: int = 0
     outside_count: int = 0                      # shapes outside the part on its drawing
@@ -133,11 +132,6 @@ class FlatShape:
         return (sum(length(c, closed=True) / (2 if is_sliver(c) else 1)
                     for c in (self.outline, *self.holes))
                 + sum(length(c) for c in self.open_cuts))
-
-    @property
-    def engraving_length_mm(self) -> float:
-        """The engraved text's strokes and outlines, as the laser runs them."""
-        return sum(length(c) for c in self.engraving)
 
 
 
