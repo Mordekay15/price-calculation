@@ -2,10 +2,21 @@
 
 from streamlit.testing.v1 import AppTest
 
-
 FILES, MANUAL = "Tarjous tiedostoista", "Pikalaskuri (käsin)"
 BOM, NESTING, PRICING = "1 · Osat ja tiedostot", "2 · Nestaus", "3 · Hinnoittelu"
 
+
+
+def _drop(at, dropped: dict[str, tuple[str, bytes]]) -> None:
+    """DXF files in the session as if dropped: each an InputFile, read by the
+    DXF reader."""
+    from core.model import InputFile
+    from core.readers import read_dxf_file
+
+    at.session_state["inputs"] = {fid: InputFile(fid, name, "dxf", None, order=i)
+                                  for i, (fid, (name, _)) in enumerate(dropped.items())}
+    at.session_state["results"] = {fid: read_dxf_file(data, fid, name)
+                                   for fid, (name, data) in dropped.items()}
 
 def test_app_renders_the_menu_and_each_screen():
     at = AppTest.from_file("../app.py", default_timeout=60).run()
@@ -49,7 +60,6 @@ def test_each_screen_keeps_the_others_inputs_and_prices_on_hinnoittelu(tmp_path,
     import ezdxf
 
     from core import suppliers
-    from core.dxf import read_dxf
     from tests.conftest import dxf_bytes
 
     monkeypatch.chdir(tmp_path)
@@ -60,7 +70,7 @@ def test_each_screen_keeps_the_others_inputs_and_prices_on_hinnoittelu(tmp_path,
     doc.header["$INSUNITS"] = 4
     doc.modelspace().add_lwpolyline([(0, 0), (300, 0), (300, 200), (0, 200)], close=True)
     at = AppTest.from_file("../app.py", default_timeout=120)
-    at.session_state["dxf_files"] = {"f0": read_dxf(dxf_bytes(doc), "p.dxf")}
+    _drop(at, {"f0": ("p.dxf", dxf_bytes(doc))})
     at.session_state["menu"] = FILES
     at.run()
     at.selectbox(key="dxf_mat_f0").select("S235").run()
@@ -106,14 +116,13 @@ def test_each_screen_keeps_the_others_inputs_and_prices_on_hinnoittelu(tmp_path,
 def test_a_dxf_part_is_nested_for_the_largest_batch_size_unless_typed():
     import ezdxf
 
-    from core.dxf import read_dxf
     from tests.conftest import dxf_bytes
 
     doc = ezdxf.new()
     doc.header["$INSUNITS"] = 4
     doc.modelspace().add_lwpolyline([(0, 0), (300, 0), (300, 200), (0, 200)], close=True)
     at = AppTest.from_file("../app.py", default_timeout=60)
-    at.session_state["dxf_files"] = {"f0": read_dxf(dxf_bytes(doc), "p.dxf")}
+    _drop(at, {"f0": ("p.dxf", dxf_bytes(doc))})
     at.session_state["menu"] = FILES
     at.run()
     assert at.number_input(key="dxf_q_f0").value == 10
@@ -141,13 +150,14 @@ def test_an_unpriced_part_leaves_the_money_columns_numeric():
     import pandas as pd
 
     def page():
+        from core.model import Product
         from core.work import WorkInputs, WorkRates, work_cost
         from view.common import render_pieces_summary
 
         RATES = WorkRates()
 
-        prods = [{"id": i, "name": f"p{i}", "material": "S235", "thickness": "2",
-                  "width": 100.0, "height": 50.0, "qty": 2, "work": WorkInputs()}
+        prods = [Product(id=i, name=f"p{i}", material="S235", thickness="2", width=100.0,
+                         height=50.0, qty=2, work=WorkInputs())
                  for i in ("a", "b")]
         render_pieces_summary(prods, {"a": 900.0}, weight_label="kg", lead="Osa",
                               work={"a": work_cost(WorkInputs(), 2, RATES),
@@ -165,21 +175,20 @@ def test_an_unpriced_part_leaves_the_money_columns_numeric():
 def test_clear_all_empties_the_quote_and_keeps_the_rates():
     import ezdxf
 
-    from core.dxf import read_dxf
     from tests.conftest import dxf_bytes
 
     doc = ezdxf.new()
     doc.header["$INSUNITS"] = 4
     doc.modelspace().add_lwpolyline([(0, 0), (300, 0), (300, 200), (0, 200)], close=True)
     at = AppTest.from_file("../app.py", default_timeout=60)
-    at.session_state["dxf_files"] = {"f0": read_dxf(dxf_bytes(doc), "p.dxf")}
+    _drop(at, {"f0": ("p.dxf", dxf_bytes(doc))})
     at.run()
-    at.text_input(key="quote_customer").set_value("Asiakas Oy").run()
+    at.text_input(key="quote_batch_sizes").set_value("2 4").run()
     at.number_input(key="work_weld_eur_per_h").set_value(99.0).run()
     at.button(key="ui_clear_all").click().run()
     assert not at.exception
-    assert not at.session_state["dxf_files"]
-    assert at.text_input(key="quote_customer").value == ""
+    assert not at.session_state["inputs"]
+    assert at.text_input(key="quote_batch_sizes").value == "1 5 10"
     assert at.number_input(key="work_weld_eur_per_h").value == 99.0     # the sidebar stays
     assert not any(n.key == "dxf_q_f0" for n in at.number_input)
     assert not any(b.key == "ui_undo_do" for b in at.button)       # nothing more to answer
@@ -191,7 +200,6 @@ def test_nestaus_choices_stay_when_going_to_another_step_and_back(tmp_path, monk
     import ezdxf
 
     from core import suppliers
-    from core.dxf import read_dxf
     from tests.conftest import dxf_bytes
 
     monkeypatch.chdir(tmp_path)
@@ -203,7 +211,7 @@ def test_nestaus_choices_stay_when_going_to_another_step_and_back(tmp_path, monk
     doc.modelspace().add_lwpolyline([(0, 0), (300, 0), (300, 200), (0, 200)], close=True)
     data = dxf_bytes(doc)
     at = AppTest.from_file("../app.py", default_timeout=120)
-    at.session_state["dxf_files"] = {f"f{i}": read_dxf(data, f"p{i}.dxf") for i in range(2)}
+    _drop(at, {f"f{i}": (f"p{i}.dxf", data) for i in range(2)})
     at.session_state["menu"] = FILES
     at.run()
     for i in range(2):

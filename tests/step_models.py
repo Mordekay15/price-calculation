@@ -225,3 +225,28 @@ def creo_step() -> bytes:
         tool.AddComponent(root, pem, TopLoc_Location())
     tool.UpdateAssemblies()
     return _write(doc)
+
+
+def flat_dxf(flat, name: str) -> bytes:
+    """A STEP part's flat as a customer's DXF of it would be (cut on CUT,
+    bends on BEND_UP / BEND_DOWN, a note with the thickness)."""
+    import io
+
+    import ezdxf
+
+    from core.step import BEND_DOWN, BEND_UP
+
+    doc = ezdxf.new("R2010", units=4)
+    doc.header["$INSUNITS"] = 4
+    for layer, colour in (("CUT", 7), (BEND_UP, 3), (BEND_DOWN, 1), ("NOTES", 8)):
+        doc.layers.add(layer, color=colour)
+    msp = doc.modelspace()
+    for loop in (flat.outline, *flat.holes):
+        msp.add_lwpolyline(loop, close=True, dxfattribs={"layer": "CUT"})
+    for b in flat.bends:
+        msp.add_line(b.line[0], b.line[1], dxfattribs={"layer": BEND_UP if b.up else BEND_DOWN})
+    note = f"{name} | t = {flat.thickness_mm:g} mm | {len(flat.bends)} taivutusta (STEP)"
+    msp.add_text(note, height=3, dxfattribs={"layer": "NOTES"})
+    buf = io.StringIO()
+    doc.write(buf)
+    return buf.getvalue().encode("utf-8")

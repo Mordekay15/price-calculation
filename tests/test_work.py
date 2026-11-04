@@ -153,7 +153,7 @@ def test_manual_tab_prices_work_per_piece(tmp_path, monkeypatch):
     json.dump({"data": {"levyt": rows}, "source_file": "t.pdf", "updated_at": "x"},
               open(tmp_path / suppliers.SUPPLIERS[0].path, "w"))
     at = AppTest.from_file("../app.py", default_timeout=60).run()
-    pid = at.session_state["calc_products"][0]["id"]
+    pid = at.session_state["calc_products"][0].id
     at.selectbox(key=f"mat_{pid}").select("S235").run()
     at.selectbox(key=f"th_{pid}").select("2").run()
     for key, value in (("w", 300.0), ("h", 200.0), ("q", 10), ("work_bends", 2.0)):
@@ -177,10 +177,13 @@ def test_a_fastener_put_in_costs_stremets_minimum_by_default():
 
 
 def test_fasteners_are_counted_and_priced_as_count_times_part_plus_insert():
-    from core.dxf import fasteners_from_texts
-    assert fasteners_from_texts(["M5-PURISTEMUTTERIT X4KPL", "M4-PURISTEMUTTERIT 5KPL",
-                            "MATERIAALI: CR2-11 PL1,5 sinkitty"]) == 9
-    assert fasteners_from_texts(["M6 PURISTERUUVIT 2 KPL", "PULTIT X3 KPL"]) == 5
+    from core.dxf import fastener_lines
+
+    def count(texts):
+        return sum(n for _, n in fastener_lines(texts))
+    assert count(["M5-PURISTEMUTTERIT X4KPL", "M4-PURISTEMUTTERIT 5KPL",
+                  "MATERIAALI: CR2-11 PL1,5 sinkitty"]) == 9
+    assert count(["M6 PURISTERUUVIT 2 KPL", "PULTIT X3 KPL"]) == 5
     inp = WorkInputs(fasteners=9, eur_per_fastener=0.3, eur_per_insert=0.2)
     cost = work_cost(inp, 1, RATES)
     assert cost.fasteners == pytest.approx(4.5) and phases(inp) == 2
@@ -206,7 +209,7 @@ def test_a_missing_pdf_package_hides_its_download_not_the_page(tmp_path, monkeyp
               open(tmp_path / suppliers.SUPPLIERS[0].path, "w"))
     monkeypatch.setattr(builtins, "__import__", no_reportlab)
     at = AppTest.from_file("../app.py", default_timeout=60).run()
-    pid = at.session_state["calc_products"][0]["id"]
+    pid = at.session_state["calc_products"][0].id
     at.selectbox(key=f"mat_{pid}").select("S235").run()
     at.selectbox(key=f"th_{pid}").select("2").run()
     for key, value in (("w", 300.0), ("h", 200.0), ("q", 10)):
@@ -214,3 +217,12 @@ def test_a_missing_pdf_package_hides_its_download_not_the_page(tmp_path, monkeyp
     assert not at.exception
     assert any("10 kpl, €/kpl" in d.value.columns for d in at.dataframe)
     assert any("Asenna reportlab" in c.value for c in at.caption)
+
+
+def test_engraving_is_priced_by_its_length():
+    from core.work import WorkInputs, WorkRates, work_cost
+
+    cost = work_cost(WorkInputs(engrave_m=0.4), 10, WorkRates(engrave_eur_per_m=0.5))
+    assert cost.engraving == 0.2
+    assert cost.breakdown()["Kaiverrus"] == 0.2
+    assert cost.per_piece == work_cost(WorkInputs(), 10, WorkRates()).per_piece + 0.2

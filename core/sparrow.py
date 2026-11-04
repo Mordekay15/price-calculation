@@ -13,10 +13,17 @@ from collections import Counter
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from core.dxf import DxfReport, is_sliver
-from core.geometry import (bbox, bbox_wh, net_area, rotate_translate, signed_area,
-                           untangle)
 from core.cutting_stock import MixedSizes
+from core.dxf import is_sliver
+from core.geometry import (
+    bbox,
+    bbox_wh,
+    net_area,
+    rotate_translate,
+    signed_area,
+    untangle,
+)
+from core.model import FlatShape
 from core.programs import choose_plans, kit_plan
 from core.rect_nesting import box_candidates, box_sheet, fewest_sheets, keep_counts
 from core.sheet_cost import (
@@ -34,7 +41,7 @@ Point = tuple[float, float]
 # ── 1. Parts ──────────────────────────────────────────────────────────────────
 
 # The rotations a part may take (degrees): the four quarter turns, unless its
-# nesting angle is fixed (see ``part_from_report``).
+# nesting angle is fixed (see ``part_from_shape``).
 ORIENTATIONS: tuple[float, ...] = (0.0, 90.0, 180.0, 270.0)
 
 # The nesting angles a part card offers, counted from the part as its card
@@ -89,9 +96,10 @@ class SparrowPart:
         return {"type": "polygon", "data": {"outer": outer, "inner": inner}}
 
 
-def part_from_report(report: DxfReport, quantity: int = 1,
-                     angles: tuple[int, ...] = NESTING_ANGLES) -> SparrowPart:
-    """The SparrowPart for a priceable DXF part, with its holes attached.
+def part_from_shape(shape: FlatShape, quantity: int = 1,
+                    angles: tuple[int, ...] = NESTING_ANGLES) -> SparrowPart:
+    """The SparrowPart for a priceable part (its ``FlatShape``), with its
+    holes attached.
 
     ``angles`` are the allowed nesting angles (see ``NESTING_ANGLES``), counted
     from the part as its card shows it, laid along its length. With both the
@@ -100,18 +108,18 @@ def part_from_report(report: DxfReport, quantity: int = 1,
     clockwise (standard convention; the solver re-derives winding, but this
     keeps the JSON tidy).
     """
-    outline = report.outline
+    width, height = shape.size_mm
     orientations = ORIENTATIONS
     if set(angles) != set(NESTING_ANGLES):
         orientations = tuple(sorted({float(a + k) for a in angles for k in (0, 180)}))
     return SparrowPart(
-        part_id=_stem(report.name),
+        part_id=_stem(shape.name),
         quantity=int(quantity),
-        outer=_oriented(outline.points, ccw=True),
-        holes=[_oriented(h.points, ccw=False) for h in report.holes],
-        width_mm=outline.width_mm,
-        height_mm=outline.height_mm,
-        construction=list(report.reference_lines),
+        outer=_oriented(shape.outline, ccw=True),
+        holes=[_oriented(h, ccw=False) for h in shape.holes],
+        width_mm=width,
+        height_mm=height,
+        construction=list(shape.markings),
         orientations=orientations,
     )
 

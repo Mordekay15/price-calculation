@@ -3,9 +3,11 @@ sheet usage per material + thickness group (bounding-box packer) and the
 pieces summary."""
 
 import uuid
+from dataclasses import replace
 
 import streamlit as st
 
+from core.model import Product
 from core.pricing import build_lookup, parse_thickness_mm
 from core.rect_nesting import rect_options
 from core.sheet_cost import EdgeGaps, group_products, price_by_size, reprice
@@ -40,7 +42,7 @@ def render(data: dict):
         gaps = sheet.gaps()
         result = _options(
             lookup, material, thickness, thickness_mm,
-            [{k: v for k, v in p.items() if k != "work"} for p in prods],
+            [replace(p, work=None) for p in prods],   # the work doesn't nest
             (gaps.top, gaps.bottom, gaps.left, gaps.right), sheet.rankavali_mm,
         )
         if result is not None:
@@ -49,7 +51,7 @@ def render(data: dict):
             result = reprice(result, material=material, thickness_mm=thickness_mm,
                              base_ppt=price_by_size(lookup, material, thickness),
                              margin_pct=margin_pct)
-        ids = "-".join(str(p["id"]) for p in prods)
+        ids = "-".join(str(p.id) for p in prods)
         return render_group(
             material, thickness, thickness_mm, result, margin_pct=margin_pct,
             key=f"sheet_select::{material}::{thickness}::{ids}",
@@ -81,15 +83,8 @@ def _options(lookup, material, thickness, thickness_mm, prods, edges, rankavali_
 
 # ── Product cards ─────────────────────────────────────────────────────────────
 
-def _new_product() -> dict:
-    return {
-        "id":        uuid.uuid4().hex,
-        "material":  None,
-        "thickness": None,
-        "width":     0.0,
-        "height":    0.0,
-        "qty":       1,
-    }
+def _new_product() -> Product:
+    return Product(uuid.uuid4().hex)
 
 
 def _init_products() -> None:
@@ -97,12 +92,12 @@ def _init_products() -> None:
         st.session_state.calc_products = [_new_product()]
 
 
-def _render_product(prod: dict, index: int, materials: list[str], lookup: dict) -> bool:
+def _render_product(prod: Product, index: int, materials: list[str], lookup: dict) -> bool:
     """Render one product's inputs and write them back into ``prod``.
 
     Returns True if the user pressed this product's "Poista" (delete) button.
     """
-    pid = prod["id"]
+    pid = prod.id
     delete_requested = False
 
     with st.container(border=True):
@@ -117,35 +112,35 @@ def _render_product(prod: dict, index: int, materials: list[str], lookup: dict) 
         material, thickness = render_material_thickness(
             materials, lookup,
             mat_key=f"mat_{pid}", thick_key=f"th_{pid}",
-            mat_default=prod["material"], thick_default=prod["thickness"],
+            mat_default=prod.material, thick_default=prod.thickness,
             cols=(mat_col, thick_col),
         )
         w = w_col.number_input(
-            "Leveys (mm)", min_value=0.0, value=float(prod["width"]),
+            "Leveys (mm)", min_value=0.0, value=float(prod.width),
             step=10.0, key=f"w_{pid}",
         )
         h = h_col.number_input(
-            "Korkeus (mm)", min_value=0.0, value=float(prod["height"]),
+            "Korkeus (mm)", min_value=0.0, value=float(prod.height),
             step=10.0, key=f"h_{pid}",
         )
         q = q_col.number_input(
-            "Määrä (kpl)", min_value=1, value=int(prod["qty"]),
+            "Määrä (kpl)", min_value=1, value=int(prod.qty),
             step=1, key=f"q_{pid}",
         )
 
         work = render_work_inputs(pid, material=material, thickness=thickness, qty=q,
                                   cut_length_m=rect_cut_length_m(w, h))
 
-    prod["material"]  = material
-    prod["thickness"] = thickness
-    prod["width"]     = w
-    prod["height"]    = h
-    prod["qty"]       = q
-    prod["work"]      = work
+    prod.material  = material
+    prod.thickness = thickness
+    prod.width     = w
+    prod.height    = h
+    prod.qty       = q
+    prod.work      = work
     return delete_requested
 
 
-def _render_products(materials: list[str], lookup: dict) -> list[dict]:
+def _render_products(materials: list[str], lookup: dict) -> list[Product]:
     """Render the "Tuotteet" section: every product card plus add/delete.
 
     Returns the current products list (the same object stored in

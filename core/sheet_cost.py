@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field, replace
 
+from core.model import Product
 from core.pricing import get_sizes_for_material, parse_thickness_mm, weight_kg
 
 
@@ -391,33 +392,33 @@ def cheapest_index(options: list[SheetOption]) -> int | None:
 
 # ── Products: grouping and per-piece cost ─────────────────────────────────────
 
-def product_label(product: dict) -> str:
+def product_label(product: Product) -> str:
     """A product as the layout legend and messages name it: its name, or its
     running number (``Tuote #3``) when it has none."""
-    return product.get("name") or f"Tuote #{product['_global_idx'] + 1}"
+    return product.name or f"Tuote #{product.index + 1}"
 
 
-def is_ready(prod: dict) -> bool:
+def is_ready(prod: Product) -> bool:
     """A product can be priced once it has a material, thickness and size."""
-    return bool(prod["material"] and prod["thickness"]
-                and prod["width"] > 0 and prod["height"] > 0)
+    return bool(prod.material and prod.thickness
+                and prod.width > 0 and prod.height > 0)
 
 
-def group_products(products: list[dict], nest_mode: str) -> dict[tuple, list[dict]]:
+def group_products(products: list[Product], nest_mode: str) -> dict[tuple, list[Product]]:
     """Group ready products by ``(material, thickness)``.
 
     In "separate" mode the product id joins the key, so each product is nested
-    on its own sheets. Each grouped product gets ``_global_idx`` — its position
+    on its own sheets. Each grouped product gets ``index`` — its position
     in ``products`` — which picks its colour and ``#N`` label in the layout.
     """
-    groups: dict[tuple, list[dict]] = {}
+    groups: dict[tuple, list[Product]] = {}
     for i, prod in enumerate(products):
         if not is_ready(prod):
             continue
-        key = (prod["material"], prod["thickness"])
+        key = (prod.material, prod.thickness)
         if nest_mode == "separate":
-            key += (prod["id"],)
-        groups.setdefault(key, []).append({**prod, "_global_idx": i})
+            key += (prod.id,)
+        groups.setdefault(key, []).append(replace(prod, index=i))
     return groups
 
 
@@ -427,13 +428,13 @@ class PieceCost:
     are billed at (a group's ``bill_rate_ppt``), None while unpriced."""
 
     index: int                      # position in the products list
-    product: dict
+    product: Product
     kg: float                       # one piece
     ppt: float | None
 
     @property
     def batch_kg(self) -> float:
-        return self.kg * self.product["qty"]
+        return self.kg * self.product.qty
 
     @property
     def eur(self) -> float | None:
@@ -445,7 +446,7 @@ class PieceCost:
 
 
 def piece_costs(
-    products: list[dict],
+    products: list[Product],
     prices: dict[str, float],
     areas_mm2: dict[str, float] | None = None,
 ) -> list[PieceCost]:
@@ -455,12 +456,12 @@ def piece_costs(
     areas_mm2 = areas_mm2 or {}
     out = []
     for i, prod in enumerate(products):
-        if prod["width"] <= 0 or prod["height"] <= 0:
+        if prod.width <= 0 or prod.height <= 0:
             continue
-        thickness_mm = parse_thickness_mm(prod["thickness"])
+        thickness_mm = parse_thickness_mm(prod.thickness)
         if thickness_mm is None:
             continue
-        area = areas_mm2.get(prod["id"], prod["width"] * prod["height"])
-        out.append(PieceCost(i, prod, weight_kg(area, thickness_mm, prod["material"]),
-                             prices.get(prod["id"])))
+        area = areas_mm2.get(prod.id, prod.width * prod.height)
+        out.append(PieceCost(i, prod, weight_kg(area, thickness_mm, prod.material),
+                             prices.get(prod.id)))
     return out

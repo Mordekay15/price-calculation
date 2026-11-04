@@ -4,43 +4,38 @@ session, and grouped into one card per part.
 ``ingest`` reads each dropped file once (a DWG is converted to DXF first, a
 ZIP opened, a STEP model unfolded) and empties the drop area; ``sync``
 groups the files into cards and chooses each card's shape (``core.items``).
-A card keeps its settings (material, thickness, quantity) in ``CONFIG`` while
-files join or leave it, and ``evict`` removes it with everything kept for it.
+Each card is a ``core.model.Part`` (``PARTS``): its files, the one priced,
+its material and thickness. It keeps them while files join or leave it, and
+``evict`` removes it with everything kept for it.
 The card itself is drawn by ``view.dxf_tab``."""
 
+import copy
 import re
 import time
-from dataclasses import dataclass
+import unicodedata
 from types import SimpleNamespace
 
 from core.archive import ArchiveError, is_zip, unpack
-from core.dwg import read_drawing
-from core.dxf import DxfFile, DxfReport, fastener_lines, fasteners_from_texts
-from core.items import (Choice, Source, choose, group_sources, looks_like_drawing,
-                        score_dxf, STEP_CHOICE)
+from core.dxf import DxfFile
+from core.items import STEP_CHOICE, Source, choose, group_sources, score_dxf
 from core.linking import base_key
 from core.linking import bom_quantities as _bom_quantities
+from core.model import FlatShape, InputFile, Part, PartSource, file_kind
 from core.step import available as step_available
 from core.step import bends_on
-from view import assemblies, attachments, bom, material_agent
+from view import assemblies, attachments, bom, bought, files, material_agent
 from view.common import thicknesses_for
 from view.ui import ids_in, st
 from view.work import AUTO_SHOWN
-STORE   = "dxf_store"         # {card id: DxfFile}: each card's chosen shape
-REPORTS = "dxf_part_reports"  # {card id: DxfReport}
-CONFIG  = "dxf_part_config"   # {card id: {"material", "thickness", "source"}}
-FILES   = "dxf_files"         # {file id: DxfFile}: every dropped DXF/DWG, in drop order
-ITEMS   = "dxf_items"         # {card id: Item}: the files on each card
+
+PARTS   = "dxf_parts"         # {card id: Part}: each card's files and values
 _HIDDEN  = "dxf_hidden"        # model parts removed from the cards
-_SRC_REPORTS = "dxf_source_reports"  # {source id: DxfReport}, for choosing
 _BEND_LINES = "dxf_bend_lines"  # {(card, shape, flat): STEP bend lines on the DXF}
 _INBOX   = "dxf_inbox"         # bumped to give the uploader a fresh, empty key
 FILL_ASKED = "dxf_fill_asked" # the "same material for the others?" question is answered
 _DUPES   = "dxf_dupes"         # (names of dropped files already on a card, warn until)
 _DUPE_WARNING_S = 15           # how long that warning stays
 _SKIPPED = "dxf_skipped"       # names of the last drop's files that aren't used
-_FOLDERS = "dxf_folders"       # {file id: folder in the dropped ZIP}
-_WAITING = "dxf_waiting_models"  # big STEP files of a large drop, read when asked
 _BIG_STEP_BYTES = 5 << 20        # a STEP file this big waits, in a drop of many files
 _USED = ("dxf", "dwg", "pdf", "step", "stp")
 _SKIPPED_SHOWN = 12            # names listed in the skipped line
@@ -87,7 +82,7 @@ def render_drop_area() -> list[tuple[str, DxfFile]]:
         st.rerun()  # redraw with the drop area empty
     parts = sync()
     sync_assemblies()
-    if not step_available() and any(bom.is_step(d["name"]) for d in attachments.docs().values()):
+    if not step_available() and any(bom.is_step(d.name) for d in attachments.docs().values()):
         st.warning("STEP-malleja ei voi lukea tällä palvelimella: Open CASCADE (cadquery-ocp) "
                    "ei lataudu, yleensä koska libGL puuttuu (packages.txt). Osat hinnoitellaan "
                    "DXF:stä ja piirustuksista ilman STEP-mallia.")
@@ -122,26 +117,24 @@ def _render_files(labels: dict[str, str]) -> None:
             with next(boxes):
                 attachments.render_doc_list(names, labels)
         if models:
-            items = st.session_state.get(ITEMS, {})
             with next(boxes):
-                bom.render_bom({sid: labels[cid] for cid, item in items.items()
-                                for sid in item.members if cid in labels}, resync)
+                bom.render_bom({sid: labels[cid] for cid, part in parts().items()
+                                for sid in part.members if cid in labels}, resync)
 
 
 def _waiting(doc_ids=None) -> list[str]:
     """The big STEP files not read yet (of ``doc_ids``, or all)."""
-    docs = attachments.docs()
-    waiting = st.session_state.get(_WAITING, set())
-    return [d for d in (docs if doc_ids is None else doc_ids) if d in waiting and d in docs]
+    waiting = {fid for fid, f in files.of_kind("step").items() if f.status == "waiting"}
+    return [d for d in (waiting if doc_ids is None else doc_ids) if d in waiting]
 
 
 def _read_waiting(doc_ids: list[str]) -> None:
     """Read the waiting STEP models: their parts, bends and thickness join
     the cards."""
-    docs, waiting = attachments.docs(), st.session_state.get(_WAITING, set())
     for d in doc_ids:
-        bom.add_model(d, docs[d]["name"], docs[d]["load"]())
-        waiting.discard(d)
+        f = files.get(d)
+        bom.add_model(d, f.name, f.load())
+        f.status = "read"
     sync()
 
 
@@ -151,15 +144,14 @@ def render_waiting(doc_ids: list[str] | None) -> None:
     waiting = _waiting(doc_ids)
     if not waiting:
         return
-    docs = attachments.docs()
-    mb = sum(docs[d]["size"] for d in waiting) / (1 << 20)
+    mb = sum(files.get(d).size_bytes for d in waiting) / (1 << 20)
     if doc_ids is None:
         label = f"Lue isot STEP-mallit ({len(waiting)} kpl, {mb:.0f} Mt)"
         text = (f"{len(waiting)} isoa STEP-mallia odottaa, jotta lataus olisi nopeampi. "
                 "Ne voi lukea kortilla yksi kerrallaan tai kaikki kerralla.")
         key = "dxf_read_waiting"
     else:
-        label = "Lue 3D-malli: " + ", ".join(docs[d]["name"] for d in waiting) + f" ({mb:.0f} Mt)"
+        label = "Lue 3D-malli: " + ", ".join(files.get(d).name for d in waiting) + f" ({mb:.0f} Mt)"
         text = ("Iso STEP-malli luetaan vasta pyydettäessä (kestää hetken). Siitä tulevat "
                 "taivutukset, paksuus ja mitan tarkistus.")
         key = f"dxf_read_waiting_{'_'.join(waiting)}"
@@ -206,12 +198,9 @@ def ingest(uploaded) -> bool:
     start a new one). A file whose name was dropped already is not added
     again; its name goes to ``_DUPES`` for the warning (a drop without one
     clears it). True when something was dropped."""
-    files: dict = st.session_state.setdefault(FILES, {})
-    folders: dict = st.session_state.setdefault(_FOLDERS, {})
-    docs = attachments.docs()
-    dropped = [up for up in uploaded or [] if up.file_id not in files and up.file_id not in docs]
-    names = ({(folders.get(f, ""), dxf.name) for f, dxf in files.items()}
-             | {(folders.get(d, ""), doc["name"]) for d, doc in docs.items()})
+    known = files.inputs()
+    dropped = [up for up in uploaded or [] if up.file_id not in known]
+    names = {(f.folder, f.name) for f in known.values()}
     dupes, skipped = [], []
     todo = _unzipped(dropped, skipped)
     bar = st.progress(0.0) if len(todo) > 5 else None
@@ -220,27 +209,29 @@ def ingest(uploaded) -> bool:
             bar.progress(n / len(todo), text=f"Luetaan tiedostoja {n + 1} / {len(todo)}: "
                                              f"{up.name}")
         folder = getattr(up, "folder", "")
-        if not _is_used(up.name):
-            skipped.append(up.name)     # e.g. Creo's part.prt.1, part.drw.1
+        name = unicodedata.normalize("NFC", up.name)   # "ö" one way, however it came
+        if not _is_used(name):
+            skipped.append(name)        # e.g. Creo's part.prt.1, part.drw.1
             continue
-        if (folder, up.name) in names:
-            dupes.append(up.name)
+        if (folder, name) in names:
+            dupes.append(name)
             continue
-        if folder:
-            folders[up.file_id] = folder
         data = up.getvalue()
-        if attachments.is_doc(up.name):
-            attachments.add_doc(up.file_id, up.name, data,
-                                load=up.getvalue if hasattr(up, "folder") else None)
-            if bom.is_step(up.name) and step_available():
+        # A file of a ZIP is read from it again when needed; a file dropped on
+        # its own is kept only when it is read later (a PDF or STEP model).
+        again = up.getvalue if hasattr(up, "folder") else None
+        f = InputFile(up.file_id, name, file_kind(name), again, folder=folder,
+                      size_bytes=len(data))
+        if f.kind in ("pdf", "step"):
+            attachments.add_doc(f, data)
+            if f.kind == "step" and step_available():
                 if len(todo) > 5 and len(data) > _BIG_STEP_BYTES:
-                    st.session_state.setdefault(_WAITING, set()).add(up.file_id)
+                    f.status = "waiting"
                 else:
-                    bom.add_model(up.file_id, up.name, data)
+                    bom.add_model(up.file_id, name, data)
         else:
-            files[up.file_id] = read_drawing(data, up.name)
-            files[up.file_id].forget_lines()   # the part is all that's used (memory)
-        names.add((folder, up.name))
+            add_drawing(f, data)
+        names.add((folder, name))
     if bar is not None:
         bar.empty()
     if dropped:
@@ -252,6 +243,30 @@ def ingest(uploaded) -> bool:
     if len(dropped) > len(dupes) + len(skipped):
         st.session_state.pop(FILL_ASKED, None)  # new empty parts: ask again
     return bool(dropped)
+
+
+def add_drawing(f: InputFile, data: bytes) -> None:
+    """A dropped DXF or DWG: read now by its reader (``core.readers``), the
+    cards need its part."""
+    files.add(f)
+    load, f.load = f.load, (lambda: data)
+    files.result(f.id)
+    f.load = load
+    f.status = "read" if files.result(f.id).shapes else "failed"
+
+
+def drawing(fid: str) -> DxfFile | None:
+    """A dropped DXF/DWG as its reader read it (None for other files)."""
+    f = files.get(fid)
+    res = files.result(fid) if f is not None and f.kind in ("dxf", "dwg") else None
+    if res is None:
+        return None
+    return res.record[1] if isinstance(res.record, tuple) else res.record
+
+
+def drawings() -> dict[str, DxfFile]:
+    """Every dropped DXF/DWG as its reader read it, in drop order."""
+    return {fid: d for fid in files.of_kind("dxf", "dwg") if (d := drawing(fid)) is not None}
 
 
 def _release_memory() -> None:
@@ -291,60 +306,86 @@ def _unzipped(dropped, skipped: list[str]) -> list:
     return out
 
 
-# ── Items: one card per part ──────────────────────────────────────────────────
-
-@dataclass
-class Item:
-    """The files on one card (source ids, drop order), the one priced, and
-    how each scored (see ``core.items``)."""
-
-    members: list[str]
-    chosen: str
-    scores: dict[str, Choice]
-    names: dict[str, str]
-    blank: tuple[float, float] | None = None   # the STEP blank's size, mm
-
-
-def sync() -> list[tuple[str, DxfFile]]:
-    """Group the dropped files into cards and choose each card's shape.
-    A card's id is its first file's id, so it keeps its settings while files
-    are added; a card that a drawing joins passes its settings on."""
+def _hidden() -> set[str]:
+    """The STEP bodies removed from the cards, of the models still there."""
     ss = st.session_state
-    files: dict = ss.setdefault(FILES, {})
-    reports: dict = ss.setdefault(_SRC_REPORTS, {})
-    config: dict = ss.setdefault(CONFIG, {})
-    old: dict = ss.get(ITEMS, {})
+    ss[_HIDDEN] = {sid for sid in ss.get(_HIDDEN, set())
+                   if files.is_read(sid.split("|", 1)[0])}
+    return ss[_HIDDEN]
 
-    def shape(sid: str) -> DxfFile:
-        return files[sid] if sid in files else bom.flat_file(sid)
 
-    def report(sid: str) -> DxfReport:
-        if sid not in reports:
-            reports[sid] = shape(sid).part()
-        return reports[sid]
+# ── Parts: one card per part number ───────────────────────────────────────────
+
+def parts() -> dict[str, Part]:
+    """The cards, ``{card id: Part}``."""
+    return st.session_state.get(PARTS, {})
+
+
+def part(cid: str) -> Part | None:
+    return parts().get(cid)
+
+
+def shape_of(sid: str) -> FlatShape | None:
+    """A source's part as its reader read it (a DXF or DWG file, or a body of
+    a STEP model, ``"{file id}|{body key}"``)."""
+    fid, _, body = sid.partition("|")
+    if body and not files.is_read(fid):
+        return None
+    res = files.result(fid)
+    return next((s for s in res.shapes if s.origin == sid), None) if res else None
+
+
+def cards() -> dict[str, FlatShape]:
+    """Every card's priced shape, ``{card id: FlatShape}``, in card order."""
+    return {cid: shape_of(p.chosen) for cid, p in parts().items()}
+
+
+def card_texts(cid: str) -> list[str]:
+    """The texts of the card's priced drawing (none for a STEP body)."""
+    p = part(cid)
+    d = drawing(p.chosen if p else cid)
+    return list(d.texts) if d is not None else []
+
+
+def sync() -> list[tuple[str, FlatShape]]:
+    """Group the dropped files into cards and choose each card's shape.
+    A card's id is its first file's id, so it keeps its values while files
+    are added; a card that a drawing joins passes its values on."""
+    ss = st.session_state
+    dwgs = drawings()
+    old = parts()
 
     sources = ([Source(fid, d.name, "dxf", list(d.texts), folder=folder_of(fid))
-                for fid, d in files.items()]
-               + bom.sources(ss.setdefault(_HIDDEN, set()), folder_of))
-    groups = group_sources(sources, lambda sid: sid in files
-                           and looks_like_drawing(report(sid)), _pdf_texts())
-    store, items = {}, {}
+                for fid, d in dwgs.items()]
+               + bom.sources(_hidden(), folder_of))
+    linked: dict[str, str] = {}
+    groups = group_sources(sources, lambda sid: sid in dwgs and files.result(sid).is_drawing,
+                           _pdf_texts(), linked)
+    store, new = {}, {}
     for members in groups:
         cid = members[0]
-        if cid not in config:
-            inherited = next((config[m] for m in members if m in config), None)
-            if inherited is not None:
-                config[cid] = dict(inherited)
+        was = old.get(cid) or next((old[m] for m in members if m in old), None)
         models = [bom.source(m) for m in members if bom.is_source(m)]
         blank = models[0][2].blank_mm if models and models[0][2] is not None else None
-        scores = {sid: (score_dxf(report(sid), files[sid].unit_guessed, files[sid].texts, blank)
-                        if sid in files else STEP_CHOICE) for sid in members}
-        chosen = choose(scores, config.get(cid, {}).get("source")) or members[0]
-        if cid in old and old[cid].chosen != chosen:
-            ss.get(REPORTS, {}).pop(cid, None)
-        store[cid] = shape(chosen)
-        items[cid] = Item(members, chosen, scores, {m: shape(m).name for m in members}, blank)
-    ss[STORE], ss[ITEMS] = store, items
+        scores = {sid: (score_dxf(shape_of(sid), dwgs[sid].texts, blank)
+                        if sid in dwgs else STEP_CHOICE) for sid in members}
+        by_user = was.chosen_by_user if was is not None else None
+        chosen = choose(scores, by_user) or members[0]
+        store[cid] = shape_of(chosen)
+        sources = [PartSource(m, shape_of(m).name, linked.get(m, "part_number"), scores[m])
+                   for m in members]
+        if was is None:
+            new[cid] = Part(cid, sources, chosen, blank)
+        else:   # the same Part goes on: its material, thickness and widget keys
+            if any(p is was for p in new.values()):     # a card split in two
+                was = copy.deepcopy(was)
+            was.id, was.sources, was.chosen, was.blank = cid, sources, chosen, blank
+            new[cid] = was
+    ss[PARTS] = new
+    # A card gone (removed, or joined to another when a drawing came) takes
+    # its Ostetut osat table with it.
+    for cid in old.keys() - new.keys():
+        bought.reset(f"work_bought_{cid}")
     return list(store.items())
 
 
@@ -353,8 +394,8 @@ def _pdf_texts():
     (a drawing whose title block may name the part it belongs to)."""
     by_key: dict[str, list[str]] = {}
     for d, doc in attachments.docs().items():
-        if doc["kind"] == "pdf":
-            by_key.setdefault(base_key(doc["name"]), []).append(d)
+        if doc.kind == "pdf":
+            by_key.setdefault(base_key(doc.name), []).append(d)
     return lambda key: "\n".join(attachments.text(d) for d in by_key.get(key, []))
 
 
@@ -362,58 +403,64 @@ def resync() -> None:
     """After the models changed (K factor, a model removed): unfold and
     choose again."""
     st.session_state.pop(_BEND_LINES, None)
-    st.session_state.get(_SRC_REPORTS, {}).clear()
-    st.session_state.get(REPORTS, {}).clear()
     sync()
 
 
 def sync_assemblies() -> None:
     """The assemblies made from the dropped STEP models and assembly drawings."""
     assemblies.sync_from_models()
-    links, store = card_docs(), st.session_state.get(STORE, {})
+    links, items = card_docs(), parts()
 
-    def texts(cid: str) -> str:
-        return "\n".join([*(attachments.text(d) for d in links.get(cid, [])),
-                          *(store[cid].texts if cid in store else [])])
-    items = st.session_state.get(ITEMS, {})
-    assemblies.sync_from_drawings(items, texts)
-    config = st.session_state.get(CONFIG, {})
-    assemblies.sync_from_fasteners(
-        {cid: card_fastener_lines(cid, item, links.get(cid, [])) for cid, item in items.items()},
-        {cid: store[cid].name for cid in items if cid in store}, source_cards(),
-        lambda cid: config.get(cid, {}).get("material"))
+    def facts(cid: str) -> list:
+        """What the readers read from the card's drawings and its PDFs."""
+        ids = [m for m in items[cid].members if files.get(m) is not None
+               and files.get(m).kind in ("dxf", "dwg")]
+        ids += [d for d in links.get(cid, []) if files.get(d) is not None
+                and files.get(d).kind == "pdf"]
+        return [f for fid in ids for f in files.result(fid).facts]
+    assemblies.sync_from_drawings(items, facts)
+    # A part's own fasteners stay on its card (its Ostetut osat); only an
+    # assembly drawing's notes are its assembly's.
+    drawn = assemblies.drawings().values()
+    assemblies.sync_drawing_fasteners(
+        {cid: card_fastener_lines(cid, items.get(cid), links.get(cid, []))[0] for cid in drawn},
+        lambda cid: items[cid].material.value if cid in items else None)
 
 
-def card_fastener_lines(cid: str, item: Item, docs: list[str]) -> list[tuple[str, int]]:
-    """The fasteners the card's drawings call out, ``(name, kpl / osa)``: of
-    its PDFs and files, the one that asks for the most (a flat and its drawing
-    repeat the same note)."""
-    files, store = st.session_state.get(FILES, {}), st.session_state.get(STORE, {})
-    sources = [attachments.fasteners(d) for d in docs]
-    sources += [fastener_lines(files[m].texts) for m in item.members if m in files]
-    if cid in store:
-        sources.append(fastener_lines(store[cid].texts))
-    return max(sources,
-               key=lambda ls: sum(n for _, n in ls), default=[])
+def card_fastener_lines(cid: str, item: Part | None,
+                        docs: list[str]) -> tuple[list[tuple[str, int]], str]:
+    """The fasteners the card's drawings call out, ``(name, kpl / osa)``, and
+    the file they were read from: of its PDFs and files, the one that asks
+    for the most (a flat and its drawing repeat the same note)."""
+    ids = [*docs, *(item.members if item else [cid])]
+    sources = []
+    for fid in dict.fromkeys(ids):
+        f = files.get(fid)
+        if f is None or f.kind not in ("pdf", "dxf", "dwg"):
+            continue
+        res = files.result(fid)
+        sources.append(([(x.value["name"], x.value["kpl"]) for x in res.of("fastener")], f.name))
+    best = max(sources, key=lambda s: sum(n for _, n in s[0]), default=([], ""))
+    return (best if best[0] else ([], ""))
 
 
 def source_cards() -> dict[str, str]:
     """Every file's card: ``{source id: card id}``."""
-    return {sid: cid for cid, item in st.session_state.get(ITEMS, {}).items()
-            for sid in item.members}
+    return {sid: cid for cid, p in parts().items() for sid in p.members}
 
 
 def folder_of(sid: str) -> str:
     """The ZIP folder a file came in ("" when dropped on its own); a STEP
     model's part is in its file's folder."""
-    return st.session_state.get(_FOLDERS, {}).get(sid.split("|", 1)[0], "")
+    return files.folder(sid)
 
 
 def card_docs() -> dict[str, list[str]]:
     """Each card's PDFs (see ``attachments.links``)."""
-    card_folders = {cid: {f for f in map(folder_of, item.members) if f}
-                    for cid, item in st.session_state.get(ITEMS, {}).items()}
-    return attachments.links(_card_names(), card_folders, st.session_state.get(_FOLDERS, {}))
+    card_folders = {cid: {f for f in map(folder_of, p.members) if f}
+                    for cid, p in parts().items()}
+    return attachments.links(_card_names(), card_folders,
+                             {fid: f.folder for fid, f in files.inputs().items() if f.folder})
 
 
 # A PDF named as a parts list: read for its quantities even when it links to
@@ -424,48 +471,50 @@ _BOM_NAME = re.compile(r"bom|osaluettelo|kappaleluettelo|parts?[\s_\-]?list|st[�
 
 def bom_quantities() -> dict[str, tuple[int, list[str]]]:
     """The quantity each card's BOMs ask for, ``{card id: (kpl, [BOM
-    names])}`` (see ``core.linking.bom_quantities``). The PDFs read are the
-    ones already read for linking and the ones named as a parts list."""
-    read = st.session_state.get(attachments.TEXTS, {})
-    texts = {doc["name"]: attachments.text(d) for d, doc in attachments.docs().items()
-             if doc["kind"] == "pdf" and (d in read or _BOM_NAME.search(doc["name"]))}
-    return _bom_quantities(_card_names(), texts)
+    names])}``, from the PDF reader's BOM rows (see
+    ``core.linking.bom_quantities``). The PDFs are the ones already read and
+    the ones named as a parts list."""
+    rows = {f.name: [(x.value["part_key"], x.value["kpl"])
+                     for x in files.result(fid).of("bom_qty")]
+            for fid, f in files.of_kind("pdf").items()
+            if files.is_read(fid) or _BOM_NAME.search(f.name)}
+    return _bom_quantities(_card_names(), rows)
 
 
 def _card_names() -> dict[str, list[str]]:
     """Every card's file names (for linking the PDFs)."""
-    return {cid: list(item.names.values())
-            for cid, item in st.session_state.get(ITEMS, {}).items()}
+    return {cid: list(p.names.values()) for cid, p in parts().items()}
 
 
-def _with_all_texts(parts: list[tuple[str, DxfFile]]) -> list[tuple[str, object]]:
-    """The cards for the material search: the texts of all their files (the
-    drawing's title block names the material, the flat pattern may not) and
-    the STEP model's sheet thickness."""
-    files = st.session_state.get(FILES, {})
-    items = st.session_state.get(ITEMS, {})
+_MATERIAL_KINDS = ("material", "thickness")
+
+
+def material_facts(cid: str, docs: list[str]) -> list:
+    """What the card's files say about its material and thickness: its
+    drawings' texts, its PDFs (``docs``), its STEP bodies' measured sheet."""
+    p = part(cid)
     out = []
-    for cid, dxf in parts:
-        item = items.get(cid)
-        texts = [t for m in (item.members if item else [cid]) if m in files
-                 for t in files[m].texts] or list(dxf.texts)
-        flats = step_flats(item)
-        out.append((cid, SimpleNamespace(
-            name=dxf.name, texts=texts,
-            step_thickness=flats[0].thickness_mm if flats else None)))
+    for sid in dict.fromkeys([*(p.members if p else [cid]), *docs]):
+        fid, _, body = sid.partition("|")
+        f = files.get(fid)
+        if f is None or f.kind not in ("dxf", "dwg", "pdf", "step") or (
+                f.kind == "step" and not files.is_read(fid)):
+            continue
+        out += [x for x in files.result(fid).facts
+                if x.kind in _MATERIAL_KINDS and (x.body or "") == body]
     return out
 
 
-def auto_fill_materials(parts, materials: list[str], lookup: dict) -> None:
+def auto_fill_materials(materials: list[str], lookup: dict) -> None:
     """Fill the empty cards' material and thickness from their own files (see
     ``material_agent.auto_fill``)."""
-    config = st.session_state.get(CONFIG, {})
-    material_agent.auto_fill(_with_all_texts(parts), card_docs(), attachments.docs(), materials,
-                             lambda m: thicknesses_for(lookup, m), apply_material,
-                             lambda fid: bool(config.get(fid, {}).get("material")))
+    links = card_docs()
+    material_agent.auto_fill(parts(), lambda cid: material_facts(cid, links.get(cid, [])),
+                             lambda fid: files.get(fid).name,
+                             materials, lambda m: thicknesses_for(lookup, m))
 
 
-def step_flats(item: Item | None) -> list:
+def step_flats(item: Part | None) -> list:
     """The unfolded STEP parts on a card."""
     if item is None:
         return []
@@ -473,26 +522,18 @@ def step_flats(item: Item | None) -> list:
             if src is not None and src[2] is not None and src[2].is_sheet]
 
 
-def card_bends(report: DxfReport, item: Item | None) -> int:
+def card_bends(shape: FlatShape, item: Part | None) -> int:
     """The bends of a part: the STEP model's when the card has one (a flat
     DXF often has no bend lines), else the DXF's bend lines."""
     flats = step_flats(item)
-    return len(flats[0].bends) if flats else report.bends
+    return len(flats[0].bends) if flats else len(shape.bends)
 
 
-def card_forms(item: Item | None) -> int:
+def card_forms(item: Part | None) -> int:
     """The pressed forms (louvres, beads) of the card's STEP model: not
     counted as bends."""
     flats = step_flats(item)
     return flats[0].forms if flats else 0
-
-
-def card_fasteners(dxf: DxfFile, item: Item | None) -> int:
-    """The fasteners the notes of the card's files ask for (the most any one
-    file asks for: a flat and its drawing repeat the same note)."""
-    files = st.session_state.get(FILES, {})
-    texts = [files[m].texts for m in (item.members if item else []) if m in files]
-    return max((fasteners_from_texts(t) for t in [dxf.texts, *texts]), default=0)
 
 
 def evict(fid: str) -> None:
@@ -500,13 +541,11 @@ def evict(fid: str) -> None:
     another card has them) and everything kept for it, including its widget
     state."""
     ss = st.session_state
-    item = ss.get(ITEMS, {}).get(fid)
+    item = part(fid)
     doc_links = card_docs()
-    files = ss.get(FILES, {})
     for sid in (item.members if item else [fid]):
-        files.pop(sid, None)
-        ss.get(_FOLDERS, {}).pop(sid, None)
-        ss.get(_SRC_REPORTS, {}).pop(sid, None)
+        if files.get(sid) is not None and files.get(sid).kind in ("dxf", "dwg"):
+            files.remove(sid)
         src = bom.source(sid)
         if src is not None:
             model_id = sid.split("|", 1)[0]
@@ -518,63 +557,60 @@ def evict(fid: str) -> None:
     for d in doc_links.get(fid, []):
         if d not in others:
             attachments.remove_doc(d)
-    ss.get(STORE, {}).pop(fid, None)
-    cfg = ss.get(CONFIG, {}).pop(fid, {})
-    ss.get(REPORTS, {}).pop(fid, None)
-    for key in (*material_keys(fid, cfg), f"dxf_unit_ok_{fid}",
+    for key in (*(material_keys(item) if item else ()), f"dxf_unit_ok_{fid}",
                 f"dxf_src_{fid}",
                 f"dxf_turn_{fid}"):
         ss.pop(key, None)
     shown = ss.get(AUTO_SHOWN, {})
     for key in [k for k in shown if ids_in([fid]).search(k)]:
         del shown[key]
+    material_agent.forget(fid)
+    bends = ss.get(_BEND_LINES, {})
+    for key in [k for k in bends if k[0] == fid]:
+        del bends[key]
     sync()
 
 
 def evict_all() -> None:
     """The "Poista kaikki" button: every card's "Poista" at once."""
-    for fid in list(st.session_state.get(STORE, {})):
+    for fid in list(parts()):
         evict(fid)
     for doc_id in list(attachments.docs()):
         attachments.remove_doc(doc_id)
-    for key in (bom.MODELS, FILES, ITEMS, _HIDDEN, _SRC_REPORTS, FILL_ASKED,
+    for key in (*files.KEYS, PARTS, _HIDDEN, FILL_ASKED,
                 _DUPES, _SKIPPED,   # these warnings name files that are gone
-                _FOLDERS, _WAITING,
                 _BEND_LINES,
-                AUTO_SHOWN, *material_agent.AUTO_KEYS, *assemblies.KEYS):
+                AUTO_SHOWN, bought.SEEDS, *material_agent.KEYS, *assemblies.KEYS):
         st.session_state.pop(key, None)
 
 
-def model_bends(fid: str, report: DxfReport, item: Item | None) -> list | None:
+def model_bends(fid: str, shape: FlatShape, item: Part | None) -> list | None:
     """The card's STEP bend lines on its DXF (a flat DXF often has no bend
     lines of its own), worked out once per shape."""
     flats = step_flats(item)
-    if not flats or report.bends or report.outline is None:
+    if not flats or shape.bends or not shape.outline:
         return None
     cache = st.session_state.setdefault(_BEND_LINES, {})
     key = (fid, item.chosen, id(flats[0]))
     if key not in cache:
-        cache[key] = bends_on(flats[0], [report.outline.points]
-                              + [h.points for h in report.holes])
+        cache[key] = bends_on(flats[0], [shape.outline, *shape.holes])
     return cache[key]
 
 
-def material_keys(fid: str, cfg: dict) -> tuple[str, str, str]:
+def material_keys(p: Part) -> tuple[str, str, str]:
     """The material, thickness and disabled-thickness selectbox keys of a card.
-    ``cfg["v"]`` is bumped to give them new keys: a fresh selectbox starts from
-    the stored choice. (Setting or deleting a widget's value doesn't stick —
-    the browser sends its old value back, and Streamlit warns.)"""
-    v = cfg.get("v", 0)
-    suffix = f"_{v}" if v else ""
-    return (f"dxf_mat_{fid}{suffix}", f"dxf_th_{fid}{suffix}",
-            f"dxf_th_{fid}{suffix}_disabled")
+    ``Part.version`` is bumped to give them new keys: a fresh selectbox starts
+    from the Part's values. (Setting or deleting a widget's value doesn't
+    stick — the browser sends its old value back, and Streamlit warns.)"""
+    suffix = f"_{p.version}" if p.version else ""
+    return (f"dxf_mat_{p.id}{suffix}", f"dxf_th_{p.id}{suffix}",
+            f"dxf_th_{p.id}{suffix}_disabled")
 
 
 def empty_cards() -> list[str]:
     """The cards with no material or thickness yet."""
-    config = st.session_state.get(CONFIG, {})
-    return [f for f in st.session_state.get(STORE, {})
-            if not (config.get(f, {}).get("material") and config.get(f, {}).get("thickness"))]
+    return [cid for cid, p in parts().items()
+            if not (p.material.value and p.thickness.value)]
 
 
 def fill_material(material: str | None, thickness: str | None) -> None:
@@ -582,27 +618,20 @@ def fill_material(material: str | None, thickness: str | None) -> None:
     (none for "Ei") and stop asking. The empty cards are found when the button
     is clicked, so a card filled meanwhile keeps its own choice. Their
     selectboxes get new keys (see ``material_keys``), so they start from the
-    stored choice."""
-    for f in empty_cards() if material else []:
-        apply_material(f, material, thickness)
+    Part's values."""
+    for cid in empty_cards() if material else []:
+        apply_material(cid, material, thickness)
     st.session_state[FILL_ASKED] = True
 
 
-def apply_material(fid: str, material: str, thickness: str | None) -> None:
-    """Set one card's material and thickness (a proposal the user ticked);
-    its selectboxes get new keys so they start from the new choice."""
-    config = st.session_state.setdefault(CONFIG, {})
-    old = config.get(fid, {})
-    for key in material_keys(fid, old):
+def apply_material(cid: str, material: str, thickness: str | None) -> None:
+    """Set one card's material and thickness by hand; its selectboxes get new
+    keys so they start from the new choice."""
+    p = part(cid)
+    if p is None:
+        return
+    for key in material_keys(p):
         st.session_state.pop(key, None)
-    config[fid] = {**old, "material": material, "thickness": thickness,
-                   "v": old.get("v", 0) + 1}
-
-
-def card_report(fid: str, dxf: DxfFile) -> DxfReport:
-    """The part from the default cut layers, memoised (building it scans every
-    point)."""
-    cache: dict = st.session_state.setdefault(REPORTS, {})
-    if fid not in cache:
-        cache[fid] = dxf.part()
-    return cache[fid]
+    p.material.set(material)
+    p.thickness.set(thickness)
+    p.version += 1

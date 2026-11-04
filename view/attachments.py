@@ -10,50 +10,42 @@ import io
 import streamlit as st
 
 from core.linking import link_by_text, link_files
+from core.model import InputFile
+from view import files
 from view.common import render_page_picker
 
-DOCS = "dxf_docs"            # {doc id: {"name", "size", "kind", "load"}}
 _MANUAL = "dxf_doc_links"    # {doc id: part id or "" (= no part)}, set by hand
 _PREVIEWS = "dxf_doc_previews"  # {doc id: PNG bytes of page 1}
-TEXTS = "dxf_doc_texts"      # {doc id: [(page, text)]}, see core.materials.pdf_text
-FIELDS = "dxf_doc_fields"    # {doc id: [(page, Material field)]}, see material_fields
-FASTENERS = "dxf_doc_fasteners"  # {doc id: [(name, kpl)]}, see core.fasteners
-
-DOC_TYPES = {"pdf": "pdf", "step": "step", "stp": "step"}
 
 
-def is_doc(name: str) -> bool:
-    return name.rsplit(".", 1)[-1].lower() in DOC_TYPES
 
-
-def add_doc(file_id: str, name: str, data: bytes, load=None) -> None:
-    """Keep a dropped PDF or STEP file. With ``load`` (a file of a ZIP or a
-    folder, read again when needed) its bytes aren't kept: a big RFQ's
-    drawings and models are hundreds of MB."""
-    st.session_state.setdefault(DOCS, {})[file_id] = {
-        "name": name, "size": len(data), "kind": DOC_TYPES[name.rsplit(".", 1)[-1].lower()],
-        "load": load or (lambda: data)}
+def add_doc(f: InputFile, data: bytes) -> None:
+    """Keep a dropped PDF or STEP file (``view.files``). A file of a ZIP is
+    read from it again when needed (``f.load``), so its bytes aren't kept: a
+    big RFQ's drawings and models are hundreds of MB."""
+    if f.load is None:
+        f.load = lambda: data
+    f.size_bytes = f.size_bytes or len(data)
+    files.add(f)
 
 
 def data(doc_id: str) -> bytes:
     """A kept file's bytes."""
-    return docs()[doc_id]["load"]()
+    return files.get(doc_id).load()
 
 
 def remove_doc(doc_id: str) -> None:
-    st.session_state.get(DOCS, {}).pop(doc_id, None)
+    files.remove(doc_id)
     st.session_state.get(_MANUAL, {}).pop(doc_id, None)
     st.session_state.get(_PREVIEWS, {}).pop(doc_id, None)
-    st.session_state.get(TEXTS, {}).pop(doc_id, None)
-    st.session_state.get(FIELDS, {}).pop(doc_id, None)
-    st.session_state.get(FASTENERS, {}).pop(doc_id, None)
 
 
-def docs() -> dict[str, dict]:
-    return st.session_state.get(DOCS, {})
+def docs() -> dict[str, InputFile]:
+    """The PDF and STEP files, ``{id: InputFile}``."""
+    return files.of_kind("pdf", "step")
 
 
-def _linkable() -> dict[str, dict]:
+def _linkable() -> dict[str, InputFile]:
     """The files that link to cards: PDFs, and STEP files that couldn't be
     read as models (a model's parts are on the cards themselves, see
     ``view.bom``)."""
@@ -73,10 +65,10 @@ def links(parts: dict[str, str | list[str]], card_folders: dict[str, set[str]] |
     all_docs = _linkable()
     names = {f"{pid}\0{i}": n for pid, ns in parts.items()
              for i, n in enumerate([ns] if isinstance(ns, str) else ns)}
-    by_name = link_files(names, {d: doc["name"] for d, doc in all_docs.items()})
+    by_name = link_files(names, {d: doc.name for d, doc in all_docs.items()})
     named = {d for ids in by_name.values() for d in ids}
-    unnamed = {d: _text(d, doc) for d, doc in all_docs.items()
-               if d not in named and doc["kind"] == "pdf"}
+    unnamed = {d: text(d) for d, doc in all_docs.items()
+               if d not in named and doc.kind == "pdf"}
     auto: dict[str, list[str]] = {}
     for found in (by_name, link_by_text(names, unnamed, lambda k: k.split("\0", 1)[0])):
         for key, ids in found.items():
@@ -101,49 +93,12 @@ def links(parts: dict[str, str | list[str]], card_folders: dict[str, set[str]] |
 
 
 def text(doc_id: str) -> str:
-    """A linked PDF's text ("" for other files)."""
-    doc = docs().get(doc_id)
-    return _text(doc_id, doc) if doc is not None and doc["kind"] == "pdf" else ""
-
-
-def pages(doc_id: str, doc: dict) -> list[tuple[int, str]]:
-    """A PDF's first pages, ``[(page, text)]``, read once for the card links
-    and the material proposals."""
-    from core.materials import pdf_text
-
-    cache = st.session_state.setdefault(TEXTS, {})
-    if doc_id not in cache:
-        cache[doc_id] = pdf_text(doc["load"]())
-    return cache[doc_id]
-
-
-def fasteners(doc_id: str) -> list[tuple[str, int]]:
-    """A linked PDF's fastener callouts ``[(name, kpl)]``, read once ([] for
-    other files, see ``core.fasteners``)."""
-    from core.fasteners import pdf_fasteners
-
-    doc = docs().get(doc_id)
-    if doc is None or doc["kind"] != "pdf":
-        return []
-    cache = st.session_state.setdefault(FASTENERS, {})
-    if doc_id not in cache:
-        cache[doc_id] = pdf_fasteners(doc["load"]())
-    return cache[doc_id]
-
-
-def material_fields(doc_id: str, doc: dict) -> list[tuple[int, str]]:
-    """A PDF's title block Material field, ``[(page, text)]``, read once (see
-    ``core.materials.material_field``)."""
-    from core.materials import pdf_material_fields
-
-    cache = st.session_state.setdefault(FIELDS, {})
-    if doc_id not in cache:
-        cache[doc_id] = pdf_material_fields(doc["load"]())
-    return cache[doc_id]
-
-
-def _text(doc_id: str, doc: dict) -> str:
-    return "\n".join(text for _, text in pages(doc_id, doc))
+    """A PDF's text as the PDF reader read it ("" for other files)."""
+    f = files.get(doc_id)
+    if f is None or f.kind != "pdf":
+        return ""
+    res = files.result(doc_id)
+    return "\n".join(t for _, t in res.record[0]) if res is not None and res.record else ""
 
 
 _ROWS = 30   # files listed at once: a big RFQ has hundreds, each with a part picker
@@ -180,7 +135,7 @@ def render_doc_list(parts: dict[str, str], labels: dict[str, str]) -> None:
     for d in shown:
         doc = all_docs[d]
         c1, c2, c3 = st.columns([3, 4, 1], vertical_alignment="center")
-        c1.markdown(f"{'📄' if doc['kind'] == 'pdf' else '🧊'} {doc['name']}")
+        c1.markdown(f"{'📄' if doc.kind == 'pdf' else '🧊'} {doc.name}")
         current = linked.get(d, "")
         key = f"dxf_doc_link_{d}_{current}"
         if st.session_state.get(key) not in options:   # seeded, not a default: kept keys
@@ -201,21 +156,21 @@ def render_card_docs(card_id: str, doc_ids: list[str]) -> None:
     doc_ids = [d for d in doc_ids if d in all_docs]
     if not doc_ids:
         return
-    names = ", ".join(all_docs[d]["name"] for d in doc_ids)
+    names = ", ".join(all_docs[d].name for d in doc_ids)
     with st.expander(f"Piirustukset: {names}"):
         for d in doc_ids:
             doc = all_docs[d]
-            if doc["kind"] == "pdf":
-                png = _preview(d, doc["load"])
+            if doc.kind == "pdf":
+                png = _preview(d, doc.load)
                 if png:
-                    st.image(png, caption=doc["name"], width="stretch")
+                    st.image(png, caption=doc.name, width="stretch")
                 else:
-                    st.caption(f"{doc['name']}: esikatselua ei voitu tehdä.")
+                    st.caption(f"{doc.name}: esikatselua ei voitu tehdä.")
             else:
                 _step_preview(card_id, d)
-            st.download_button(f"Avaa {doc['name']}", data=doc["load"](),
-                               file_name=doc["name"], key=f"dxf_doc_dl_{card_id}_{d}",
-                               mime="application/pdf" if doc["kind"] == "pdf"
+            st.download_button(f"Avaa {doc.name}", data=doc.load(),
+                               file_name=doc.name, key=f"dxf_doc_dl_{card_id}_{d}",
+                               mime="application/pdf" if doc.kind == "pdf"
                                else "application/step")
 
 

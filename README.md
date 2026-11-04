@@ -51,10 +51,14 @@ the quantity). Work has no margin; its rates are selling prices.
   model's (a flat DXF often has no bend lines), and the card's preview draws
   the model's bend lines on the DXF (green up, orange down), lined up with it
   even when the DXF is turned or mirrored.
-- **Fasteners** (kiinnikkeet: press nuts, screws, bolts, rivets…): count ×
-  (one fastener's price + putting one in). By default 0.80 + 0.20 € in RST/HST
-  and 0.05 + 0.20 € otherwise. The DXF gives the count from notes like
-  "M5-PURISTEMUTTERIT X4KPL".
+- **Ostetut osat** (the part's fasteners: press nuts, screws, bolts,
+  rivets…): a table in Työvaiheet, one row per fastener the drawing calls out
+  (notes like "M5-PURISTEMUTTERIT X4KPL" in the DXF, or PEM/KALEI callouts
+  in its PDF), with **Mistä** naming the file. Each row is kpl / osa ×
+  (€/kpl + Asennus), by default 0.80 + 0.20 € in RST/HST and 0.05 + 0.20 €
+  otherwise; rows can be edited and added by hand. They are the part's own,
+  so they stay with it in an assembly, and show as `└ … (ostettu)` rows under
+  it in Eräkohtaiset hinnat. (Pikalaskuri keeps a count × two prices.)
 - **Welding**: metres ÷ m/h × €/h. **Subcontracting** €/kpl.
 - **Setup** per batch by the number of work phases: 40 / 60 / 80 €.
 
@@ -129,10 +133,12 @@ and in the whole model. Each body is checked for sheet metal:
 - A sheet part has two parallel skins at one thickness, made of flat flanges
   and cylindrical bends. One skin is laid flat face by face, with every bend
   at its neutral radius `inner radius + K × thickness` (the **K-kerroin**,
-  default 0.44). The flat outline, holes and bend lines become a part card,
-  with the model's total as its quantity. The card's bends come from the bend
-  lines (layers `BEND_UP` / `BEND_DOWN`), so the work cost uses them. The thickness note (`t = 2 mm`) is read
-  for the material.
+  default 0.44). The flat outline, holes and bend lines become the card's
+  FlatShape straight from the unfolded body (`core.readers.shape_from_flat`):
+  no DXF is written and read back, so nothing is guessed again from lines.
+  Its quantity is the model's total, its bends (with angle, radius and
+  direction) price the bending, and its thickness (`t = 2 mm`) is the
+  model's, measured.
 - **What counts as a bend.** Each cylinder of the skin is a bend, as in
   FreeCAD's SheetMetal unfolder: tabs notched apart and the bridges either
   side of a slot each count. One cylinder exported as several faces (same
@@ -205,6 +211,15 @@ parts, work and contents.
   becomes an assembly of the cards with those numbers, 1 kpl each, with the
   drawing shown in it instead of as a card in Osat. The ones neither dropped
   yet nor added as bought parts are listed as awaited.
+- **One per part number.** A STEP model and an assembly drawing with the
+  same part number are one assembly. A part's kpl / kokoonpano comes from the
+  STEP model first, then the drawing's BOM lines (`2 ITM-064555 Levy 3 pcs`),
+  then 1 for a part only called out.
+- **Subassemblies.** A part number an assembly drawing calls out that is
+  another assembly's makes that one its subassembly, × its BOM kpl. It is
+  priced inside its parent (at `q × how many go into one`), shows as a
+  `└ 🧩` row with its own rows under it, and is not a quote line itself. A
+  part sits in one place: a card in a subassembly is not also in its parent.
 - **Removing.** An assembly's **Poista** removes it with its parts' cards
   (one also in another assembly stays), its drawing and its STEP file.
 - **Apart from the loose parts.** **Osat** lists only the parts in no
@@ -212,10 +227,12 @@ parts, work and contents.
   Their **Määrä** starts as kpl / kokoonpano × the largest batch size (a
   loose card's as its BOM quantity or the largest batch size), filled in: the quantity they
   are nested at. A typed Määrä is nested instead; clearing it goes back.
-- **No cost twice.** A card in an assembly has no fasteners or welding: the
-  assembly's bought parts (PEM nuts and studs too, with their pressing as
-  Asennus) and its welding price them. The card keeps the part's own work
-  and its setup (laser, bending); the assembly's setup is for assembling.
+- **No cost twice.** A card in an assembly has no welding: the assembly
+  welds its parts together. The card keeps the part's own work, its own
+  Ostetut osat (its fasteners) and its setup (laser, bending); the
+  assembly's bought parts are only its own (a STEP model's other bodies, an
+  assembly drawing's notes, rows typed in), and its setup is for assembling.
+  Fasteners never make an assembly.
 - **Pricing.** A batch size counts assemblies. Each part is priced at
   `batch × kpl / kokoonpano` pieces, so its setup and sheets are shared over
   all of them. One assembly costs its parts' €/kpl × kpl/kokoonpano, plus the
@@ -270,6 +287,13 @@ converted to DXF (`core/dwg.py`), by the first converter found:
 
 Without either, or when a conversion fails, the part's card says why and asks
 for the drawing as DXF.
+
+The converted DXF's OBJECTS section (groups, layouts, plot settings and other
+settings the app never reads) is removed before the DXF is read. LibreDWG can
+write it so that ezdxf refuses the whole file ("Invalid handle 0"), and the
+app then had to fall back to LibreDWG's minimal DXF, which loses the
+dimensions, dashed bend lines and blocks. That fallback is still there for a
+file that fails in another way.
 
 `bin/dwg2dxf` (Linux) is built from the LibreDWG source by the GitHub Actions
 workflow `.github/workflows/build-dwg2dxf.yml`, which also checks that a plate
@@ -337,12 +361,14 @@ core/                   pure logic, no Streamlit
   work.py               work: laser table, cutting / bends / threads / welding / setup, sheet minimum
   batches.py            prices per batch size from one nesting
   quote.py              quote PDF, Excel export, clean DXFs and their ZIP
-  assemblies.py         assemblies: parts × kpl/kokoonpano + bought parts + assembly work
+  assemblies.py         assemblies: parts × kpl/kokoonpano, subassemblies, bought parts, work
   linking.py            part numbers from file names; files → parts by name or text
   archive.py            dropped ZIPs: files folder by folder, nested ZIPs, Finnish names
-  items.py              one card per part: grouping its files, choosing the shape
+  model.py              the data model: InputFile, FlatShape, Fact, ReadResult, PartSource…
+  readers.py            one reader per file type: DXF, DWG, STEP, PDF → shapes and facts
+  items.py              one card per part (Item, PartSource): grouping its files, choosing the shape
   materials.py          material/thickness hints, the Material field, proposals
-  step.py               STEP: BOM with quantities, sheet unfolding, flat DXF, 3D mesh
+  step.py               STEP: BOM with quantities, sheet unfolding, a flat's card file, 3D mesh
   programs.py           repeatable programs: the kit search both packers share
   cutting_stock.py      the fewest-sheets plan: candidate sheets + integer program
   rect_nesting.py       bounding-box packer (manual tab)
@@ -359,11 +385,13 @@ view/                   Streamlit UI
   sidebar.py            price-list upload, supplier status, copper price
   calculator_tab.py     manual tab and its product cards
   dxf_tab.py            DXF tab: the order of the page and the part cards
+  files.py              the session's InputFiles and their ReadResults
   dxf_files.py          the DXF tab's dropped files, grouped into cards (ingest, sync, remove)
   dxf_nesting.py        the DXF tab's run row, the Sparrow runs, cached results and prices
   common.py             inputs, the per-group loop, totals, pieces summary
   sheet_usage.py        the sheet-size table, metrics and price breakdown
   work.py               the work rates (sidebar), Työvaiheet on the cards, work per product
+  bought.py             Ostetut osat: the one bought-parts table of cards and assemblies
   quote.py              the Tarjous header, prices per batch size and the downloads
   attachments.py        PDF/STEP files on the DXF tab, links, previews
   material_agent.py     materials filled in from each card's files
@@ -496,6 +524,38 @@ With Sparrow each kit check is a solver run, so at most four are made per sheet
 size (`_KIT_BUDGET` in `core/sparrow.py`). The rectangle packer is instant and
 has no limit.
 
+## Data model
+
+The app is built on `core/model.py`; data flows one way:
+
+1. **InputFile** (`view/files.py` keeps them, in drop order): every dropped
+   file and every file in a ZIP, with its kind, folder, size and status
+   (`read`, `failed`, `waiting` for a big STEP model of a large drop). Its
+   bytes are not copied: a file of a ZIP is read from it again when needed.
+2. **Readers** (`core/readers.py`), one per kind, each returning a
+   `ReadResult` of FlatShapes and Facts, kept per file in `view/files.py`:
+   - DXF: read when dropped.
+   - DWG: converted (`DwgConversion`), then read exactly like a DXF.
+   - STEP: through `view/bom.py`, with the K factor; each sheet body becomes
+     a FlatShape, checked and laid along its length like a DXF part. The
+     model is kept only as its file's ReadResult.
+   - PDF: read the first time something asks (text, Material field,
+     fasteners, BOM rows, called-out part numbers).
+3. **Facts** are what the rest of the app reads: a card's material and
+   thickness (DXF/DWG texts, its PDFs' Material field and text, the STEP
+   model's measured sheet), its fasteners (its Ostetut osat), an assembly
+   drawing's called-out parts and BOM kpl, the BOM quantities of loose
+   parts, whether a file is a drawing sheet.
+4. **Part** (one card per part number, `view/dxf_files.py` keeps them): its
+   files as `PartSource`s, the one priced (its FlatShape is what the card
+   shows, Sparrow nests and the price measures), its quantity and work, its
+   own bought parts, and its material and thickness as `Value`s: what the files say (with where from, or why they disagree) and
+   what was chosen by hand, which wins. **Assembly** (one per part number,
+   with subassemblies, its `BoughtPart`s and `AssemblyWork`). All of these
+   are in `core/model.py`; `core/items.py` and `core/assemblies.py` only
+   group, score and price them.
+5. Nesting and price, computed.
+
 ## How a DXF file is read
 
 `core/dxf.py` reads each file once. The card preview, the Sparrow nesting and
@@ -514,6 +574,18 @@ the price all use the same result.
 - **The part** is the largest closed outline. Outlines directly inside it are
   its holes, and anything outside it (detail views, sketches, stray lines) is
   dropped.
+- **Drawing sheets**: the frame is never the part. A frame is the largest
+  outline when it is a rectangle with lines joined to it from inside (its
+  title block). The frame, the title block and whatever is drawn in its boxes
+  are set aside, and the lines left are grouped into views (lines within
+  2 mm are one view). The part is the first view one of these picks out:
+  the only view; the view with a bend note in it ("UP 90° R 2"); the view
+  with dashed bend lines from edge to edge; a profile's blank (see below);
+  the only view whose outline stands alone with holes in it (a projected
+  view's outline goes on into its other edges). When none does, the card
+  says the drawing has several views and asks for the part's DXF. The view
+  then goes through the same checks as any part: holes, bends, threads,
+  scale and cut length.
 - **Laid along its length**: the part is turned so its smallest bounding
   rectangle lies straight, long side horizontal, as a designer lays it before
   nesting. A curved strip drawn diagonally (2120 × 2061 mm as drawn) is then
@@ -525,6 +597,10 @@ the price all use the same result.
   ¾-circle around a hole).
 - **Slits**: a single straight line inside the part (louvres, lanced slits)
   is cut as a line and counted in the cut length.
+- **Skipped**: a kind of drawing object the reader can't use yet (an embedded
+  OLE object, a 3D solid, …) is left out, and the console says so, e.g.
+  `M3440659-00.dwg: skipped what can't be read on layer '0': OLE2FRAME ×1`.
+  It never stops the part from being priced.
 - **Not priced**, with the reason shown on the card: the file can't be read,
   there is no closed outline, an open line that isn't straight sits inside
   the part (a gap in a hole's outline), or an outline crosses itself.

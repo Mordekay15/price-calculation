@@ -38,6 +38,7 @@ def test_a_page_links_a_pdf_by_its_text():
         import streamlit as st
         from reportlab.pdfgen import canvas
 
+        from core.model import InputFile
         from view import attachments
 
         buf = io.BytesIO()
@@ -46,7 +47,7 @@ def test_a_page_links_a_pdf_by_its_text():
         pdf.drawString(72, 700, "DRW-023179.A")
         pdf.save()
         if not attachments.docs():
-            attachments.add_doc("d1", "DRW-023179.A.pdf", buf.getvalue())
+            attachments.add_doc(InputFile("d1", "DRW-023179.A.pdf", "pdf", None), buf.getvalue())
         st.session_state["links"] = attachments.links(
             {"f1": "ITM-072558_A.dxf", "f2": "ITM-072560_A.dxf"})
 
@@ -82,7 +83,13 @@ def test_an_assembly_drawing_calls_out_its_items():
 
 
 def test_a_bom_row_gives_its_parts_quantity():
-    from core.linking import bom_quantities
+    from core.linking import bom_quantities as by_rows
+    from core.readers import _bom_facts
+
+    def bom_quantities(cards, texts):     # the PDF reader's BOM rows, then the cards
+        rows = {d: [(f.value["part_key"], f.value["kpl"]) for f in _bom_facts(t, d, 1, "")]
+                for d, t in texts.items()}
+        return by_rows(cards, rows)
 
     bom = ("Pos ID.Rev Thumbnail Name and Description EN Qty Unit QRCode\n"
            "PH-002620.1 031 - Subcontractor Laser cutting Stencil 1\n"
@@ -96,3 +103,29 @@ def test_a_bom_row_gives_its_parts_quantity():
     # Two BOMs that both need the part: their quantities add up.
     other = "10 ITM-064555 Plate 3 pcs"
     assert bom_quantities(cards, {"a.pdf": bom, "b.pdf": other})["c1"] == (5, ["a.pdf", "b.pdf"])
+
+
+def test_names_with_the_same_letters_written_two_ways_link():
+    # "ö" as one character (Windows) and as "o" + its dots (macOS, some ZIPs).
+    import unicodedata
+
+    dxf = unicodedata.normalize("NFC", "30300044 Pöydän kiinnityslevy SH2280.DXF")
+    pdf = unicodedata.normalize("NFD", "30300044 Pöydän kiinnityslevy SH2280.pdf")
+    assert dxf != pdf.replace(".pdf", ".DXF")
+    assert link_files({"c": dxf}, {"d": pdf}) == {"c": ["d"]}
+
+
+def test_a_flat_pattern_export_links_to_its_part_numbers_pdf():
+    # SolidWorks names the exported flat "<part> - Flat pattern.DXF".
+    for dxf in ("13025 - Flat pattern.DXF", "13025-FlatPattern.dxf", "13025_flat.dxf",
+                "13025-Sheet1.dxf", "13025_A - Flat pattern.dxf"):
+        assert part_key(dxf) == "13025", dxf
+        assert link_files({"c": dxf}, {"d": "13025.pdf"}) == {"c": ["d"]}
+    assert part_key("flat.dxf") == "flat"               # nothing else to go by
+
+
+def test_a_name_with_a_description_links_by_its_leading_number():
+    assert link_files({"c": "30300044 Pöydän kiinnityslevy SH2280.DXF"},
+                      {"d": "30300044.pdf"}) == {"c": ["d"]}
+    assert link_files({"c": "30300044 Pöydän kiinnityslevy.DXF"},
+                      {"d": "30300045 Pöydän kiinnityslevy.pdf"}) == {}

@@ -1,6 +1,5 @@
-"""The quote in the UI: the bar above the tabs (the quote's name, the batch
-sizes, the quote's details behind a button, and the live total at each batch
-size), and under each tab's results the price per
+"""The quote in the UI: the bar above the tabs (the batch sizes and the live
+total at each batch size), and under each tab's results the price per
 batch size with the downloads: the quote PDF, the Excel export and, on the
 DXF tab, the clean DXFs for production (see ``core.batches``, ``core.quote``)."""
 
@@ -8,9 +7,8 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass
-from datetime import date
 
-from core.assemblies import Assembly, assembly_prices, fit_eur, per_unit
+from core.assemblies import fit_eur, per_unit, tops, tree_prices
 from core.batches import (
     DEFAULT_BATCH_SIZES,
     BatchPart,
@@ -18,10 +16,10 @@ from core.batches import (
     batch_prices,
     parse_batch_sizes,
 )
+from core.model import Assembly, Product
 from core.quote import (
     DEFAULT_DXF_NAME,
     CleanPart,
-    QuoteInfo,
     QuoteLine,
     clean_dxf_zip,
     fmt_eur,
@@ -34,13 +32,6 @@ from view.ui import is_headless, st
 from view.work import current_rates
 
 _SIZES_KEY = "quote_batch_sizes"
-_FIELDS = {                           # QuoteInfo field -> widget key
-    "number": "quote_number", "customer": "quote_customer",
-    "customer_address": "quote_customer_address", "contact": "quote_contact",
-    "seller": "quote_seller", "company": "quote_company",
-    "company_address": "quote_company_address", "payment_terms": "quote_payment",
-    "delivery": "quote_delivery", "notes": "quote_notes",
-}
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
@@ -57,46 +48,24 @@ class Totals:
 
 
 def render_header(clear_all=None):
-    """The bar above the tabs: the quote's name, the batch sizes, the quote's
-    details behind a button and, given ``clear_all`` (a callback), "Tyhjennä
-    kaikki" behind one confirming click. Returns the place for the totals, filled
-    once the open tab has priced (``render_totals``). Both tabs read it back
-    with ``current_info`` and ``current_sizes``."""
-    d = QuoteInfo()
-    ss = st.session_state
+    """The bar above the tabs: the batch sizes and, given ``clear_all`` (a
+    callback), "Tyhjennä kaikki" behind one confirming click. Returns the place
+    for the totals, filled once the open tab has priced (``render_totals``).
+    Both tabs read the sizes back with ``current_sizes``."""
     bar = st.container(border=True)
     with bar:
-        name, sizes, details, clear = st.columns([5, 2, 2, 2], vertical_alignment="bottom")
-        title = " · ".join(filter(None, [
-            "Tarjous " + ss["quote_number"] if ss.get("quote_number") else "Uusi tarjous",
-            ss.get("quote_customer")]))
-        name.markdown(f"#### {title}")
+        name, sizes, clear = st.columns([7, 2, 2], vertical_alignment="bottom")
+        name.markdown("#### Tarjous")
         sizes.text_input("Eräkoot (kpl)", value=" ".join(map(str, DEFAULT_BATCH_SIZES)),
                          key=_SIZES_KEY,
                          help="Jokainen osa hinnoitellaan näillä kappalemäärillä, esim. "
                               "\"1 5 10\". Osakortin määrä on se, jolla levyt nestataan; "
                               "muiden eräkokojen materiaali arvioidaan siitä.")
-        with details.popover("Tarjouksen tiedot", width="stretch"):
-            c = st.columns(2)
-            c[0].text_input("Tarjousnumero", key=_FIELDS["number"])
-            c[1].text_input("Asiakas", key=_FIELDS["customer"])
-            c[0].text_input("Yhteyshenkilö", key=_FIELDS["contact"])
-            c[1].text_input("Myyjä", key=_FIELDS["seller"])
-            c[0].text_input("Asiakkaan osoite", key=_FIELDS["customer_address"])
-            c[1].date_input("Tarjouspäivä", value=date.today(), key="quote_date",
-                            format="DD.MM.YYYY")
-            c[0].number_input("Voimassa (pv)", min_value=1, value=d.valid_days, step=1,
-                              key="quote_valid_days")
-            c[1].text_input("Maksuehto", value=d.payment_terms, key=_FIELDS["payment_terms"])
-            c[0].text_input("Toimitus", value=d.delivery, key=_FIELDS["delivery"])
-            c[1].text_input("Yritys", value=d.company, key=_FIELDS["company"])
-            st.text_input("Yrityksen osoite", key=_FIELDS["company_address"])
-            st.text_area("Lisätiedot tarjoukseen", key=_FIELDS["notes"], height=68)
         if clear_all is not None:
             with clear.popover("Tyhjennä kaikki", width="stretch"):
                 st.button("Kyllä, tyhjennä", key="ui_clear_all", type="primary",
                           on_click=clear_all, width="stretch",
-                          help="Poistaa tiedostot, osat ja tarjouksen tiedot. Hinnastot ja "
+                          help="Poistaa tiedostot ja osat. Hinnastot ja "
                                "työn hinnat sivupalkissa jäävät.")
         return st.container()
 
@@ -126,20 +95,10 @@ def current_sizes() -> list[int]:
             or list(DEFAULT_BATCH_SIZES))
 
 
-def current_info() -> QuoteInfo:
-    ss = st.session_state
-    d = QuoteInfo()
-    return QuoteInfo(
-        **{f: str(ss.get(k, getattr(d, f)) or "") for f, k in _FIELDS.items()},
-        quote_date=ss.get("quote_date") or date.today(),
-        valid_days=int(ss.get("quote_valid_days", d.valid_days)),
-    )
-
-
 # ── Prices per batch size ─────────────────────────────────────────────────────
 
-def render_batch_prices(products: list[dict], prices: dict[str, float],
-                        groups: dict[tuple, list[dict]], sheets: dict[tuple, int],
+def render_batch_prices(products: list[Product], prices: dict[str, float],
+                        groups: dict[tuple, list[Product]], sheets: dict[tuple, int],
                         totals: dict[tuple, float], *, lead: str, key: str,
                         areas_mm2: dict[str, float] | None = None,
                         clean_parts: list[CleanPart] | None = None,
@@ -155,8 +114,8 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
     for the bar (None when nothing is priced); headless, only that, without
     making the downloads."""
     costs = piece_costs(products, prices, areas_mm2)
-    group_of = {p["id"]: k for k, prods in groups.items() for p in prods}
-    costs = [pc for pc in costs if pc.product["id"] in group_of]
+    group_of = {p.id: k for k, prods in groups.items() for p in prods}
+    costs = [pc for pc in costs if pc.product.id in group_of]
     if not costs:
         return None
 
@@ -164,45 +123,45 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
     group_sheets = {}
     for k, prods in groups.items():
         if k in totals and k in sheets:
-            kg = sum(pc.kg * pc.product["qty"] for pc in costs
-                     if group_of[pc.product["id"]] == k)
+            kg = sum(pc.kg * pc.product.qty for pc in costs
+                     if group_of[pc.product.id] == k)
             group_sheets[k] = GroupSheets(totals[k], sheets[k], kg)
-    assemblies = [a for a in assemblies or [] if a.members or a.bought]
+    assemblies = [a for a in assemblies or [] if a.parts or a.bought or a.children]
     in_assembly = per_unit(assemblies)
-    parts = [BatchPart(pc.product["id"], group_of[pc.product["id"]], pc.kg,
-                       pc.product.get("work"), in_assembly.get(pc.product["id"], 1))
+    parts = [BatchPart(pc.product.id, group_of[pc.product.id], pc.kg,
+                       pc.product.work, in_assembly.get(pc.product.id, 1))
              for pc in costs]
     rates = current_rates()
     by_part = batch_prices(parts, group_sheets, sizes, rates)
 
     def name(pc) -> str:
-        return str(pc.product.get("name", pc.index + 1))
+        return str(pc.product.name or pc.index + 1)
 
-    lines = [QuoteLine(name(pc), pc.product["material"] or "", pc.product["thickness"] or "",
-                       tuple(by_part[pc.product["id"]]))
-             for pc in costs if pc.product["id"] not in in_assembly]
-    names = {pc.product["id"]: name(pc) for pc in costs}
-    members: list[list[dict]] = []      # each assembly's rows in the table
+    lines = [QuoteLine(name(pc), pc.product.material or "", pc.product.thickness or "",
+                       tuple(by_part[pc.product.id]))
+             for pc in costs if pc.product.id not in in_assembly]
+    names = {pc.product.id: name(pc) for pc in costs}
+    works = {pc.product.id: pc.product.work for pc in costs}
+    # Each line's └ rows in the table: a loose part's own bought parts, an
+    # assembly's parts (each with its own bought parts), bought parts and work.
+    subs: list[list[dict]] = [_bought_rows(works[pc.product.id], 1, 1, len(sizes))
+                              for pc in costs if pc.product.id not in in_assembly]
     priced: list[tuple[Assembly, dict, tuple]] = []     # for the breakdown
+    units = {pid: [p.unit for p in by_part[pid]] for pid in by_part}
+    tree = tree_prices(assemblies, units, sizes, rates)
+    asm_names = {a.id: a.name for a in assemblies}
     for a in assemblies:
-        units = {pid: [p.unit for p in by_part[pid]] for pid, _ in a.members if pid in by_part}
-        contents = tuple([f"{names.get(pid, '?')} × {n}" for pid, n in a.members]
+        priced.append((a, units, tree[a.id]))
+    for a in tops(assemblies):
+        contents = tuple([f"{names.get(pid, '?')} × {n}" for pid, n in a.parts.items()]
+                         + [f"{asm_names[c]} × {n}" for c, n in a.children.items() if c in tree]
                          + [f"{b.name} × {b.qty}" for b in a.bought])
-        lines.append(QuoteLine(a.name, prices=tuple(assembly_prices(a, units, sizes, rates)),
-                               parts=contents or ("—",)))
-        prices = lines[-1].prices
-        priced.append((a, units, prices))
+        prices = tuple(tree[a.id])
+        lines.append(QuoteLine(a.name, prices=prices, parts=contents or ("—",)))
         # Each row is what it adds to one assembly (kpl/kok. × €/kpl), so the
         # rows add up to the assembly's €/kpl; its quantity is per batch.
-        members.append(
-            [{"name": f"\u2003└ {names.get(pid, '?')} × {n}", "per": n,
-              "units": [None if u is None else u * n
-                        for u in units.get(pid, [None] * len(sizes))]}
-             for pid, n in a.members]
-            + [{"name": f"\u2003└ {b.name} × {b.qty} (ostettu)", "per": b.qty,
-                "units": [b.unit * b.qty] * len(sizes)} for b in a.bought]
-            + ([{"name": "\u2003└ Kokoonpanotyö", "per": None,
-                 "units": [p.work for p in prices]}] if any(p.work for p in prices) else []))
+        subs.append(_assembly_rows(a, 1, {x.id: x for x in assemblies}, tree, units, names,
+                                   works, len(sizes)))
     line_totals = quote_totals(lines, len(sizes))
     result = Totals(sizes, line_totals, missing, margin_pct)
     if is_headless():
@@ -217,43 +176,38 @@ def render_batch_prices(products: list[dict], prices: dict[str, float],
         "hukalla. Eräkoot muutetaan sivun ylälaidasta."
         + (" 🧩 Kokoonpanon └-rivit ovat sen osuuksia yhdestä kokoonpanosta "
            "(kpl / kokoonpano × €/kpl), ja niiden summa on kokoonpanon kpl-hinta."
-           if assemblies and table else "")))
+           if assemblies and table else "")
+        + (" Osan alla oleva └ … (ostettu) -rivi on sen omat ostetut osat (kiinnikkeet), "
+           "jotka sisältyvät osan hintaan." if table and any(subs) else "")))
     if table:
-        _render_table(lines, members, sizes, lead)
+        _render_table(lines, subs, sizes, lead)
     _render_breakdown(costs, names, by_part, priced, sizes, rates, key, folded=table)
 
-    info = current_info()
-    stem = f"tarjous_{info.number or 'uusi'}".replace(" ", "_")
+    stem = "tarjous"
     c1, c2, c3 = st.columns([2, 2, 3])
     show_material = c3.checkbox("Näytä materiaali PDF:ssä", value=True,
                                 key=f"quote_pdf_mat_{key}")
-    pdf = _file(lambda: quote_pdf(info, lines, sizes, line_totals,
+    pdf = _file(lambda: quote_pdf(lines, sizes, line_totals,
                                   show_material=show_material), "reportlab", c1)
     if pdf is not None:
         c1.download_button("Lataa tarjous-PDF", type="primary", key=f"quote_pdf_{key}",
                            data=pdf, file_name=f"{stem}.pdf", mime="application/pdf")
-    xlsx = _file(lambda: quote_xlsx(info, lines, sizes), "openpyxl", c2)
+    xlsx = _file(lambda: quote_xlsx(lines, sizes), "openpyxl", c2)
     if xlsx is not None:
         c2.download_button("Excel-vienti", key=f"quote_xlsx_{key}",
                            data=xlsx, file_name=f"{stem}.xlsx",
                            mime="application/vnd.openxmlformats-officedocument."
                                 "spreadsheetml.sheet")
-    _render_customer_view(info, lines, sizes, line_totals, key)
+    _render_customer_view(lines, sizes, line_totals, key)
     if clean_parts:
         _render_clean_dxfs(clean_parts, key)
     return result
 
 
-def _render_customer_view(info: QuoteInfo, lines: list[QuoteLine], sizes: list[int],
+def _render_customer_view(lines: list[QuoteLine], sizes: list[int],
                           totals: list[float | None], key: str) -> None:
-    """The quote as the customer gets it in the PDF: the header, then each
-    line's €/kpl at each batch size and the totals."""
+    """The quote as the customer gets it in the PDF: each line's €/kpl at each batch size and the totals."""
     with st.expander("Esikatsele tarjous asiakkaan näkymänä"):
-        head = " · ".join(filter(None, [
-            f"Tarjous {info.number}" if info.number else "Tarjous",
-            info.customer, info.quote_date.strftime("%d.%m.%Y"),
-            f"voimassa {info.valid_days} pv"]))
-        st.markdown(f"**{head}**")
         rows = []
         for line in lines:
             row = {"Nimike": ("🧩 " if line.is_assembly else "") + line.name,
@@ -301,22 +255,56 @@ def _eur(v: float | None) -> str:
     return "–" if v is None else f"{v:,.2f}"
 
 
-def _render_table(lines: list[QuoteLine], members: list[list[dict]], sizes: list[int],
+def _assembly_rows(a: Assembly, depth: int, by_id: dict[str, Assembly], tree: dict,
+                   units: dict, names: dict, works: dict, n: int) -> list[dict]:
+    """An assembly's └ rows: its parts (each with its own bought parts), its
+    subassemblies (each with its rows, one step in), bought parts and work."""
+    pad = "\u2003" * depth
+    rows = []
+    for pid, k in a.parts.items():
+        rows.append({"name": f"{pad}└ {names.get(pid, '?')} × {k}", "per": k,
+                     "units": [None if u is None else u * k for u in units.get(pid, [None] * n)]})
+        rows += _bought_rows(works.get(pid), k, depth + 1, n)
+    for c, k in a.children.items():
+        if c in tree:
+            rows.append({"name": f"{pad}└ 🧩 {by_id[c].name} × {k}", "per": k,
+                         "units": [None if p.unit is None else p.unit * k for p in tree[c]]})
+            rows += [{**r, "per": None if r["per"] is None else r["per"] * k,
+                      "units": [None if u is None else u * k for u in r["units"]]}
+                     for r in _assembly_rows(by_id[c], depth + 1, by_id, tree, units, names,
+                                             works, n)]
+    rows += [{"name": f"{pad}└ {b.name} × {b.qty} (ostettu)", "per": b.qty,
+              "units": [b.unit * b.qty] * n} for b in a.bought]
+    prices = tree[a.id]
+    if any(p.work for p in prices):
+        rows.append({"name": f"{pad}└ Kokoonpanotyö", "per": None,
+                     "units": [p.work for p in prices]})
+    return rows
+
+
+def _bought_rows(work, per: int, depth: int, n_sizes: int) -> list[dict]:
+    """A part's own bought parts (``WorkInputs.bought``) as └ rows: what each
+    adds to one quote line, ``per`` pieces of the part in it."""
+    return [{"name": "\u2003" * depth + f"└ {b.name} × {b.qty} (ostettu)", "per": b.qty * per,
+             "units": [b.unit * b.qty * per] * n_sizes}
+            for b in (getattr(work, "bought", None) or ())]
+
+
+def _render_table(lines: list[QuoteLine], subs: list[list[dict]], sizes: list[int],
                   lead: str) -> None:
-    """Every quote line's €/kpl at every batch size, each assembly's rows
-    under it."""
+    """Every quote line's €/kpl at every batch size, its └ rows (``subs``,
+    one list per line) under it."""
     def qty(per: int | None) -> str:
         return "" if per is None else " · ".join(str(q * per) for q in sizes)
 
     rows = []
-    sub = iter(members)
-    for line in lines:
+    for line, sub in zip(lines, subs):
         row = {lead: ("🧩 " if line.is_assembly else "") + line.name, "Määrä": qty(1),
                "Materiaali": line.material, "Paksuus": line.thickness}
         for q, p in zip(sizes, line.prices):
             row[f"{q} kpl, €/kpl"] = None if p.unit is None else round(p.unit, 2)
         rows.append(row)
-        for m in (next(sub) if line.is_assembly else []):
+        for m in sub:
             rows.append({lead: m["name"], "Määrä": qty(m["per"]), "Materiaali": "",
                          "Paksuus": "",
                          **{f"{q} kpl, €/kpl": None if u is None else round(u, 2)
@@ -340,7 +328,7 @@ def _render_breakdown(costs, names: dict[str, str], by_part: dict[str, list],
             "laskurien asetus ovat €/erä, ja ne jaetaan erän kappaleille."))
         rows = []
         for pc in costs:
-            pid = pc.product["id"]
+            pid = pc.product.id
             bp = by_part[pid][i]
             w = bp.work
             row = {"Osa": names[pid], "Kpl erässä": bp.qty, "Levyjä": bp.sheets,
@@ -354,27 +342,33 @@ def _render_breakdown(costs, names: dict[str, str], by_part: dict[str, list],
             rows.append(row)
         st.dataframe(rows, width="stretch", hide_index=True)
 
+        tree = {a.id: prices for a, _, prices in priced}
+        asm_names = {a.id: a.name for a, _, _ in priced}
         for a, units, prices in priced:
             p = prices[i]
             w = a.work
             parts = " + ".join(
                 f"{names.get(pid, '?')} {n} × {_eur(units[pid][i] if pid in units else None)}"
-                for pid, n in a.members) or "—"
+                for pid, n in a.parts.items())
+            kids = " + ".join(f"🧩 {asm_names.get(c, '?')} {n} × {_eur(tree[c][i].unit)}"
+                              for c, n in a.children.items() if c in tree)
+            parts = " + ".join(filter(None, [parts, kids])) or "—"
             bought = " + ".join(f"{b.name} {b.qty} × ({b.eur:,.2f} + {b.fit_eur:,.2f})"
                                 for b in a.bought) or "—"
             steps = [
                 ("1. Osat (kpl / kok. × €/kpl)", parts, _eur(p.parts)),
                 ("2. Ostetut osat (kpl × (€/kpl + asennus))", bought, _eur(p.bought)),
                 ("3. Kokoonpanotyö",
-                 f"({w.setup_min:g} min / {q} + {w.fit_min:g} min) / 60 × {w.eur_per_h:g} €/h",
-                 _eur(fit_eur(w, q))),
+                 f"({w.setup_min:g} min / {p.qty} + {w.fit_min:g} min) / 60 × {w.eur_per_h:g} €/h",
+                 _eur(fit_eur(w, p.qty))),
                 ("4. Hitsaus",
                  f"{w.weld_m:g} m / {rates.weld_m_per_h:g} m/h × {rates.weld_eur_per_h:g} €/h",
                  _eur(rates.weld_eur(w.weld_m))),
                 ("5. Muut", "per kokoonpano", _eur(w.other_eur)),
                 ("6. Kokoonpanon kpl-hinta", "1 + 2 + 3 + 4 + 5", _eur(p.unit)),
-                ("7. Yhteensä", f"{_eur(p.unit)} × {q} kok.", _eur(p.total)),
+                ("7. Yhteensä", f"{_eur(p.unit)} × {p.qty} kok.", _eur(p.total)),
             ]
-            st.markdown(f"**🧩 {a.name}, eräkoko {q}**")
+            st.markdown(f"**🧩 {a.name}, eräkoko {q}**" if p.qty == q else
+                        f"**🧩 {a.name} (alikokoonpano, {p.qty} kpl eräkoolla {q})**")
             st.dataframe([{"Vaihe": v, "Laskenta": c, "Arvo €": val} for v, c, val in steps],
                          width="stretch", hide_index=True)

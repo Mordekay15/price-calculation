@@ -1,4 +1,4 @@
-"""DWG drawings: converted to DXF, then read like any DXF (``core.dxf``).
+"""DWG drawings converted to DXF, for the DWG reader (``core.readers.read_dwg_file``).
 
 Python can't read DWG (AutoCAD's closed format), so a converter does it, the
 first one found of:
@@ -10,7 +10,13 @@ first one found of:
    official build with its DLLs), or ``dwg2dxf`` on the ``PATH``.
 
 With neither, or when the conversion fails, the file comes back with a
-problem that says to save it as DXF."""
+problem that says to save it as DXF.
+
+The converted DXF's OBJECTS section is removed before it is read: it holds
+only settings the app never uses (groups, layouts, plot settings, image and
+style definitions), and LibreDWG can write it so that ezdxf refuses the whole
+file (M3440659-00.dwg: four nameless entries pointing at handle 0). ezdxf
+builds default ones in its place."""
 
 from __future__ import annotations
 
@@ -21,8 +27,6 @@ import subprocess
 import sys
 import tempfile
 
-from core.dxf import DxfFile, read_dxf
-
 _TIMEOUT_S = 60
 _BIN = pathlib.Path(__file__).resolve().parent.parent / "bin"
 
@@ -31,10 +35,6 @@ SAVE_AS_DXF = "Tallenna piirustus DXF-muodossa ja lataa se uudelleen."
 
 class ConversionError(Exception):
     """The DWG could not be converted; the message says why, in Finnish."""
-
-
-def is_dwg(name: str) -> bool:
-    return name.lower().endswith(".dwg")
 
 
 def _oda_installed() -> bool:
@@ -108,7 +108,7 @@ def dwg_to_dxf(data: bytes, *, minimal: bool = False) -> bytes:
             _with_libredwg(exe, src, dst, minimal)
         if not dst.is_file():
             raise ConversionError("Muunnin ei tuottanut DXF-tiedostoa.")
-        return _join_broken_values(dst.read_bytes())
+        return _without_objects(_join_broken_values(dst.read_bytes()))
 
 
 def _join_broken_values(dxf: bytes) -> bytes:
@@ -124,6 +124,28 @@ def _join_broken_values(dxf: bytes) -> bytes:
             continue
         out.append(line)
         code = not code
+    return b"\n".join(out)
+
+
+def _without_objects(dxf: bytes) -> bytes:
+    """``dxf`` less its OBJECTS section (see the module's docstring). The
+    file is walked as code / value line pairs, so a text that happens to read
+    "OBJECTS" is never taken for the section."""
+    lines = dxf.split(b"\n")
+    out: list[bytes] = []
+    skipping = False
+    i = 0
+    while i + 1 < len(lines):
+        code, value = lines[i].strip(), lines[i + 1].strip()
+        if (not skipping and code == b"0" and value == b"SECTION" and i + 3 < len(lines)
+                and lines[i + 2].strip() == b"2" and lines[i + 3].strip() == b"OBJECTS"):
+            skipping = True
+        if not skipping:
+            out += lines[i:i + 2]
+        elif code == b"0" and value == b"ENDSEC":
+            skipping = False
+        i += 2
+    out += lines[i:]
     return b"\n".join(out)
 
 
@@ -145,25 +167,3 @@ def _with_units(minimal: bytes, full: bytes) -> bytes:
     text = minimal.replace(b"\r\n", b"\n")
     at += len(marker)
     return text[:at] + b"\n".join(found) + b"\n" + text[at:]
-
-
-def read_drawing(data: bytes, name: str) -> DxfFile:
-    """Read a DXF, or a DWG converted to DXF. Never raises: a file that can't be
-    read comes back with problems."""
-    if not is_dwg(name):
-        return read_dxf(data, name)
-    try:
-        full = dwg_to_dxf(data)
-        f = read_dxf(full, name)
-        if f.problems and not f.pieces and converter() == "LibreDWG":
-            # LibreDWG's full DXF can carry tables ezdxf can't read; its
-            # minimal DXF holds just the entities, which is all we need, plus
-            # the drawing's unit, taken from the full one.
-            minimal = read_dxf(_with_units(dwg_to_dxf(data, minimal=True), full), name)
-            if minimal.pieces:
-                return minimal
-    except ConversionError as exc:
-        return DxfFile(name=name, problems=[f"{exc} {SAVE_AS_DXF}"])
-    if f.problems and not f.pieces:
-        f.problems = [f"{p} {SAVE_AS_DXF}" for p in f.problems]
-    return f

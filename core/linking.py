@@ -5,6 +5,7 @@ number, pure (no Streamlit). ``100325.pdf``, ``100325-revA.pdf`` and
 from __future__ import annotations
 
 import re
+import unicodedata
 from pathlib import PurePath
 
 # A revision at the end of a name: -revA, _rev2, " rev B", -A, _B1 (one letter,
@@ -13,11 +14,19 @@ _REVISION = re.compile(r"(?:[\s_\-.]*rev[\s_\-.]*[a-z0-9]{1,3}|[\s_\-.]+[a-z][0-
                        re.IGNORECASE)
 
 
+# What a CAD program adds to the name of an exported flat or sheet: SolidWorks'
+# "13025 - Flat pattern.DXF", "-Sheet1", "_flat", Finnish "levitys".
+_EXPORT_SUFFIX = re.compile(
+    r"[\s_\-.]+(?:flat[\s_\-.]*pattern|flat|sheet[\s_\-.]*\d+|levitys|aukikeritty)$",
+    re.IGNORECASE)
+
+
 def part_key(file_name: str) -> str:
     """The part number a file name stands for: the stem, lower case, without
-    a revision suffix. A stem that is only a revision-like letter keeps it."""
-    stem = PurePath(file_name).stem.strip().lower()
-    stripped = _REVISION.sub("", stem)
+    what the export added (``_EXPORT_SUFFIX``) or a revision suffix. A stem
+    that is only a revision-like letter keeps it."""
+    stem = _stem(file_name)
+    stripped = _REVISION.sub("", _EXPORT_SUFFIX.sub("", stem))
     return stripped or stem
 
 
@@ -31,16 +40,32 @@ def link_files(part_names: dict[str, str], file_names: dict[str, str]) -> dict[s
     by_stem: dict[str, list[str]] = {}
     by_key: dict[str, list[str]] = {}
     by_base: dict[str, list[str]] = {}
+    by_number: dict[str, list[str]] = {}
     for pid, name in part_names.items():
         by_stem.setdefault(_stem(name), []).append(pid)
         by_key.setdefault(part_key(name), []).append(pid)
         by_base.setdefault(base_key(name), []).append(pid)
+        if (n := _leading_number(name)) is not None:
+            by_number.setdefault(n, []).append(pid)
     out: dict[str, list[str]] = {}
     for fid, name in file_names.items():
         key = part_key(name)
-        for pid in by_stem.get(_stem(name)) or by_key.get(key) or by_base.get(key, []):
+        pids = by_stem.get(_stem(name)) or by_key.get(key) or by_base.get(key)
+        if not pids and (n := _leading_number(name)) is not None:
+            # "30300044 Pöydän kiinnityslevy SH2280.DXF" and "30300044.pdf",
+            # or the same number with another description.
+            pids = by_number.get(n, [])
+        for pid in pids or []:
             out.setdefault(pid, []).append(fid)
     return out
+
+
+def _leading_number(file_name: str) -> str | None:
+    """The part number a descriptive name starts with: "30300044" of
+    "30300044 Pöydän kiinnityslevy SH2280" (four or more digits, then a space
+    or a dash); None when the name doesn't start so."""
+    m = re.match(r"(\d{4,}[a-z]?)(?:\s+-?\s*|$)", part_key(file_name))
+    return m.group(1) if m else None
 
 
 def base_key(file_name: str) -> str:
@@ -69,28 +94,24 @@ def _patterns(part_names) -> dict[str, re.Pattern]:
 _QTY = re.compile(r"(?<![\w.,])(\d{1,5})\s*(?:pcs|pc|pce|kpl|st|stk|ea)\b", re.IGNORECASE)
 
 
-def bom_quantities(part_names: dict[str, list[str]], texts: dict[str, str]
-                   ) -> dict[str, tuple[int, list[str]]]:
+def bom_quantities(part_names: dict[str, list[str]],
+                   rows: dict[str, list[tuple[str, int]]]) -> dict[str, tuple[int, list[str]]]:
     """How many of each part the BOMs ask for: ``part_names`` maps a card to
-    its file names, ``texts`` a PDF's name to its text. A BOM row names one
-    card's part number and a quantity with its unit (``1 ITM-064555.A Plate
-    … 2 pcs``). Returns ``{card: (kpl, [BOM names])}``, the kpl of all the
-    BOMs that list it added up (one BOM's first row for it)."""
-    patterns = _patterns(n for ns in part_names.values() for n in ns)
+    its file names, ``rows`` a BOM's name to its rows ``(part number, kpl)``
+    (the PDF reader's ``bom_qty`` facts). Returns ``{card: (kpl, [BOM
+    names])}``, the kpl of all the BOMs that list it added up (one BOM's
+    first row for it)."""
     card_of = {base_key(n): cid for cid, ns in part_names.items() for n in ns}
     out: dict[str, tuple[int, list[str]]] = {}
-    for doc, text in texts.items():
+    for doc, doc_rows in rows.items():
         seen = set()
-        for line in (text or "").splitlines():
-            qty = _QTY.findall(line)
-            if not qty:
-                continue
-            cards = {card_of[k] for k, pat in patterns.items() if pat.search(line)}
-            if len(cards) != 1 or (cid := cards.pop()) in seen:
+        for key, kpl in doc_rows:
+            cid = card_of.get(key)
+            if cid is None or cid in seen:
                 continue
             seen.add(cid)
             n, docs = out.get(cid, (0, []))
-            out[cid] = (n + int(qty[-1]), [*docs, doc])
+            out[cid] = (n + int(kpl), [*docs, doc])
     return out
 
 
@@ -108,7 +129,8 @@ def link_by_text(part_names: dict[str, str], texts: dict[str, str],
     group = group or (lambda pid: pid)
     out: dict[str, list[str]] = {}
     for fid, text in texts.items():
-        found = {k for k, pat in patterns.items() if pat.search(text or "")}
+        text = unicodedata.normalize("NFC", text or "")
+        found = {k for k, pat in patterns.items() if pat.search(text)}
         pids = [pid for pid, name in part_names.items() if base_key(name) in found]
         if len({group(pid) for pid in pids}) != 1 and len(found) != 1:
             continue
@@ -118,7 +140,10 @@ def link_by_text(part_names: dict[str, str], texts: dict[str, str],
 
 
 def _stem(file_name: str) -> str:
-    return PurePath(file_name).stem.strip().lower()
+    """The name without its extension, lower case, its letters in one form:
+    an "ö" is one character or an "o" with two dots after it depending on
+    where the file was named (Windows, macOS, a ZIP), and the two must match."""
+    return unicodedata.normalize("NFC", PurePath(file_name).stem).strip().lower()
 
 
 

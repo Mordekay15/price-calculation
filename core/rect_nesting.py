@@ -16,6 +16,7 @@ from core.sheet_cost import (
     too_big,
     usable_area,
 )
+from core.model import Product
 
 
 # ── Packing ───────────────────────────────────────────────────────────────────
@@ -128,7 +129,7 @@ def pack(
 
 # ── High-level summary ────────────────────────────────────────────────────────
 
-def expand_products(products: list[dict]) -> list[tuple[int, int, int, int]]:
+def expand_products(products: list[Product]) -> list[tuple[int, int, int, int]]:
     """
     Turn the calculator's product list (width, height, qty per entry) into
     the (product_idx, copy_idx, w, h) tuples that pack() expects.
@@ -137,9 +138,9 @@ def expand_products(products: list[dict]) -> list[tuple[int, int, int, int]]:
     """
     pieces: list[tuple[int, int, int, int]] = []
     for p_idx, prod in enumerate(products):
-        w = int(round(prod.get("width", 0) or 0))
-        h = int(round(prod.get("height", 0) or 0))
-        q = int(prod.get("qty", 0) or 0)
+        w = int(round(prod.width or 0))
+        h = int(round(prod.height or 0))
+        q = int(prod.qty or 0)
         if w <= 0 or h <= 0 or q <= 0:
             continue
         for c in range(q):
@@ -256,7 +257,7 @@ def rect_options(
     material: str,
     thickness: str,
     thickness_mm: float,
-    products: list[dict],
+    products: list[Product],
     margin_pct: float = 0.0,
     edges: EdgeGaps = EdgeGaps(),
     rankavali_mm: int = 0,
@@ -271,14 +272,14 @@ def rect_options(
     repeatable program (see ``core.programs``); one more option may cut the
     parts from several sizes (see ``core.cutting_stock.MixedSizes``).
     """
-    quantities = [int(p["qty"]) for p in products]
-    part_area_mm2 = sum(p["width"] * p["height"] * p["qty"] for p in products)
-    boxes = [(int(round(p["width"])), int(round(p["height"]))) for p in products]
-    areas = [p["width"] * p["height"] for p in products]
+    quantities = [int(p.qty) for p in products]
+    part_area_mm2 = sum(p.width * p.height * p.qty for p in products)
+    boxes = [(int(round(p.width)), int(round(p.height))) for p in products]
+    areas = [p.width * p.height for p in products]
     mixed = MixedSizes(quantities, areas)
 
     def pieces_for(qty: list[int]) -> list[tuple[int, int, int, int]]:
-        counted = [{**p, "qty": q} for p, q in zip(products, qty)]
+        counted = [replace(p, qty=q) for p, q in zip(products, qty)]
         return [(p_idx, c_idx, w + rankavali_mm, h + rankavali_mm)
                 for p_idx, c_idx, w, h in expand_products(counted)]
 
@@ -309,7 +310,7 @@ def rect_options(
         mixed.keep(pool, lambda plan: (packing(standing(plan, pack_sheets)), area_of(plan)),
                    sw * sh)
         if failed:
-            reason = too_big([(product_label(p), p["width"], p["height"]) for p in products],
+            reason = too_big([(product_label(p), p.width, p.height) for p in products],
                              eff_w, eff_h)
             return [replace(packing(greedy, failed), reason=reason)]
         kit = kit_plan(quantities, greedy, lambda kit: _one_sheet(*pack_sheets(kit)),
@@ -319,7 +320,7 @@ def rect_options(
                 choose_plans(greedy, fewest and standing(fewest, pack_sheets), kit)]
 
     def area_of(plan) -> float:
-        return sum(r * n * products[i]["width"] * products[i]["height"]
+        return sum(r * n * products[i].width * products[i].height
                    for r, counts, _ in plan for i, n in enumerate(counts))
 
     def standing(plan, pack_sheets) -> list[Sheet]:

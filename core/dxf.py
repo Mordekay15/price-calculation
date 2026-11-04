@@ -5,6 +5,7 @@ priced (see "How a DXF file is read" in the README)."""
 from __future__ import annotations
 
 import io
+import logging
 import math
 import re
 import sys
@@ -27,6 +28,8 @@ from core.geometry import (
 )
 
 Point = tuple[float, float]
+
+_log = logging.getLogger(__name__)
 
 # Curve flattening tolerance in *drawing units* (arcs/circles/bulges are
 # approximated by segments no further than this from the true curve).
@@ -165,6 +168,7 @@ class DxfReport:
     # drawn on the card and the layout, never cut.
     reference_lines: list[list[Point]] = field(default_factory=list)
     open_lines: list[list[Point]] = field(default_factory=list)   # inside the part
+    engraving: list[list[Point]] = field(default_factory=list)    # text, lasered not cut
     dropped: list[list[Point]] = field(default_factory=list)      # outside the part
     dropped_more: int = 0      # shapes outside the part not kept (see _trim_dropped)
     # Why this part cannot be priced (empty = it can).
@@ -218,7 +222,9 @@ class DxfFile:
     # length: a view drawn at 1:10 on a 1:1 sheet has its dimensions at 10.
     dimensions: list[tuple[Point, Point, float, float]] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)          # file-level
-    unreadable: dict[str, dict[str, int]] = field(default_factory=dict)  # layer -> type -> n
+    # Entities of types the reader can't use (layer -> type -> n): skipped,
+    # and logged to the console when the file is read (see ``read_dxf``).
+    unreadable: dict[str, dict[str, int]] = field(default_factory=dict)
     # The part from the default layers, once built (see ``part``).
     _default: DxfReport | None = field(default=None, repr=False, compare=False)
 
@@ -255,16 +261,6 @@ class DxfFile:
         report = DxfReport(name=self.name, unit_label=self.unit_label,
                            problems=list(self.problems))
 
-        unreadable: dict[str, int] = defaultdict(int)
-        for layer in chosen:
-            for etype, n in self.unreadable.get(layer, {}).items():
-                unreadable[etype] += n
-        if unreadable:
-            listed = ", ".join(f"{t} ×{n}" for t, n in sorted(unreadable.items()))
-            report.problems.append(
-                f"Valituilla tasoilla on elementtejä, joita ei vielä osata lukea: {listed}."
-            )
-
         if self.problems and not self.pieces:
             return report  # the file couldn't be read: its own problem says why
         cut = _distinct([p for p in self.pieces if p.layer in chosen and p.solid])
@@ -284,14 +280,31 @@ class DxfFile:
 
         # The main part is the largest outline; everything inside it belongs to
         # it, everything outside is dropped (detail views, sketches, stray lines).
-        # On a drawing sheet (the largest outline is its frame), the part is
-        # the view with the bend note: its flat pattern, drawn at the sheet's
-        # scale.
         main = max(top, key=lambda c: c.width_mm * c.height_mm)
-        view = _flat_view(main, contours, self.bend_notes)
+        # On a drawing sheet the largest outline is its frame, never the part:
+        # the frame and title block are set aside and the part is one of the
+        # views left on the sheet (see ``_sheet_views`` and ``_pick_view``).
+        # A frame without a title block joined to it is found by the bend
+        # note alone, as before.
+        views = _sheet_views(main, contours, reference)
+        # A sheet drawn with two borders (the paper's edge, and the frame
+        # inside it that the title block is joined to): its only "view" is
+        # the inner frame. The sheet is read from that.
+        while (views is not None and len(views) == 1 and views[0].outline is not main
+               and _inner_frame(views[0].outline, main)):
+            main = views[0].outline
+            box = bbox(main.points)
+            views = _sheet_views(main, [c for c in contours if _box_in(bbox(c.points), box)],
+                                 [p for p in reference if _box_in(bbox(p.points), box)])
+        view, section = None, None
+        if views is None:
+            view = _flat_view(main, contours, self.bend_notes)
+        else:
+            view = _pick_view(views, self.bend_notes, last=False)
         # Or a profile's drawing: its cross-section and its blank (the one
         # other view), the blank often drawn at a smaller scale.
-        section = _profile_section(main, contours) if view is None else None
+        if view is None:
+            section = _profile_section(main, contours)
         if section is not None:
             view = _blank_view(main, contours, section)
             if view is None:
@@ -302,6 +315,16 @@ class DxfFile:
                 if blank is not None:
                     return _profile_report(report, blank, section, contours)
                 section = None
+        if view is None and views is not None:
+            view = _pick_view(views, self.bend_notes, last=True)
+            if view is None:
+                report.problems.append(
+                    f"Piirustuksessa on {len(views)} näkymää, eikä mikään niistä erotu "
+                    "osan aihioksi (ei taivutusmerkintää eikä -viivoja). Lataa osan "
+                    "aukikeritty DXF.")
+                report.dropped = [c.points for c in contours]
+                _trim_dropped(report)
+                return report
         # Views drawn at the sheet's scale: a frame the size of a paper sheet
         # (a frame drawn at 1:1 round real-size views is the paper / scale).
         at_scale = view is not None and section is None and _paper_size(main)
@@ -370,6 +393,7 @@ class DxfFile:
                 _to_real_size(report, k)
             report.bends = report.bends or _section_bends(section.points)
             _blank_from_section(report, section)
+        _find_engraving(report)
         report.problems += _part_problems(report)
         _trim_dropped(report)
         _lay_along_length(report)
@@ -383,6 +407,187 @@ def _flat_view(frame: Contour, contours: list[Contour], notes: list[Point]) -> C
     views = [c for c in contours if c.closed and c.depth == frame.depth + 1
              and any(point_in_polygon(n, c.points) for n in notes)]
     return views[0] if len(views) == 1 else None
+
+
+_ON_FRAME_MM = 0.5     # a title block line ending this close to the frame is joined to it
+_ON_FRAME_REL = 0.005  # … or this share of the sheet's short side (a 1.5 mm gap on A3)
+_VIEW_GAP_MM = 2.0     # lines this close together belong to the same view
+
+
+@dataclass
+class _View:
+    """One view left on a drawing sheet once its frame and title block are
+    set aside: its largest closed outline and the lines around it."""
+
+    outline: Contour | None
+    cut: list[Contour]
+    reference: list[list[Point]]
+
+
+def _box_in(b, r, tol: float = _ON_FRAME_MM) -> bool:
+    return b[0] >= r[0] - tol and b[1] >= r[1] - tol and b[2] <= r[2] + tol and b[3] <= r[3] + tol
+
+
+def _sheet_views(frame: Contour, contours: list[Contour],
+                 reference: list[_Piece]) -> list[_View] | None:
+    """The views on a drawing sheet, or None when ``frame`` isn't a sheet's
+    frame: a rectangle with lines joined to it from inside (its title block
+    and revision table), or with two or more views drawn on it. A plain
+    plate's outline has neither, so it stays the part. The title block is
+    every line joined to the frame (on any layer, ending within a 1.5 mm gap
+    on A3 or running past it), through each other, and whatever is drawn
+    inside their boxes (the projection symbol); what is left is grouped into
+    views by lines within 2 mm."""
+    w, h = frame.width_mm, frame.height_mm
+    if abs(frame.area_mm2) < 0.98 * w * h:
+        return None
+    rest = [c for c in contours if c is not frame]
+    frame_box = bbox(frame.points)
+    lines = [Contour(p.points, p.closed) for p in reference]
+    joined, tol = _joined(frame, rest, _ON_FRAME_MM, False), _ON_FRAME_MM
+    paper = _paper_ratio(w, h)
+    if not joined and paper:
+        # A sheet's title block may be on a layer of its own (solid lines,
+        # not cut), and its lines may stop a little short of the frame or
+        # run past it. Only on a sheet's proportions: a plate's bend lines
+        # run edge to edge too.
+        tol = max(_ON_FRAME_MM, _ON_FRAME_REL * min(w, h))
+        solid = [ln for ln, p in zip(lines, reference) if p.solid and not _is_bend_layer(p.layer)]
+        joined = _joined(frame, rest + solid, tol, True)
+        if len(joined) < 3:              # a title block is lines meeting each other
+            joined = set()
+    if not joined:
+        # No title block: still a sheet when its views are drawn on it (two
+        # or more, each with its own lines in it). A plate's holes hold nothing.
+        views = _views(rest, [], [p.points for p in reference], frame_box)
+        big = [v for v in views if v.outline.width_mm * v.outline.height_mm >= 0.01 * w * h
+               and len(v.cut) + len(v.reference) > 1]
+        return views if len(big) >= 2 and paper else None
+    # The title block's boxes: each group of joined lines that meet each
+    # other (the title block, the revision table) spans one box.
+    block = [c for c in rest + lines if id(c) in joined]
+    up = list(range(len(block)))
+
+    def top(i: int) -> int:
+        while up[i] != i:
+            up[i] = up[up[i]]
+            i = up[i]
+        return i
+
+    for i, a in enumerate(block):
+        for j in range(i + 1, len(block)):
+            b = block[j]
+            if (any(_near_ring(p, b.points, tol) for p in _ends(a))
+                    or any(_near_ring(p, a.points, tol) for p in _ends(b))):
+                up[top(i)] = top(j)
+    spans: dict[int, list[Point]] = defaultdict(list)
+    for i, c in enumerate(block):
+        spans[top(i)] += c.points
+    boxes = [bbox(pts) for pts in spans.values()]
+    boxes = [b for b in boxes if (b[2] - b[0]) * (b[3] - b[1]) < 0.5 * w * h]
+    ref = [ln.points for ln in lines if id(ln) not in joined]
+    views = _views([c for c in rest if id(c) not in joined], boxes, ref, frame_box)
+    return views or None                 # nothing drawn on it: a plate, not a sheet
+
+
+def _ends(c: Contour) -> list[Point]:
+    return c.points[::max(1, len(c.points) // 8)] if c.closed else [c.points[0], c.points[-1]]
+
+
+def _joined(frame: Contour, candidates: list[Contour], tol: float, past: bool) -> set[int]:
+    """The ids of the lines joined to ``frame``, directly or through each
+    other: an end within ``tol`` of it, or with ``past``, an open line
+    running from inside the frame past its edge."""
+    box = bbox(frame.points)
+    inside = (box[0] + tol, box[1] + tol, box[2] - tol, box[3] - tol)
+
+    def crosses(c: Contour) -> bool:
+        if c.closed:
+            return False
+        out = [not _box_in((x, y, x, y), box, 0.0) for x, y in (c.points[0], c.points[-1])]
+        return any(out) and any(_box_in((x, y, x, y), inside, 0.0) for x, y in c.points) \
+            or all(out) and _crosses_box(c.points, inside)
+
+    joined: set[int] = set()
+    todo = [frame]
+    while todo:
+        ring = todo.pop()
+        for c in candidates:
+            if id(c) not in joined and (any(_near_ring(p, ring.points, tol) for p in _ends(c))
+                                        or past and ring is frame and crosses(c)):
+                joined.add(id(c))
+                todo.append(c)
+    return joined
+
+
+def _views(cut_lines: list[Contour], boxes: list, reference: list[list[Point]],
+           frame_box) -> list[_View]:
+    """The sheet's drawn lines outside the title block's ``boxes``, grouped
+    into views by lines within 2 mm."""
+    cut = [c for c in cut_lines if not any(_box_in(bbox(c.points), b) for b in boxes)]
+    ref = [r for r in reference if _box_in(bbox(r), frame_box)
+           and not any(_box_in(bbox(r), b) for b in boxes)]
+    things = [(c, bbox(c.points)) for c in cut] + [(r, bbox(r)) for r in ref]
+    parent = list(range(len(things)))
+
+    def root(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    g = _VIEW_GAP_MM
+    order = sorted(range(len(things)), key=lambda i: things[i][1][0])
+    for n, i in enumerate(order):            # sweep along x: only overlapping boxes meet
+        a = things[i][1]
+        for j in order[n + 1:]:
+            b = things[j][1]
+            if b[0] > a[2] + g:
+                break
+            if not (b[1] > a[3] + g or a[1] > b[3] + g):
+                parent[root(i)] = root(j)
+    groups: dict[int, list[int]] = defaultdict(list)
+    for i in range(len(things)):
+        groups[root(i)].append(i)
+    views = []
+    for members in groups.values():
+        view_cut = [things[i][0] for i in members if isinstance(things[i][0], Contour)]
+        rings = [c for c in view_cut if c.closed and len(c.points) >= 3]
+        if not rings:
+            continue                         # loose lines: a leader, a note's strokes
+        views.append(_View(max(rings, key=lambda c: c.width_mm * c.height_mm), view_cut,
+                           [things[i][0] for i in members if not isinstance(things[i][0], Contour)]))
+    return views
+
+
+def _pick_view(views: list[_View], notes: list[Point], last: bool) -> Contour | None:
+    """The part among a sheet's views, by the first rule that picks exactly
+    one: the only view; the view with a bend note in it; the view with
+    dashed bend lines from edge to edge. With ``last`` (after a profile's
+    drawing was looked for): the only view whose outline stands alone, with
+    holes in it. A projected view's outline goes on into its other edges, so
+    other lines start at its corners; a flat pattern's outline is the part."""
+    def alone(v: _View) -> bool:
+        corners = v.outline.points
+
+        def at_corner(p: Point) -> bool:
+            return any(math.dist(p, q) <= _JOIN_TOL_MM for q in corners)
+        if any(at_corner(c.points[0]) or at_corner(c.points[-1]) for c in v.cut if not c.closed):
+            return False
+        return any(c is not v.outline and c.closed
+                   and point_in_polygon(representative_point(c.points), v.outline.points)
+                   for c in v.cut)
+
+    rules = [lambda v: alone(v)] if last else [
+        lambda v: len(views) == 1,
+        lambda v: any(point_in_polygon(n, v.outline.points) for n in notes),
+        lambda v: _edge_to_edge(v.outline, [r for r in v.reference if len(r) == 2]) > 0,
+    ]
+    for rule in rules:
+        hits = [v for v in views if rule(v)]
+        if len(hits) == 1:
+            return hits[0].outline
+    return None
 
 
 _SECTION_MAX_T_MM = 6.0     # thicker than this is not a sheet-metal section
@@ -574,6 +779,27 @@ def _near_ring(p: Point, ring: list[Point], tol: float) -> bool:
     return _on_ring(p, ring, tol)
 
 
+def _inner_frame(c: Contour, frame: Contour) -> bool:
+    """A rectangle filling most of ``frame``: the drawing's own frame inside
+    the paper's edge, never a part."""
+    w, h = c.width_mm, c.height_mm
+    return (abs(c.area_mm2) >= 0.98 * w * h and w < frame.width_mm and h < frame.height_mm
+            and w * h >= 0.8 * frame.width_mm * frame.height_mm)
+
+
+def _paper_ratio(w: float, h: float) -> bool:
+    """An ISO sheet's proportions (√2 : 1), at any scale."""
+    lo, hi = sorted((w, h))
+    return lo > 0 and abs(hi / lo - math.sqrt(2)) <= 0.05 * math.sqrt(2)
+
+
+def _crosses_box(points: list[Point], b) -> bool:
+    """A line whose two ends are outside the box ``b`` running through it."""
+    x0, y0, x1, y1 = bbox(points)
+    return x0 < b[0] and x1 > b[2] and b[1] < y0 <= y1 < b[3] \
+        or y0 < b[1] and y1 > b[3] and b[0] < x0 <= x1 < b[2]
+
+
 def _paper_size(frame: Contour) -> bool:
     """A frame the size of an ISO paper sheet, or a little inside one."""
     w, h = sorted((frame.width_mm, frame.height_mm))
@@ -607,7 +833,7 @@ def _to_real_size(report: DxfReport, k: float) -> None:
     for c in (report.outline, *report.holes):
         c.points = scaled(c.points)
         c.area_mm2 *= k * k
-    for lines in (report.reference_lines, report.open_lines, report.dropped):
+    for lines in (report.reference_lines, report.open_lines, report.engraving, report.dropped):
         lines[:] = [scaled(line) for line in lines]
 
 
@@ -661,7 +887,7 @@ def _lay_along_length(report: DxfReport) -> None:
 
     for c in (report.outline, *report.holes):
         c.points = turned(c.points)
-    for lines in (report.reference_lines, report.open_lines, report.dropped):
+    for lines in (report.reference_lines, report.open_lines, report.engraving, report.dropped):
         lines[:] = [turned(line) for line in lines]
 
 
@@ -708,6 +934,10 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
         if extracted is not None:
             pts, closed = extracted
             f.pieces.append(_Piece(pts, closed, layer, not _is_dashed(entity, doc)))
+
+    for layer, counts in sorted(f.unreadable.items()):
+        listed = ", ".join(f"{t} ×{n}" for t, n in sorted(counts.items()))
+        _log.warning("%s: skipped what can't be read on layer %r: %s", name, layer, listed)
 
     if unit_code is None:
         if _iso_sheet([pt for p in f.pieces for pt in p.points]):
@@ -816,6 +1046,77 @@ def _point_segment_mm(p: Point, a: Point, b: Point) -> float:
     span = dx * dx + dy * dy
     s = 0.0 if span == 0 else max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / span))
     return math.hypot(p[0] - a[0] - s * dx, p[1] - a[1] - s * dy)
+
+
+_LETTER_MAX_MM = 30.0    # an engraved letter's strokes fit in this
+_TEXT_MIN_STROKES = 3
+
+
+def _find_engraving(report: DxfReport) -> None:
+    """Text engraved on the part and exported as lines is lasered, not cut:
+    moved from the open cuts and holes to the engraving. A word is a row of
+    three or more letter-sized pieces close to each other, either
+    - strokes (a stroke font: SHX, ISOCP), at least half of them open, its
+      loops round (O, D, 8), or
+    - closed outlines (a TrueType font exploded), of several shapes, not one
+      hole repeated (a row of holes is cut)."""
+    small = [ln for ln in report.open_lines if _size(ln) <= _LETTER_MAX_MM]
+    loops = [h for h in report.holes if _size(h.points) <= _LETTER_MAX_MM]
+    items = [(True, ln) for ln in small] + [(False, h) for h in loops]
+    text: set[int] = set()
+    for members in _word_groups([x if is_open else x.points for is_open, x in items]):
+        if len(members) < _TEXT_MIN_STROKES:
+            continue
+        group = [items[i] for i in members]
+        n_open = sum(is_open for is_open, _ in group)
+        rings = [x for is_open, x in group if not is_open]
+        strokes = 2 * n_open >= len(group) and all(
+            max(r.width_mm, r.height_mm) <= 3 * min(r.width_mm, r.height_mm) for r in rings)
+        sizes = {(round(r.width_mm), round(r.height_mm)) for r in rings}
+        outlines = n_open == 0 and len(rings) >= 4 and len(sizes) >= 3
+        if strokes or outlines:
+            text.update(id(x) for _, x in group)
+    if not text:
+        return
+    report.engraving += [x if is_open else x.points for is_open, x in items if id(x) in text]
+    # The letters' own counters (the hole in an A's outline) go with them.
+    loops = [x.points for is_open, x in items if not is_open and id(x) in text]
+    inner = [ln for ln in report.reference_lines
+             if any(point_in_polygon(ln[0], lp) for lp in loops)]
+    report.engraving += inner
+    report.reference_lines = [ln for ln in report.reference_lines
+                              if not any(ln is i for i in inner)]
+    report.open_lines = [ln for ln in report.open_lines if id(ln) not in text]
+    report.holes = [h for h in report.holes if id(h) not in text]
+
+
+def _size(pts: list[Point]) -> float:
+    x0, y0, x1, y1 = bbox(pts)
+    return max(x1 - x0, y1 - y0)
+
+
+def _word_groups(pieces: list[list[Point]]) -> list[list[int]]:
+    """The pieces in groups of those within about half their size of each
+    other, like the letters of a word."""
+    boxes = [bbox(p) for p in pieces]
+    gap = [max(2.0, 0.6 * _size(p)) for p in pieces]
+    up = list(range(len(pieces)))
+
+    def root(i: int) -> int:
+        while up[i] != i:
+            up[i] = up[up[i]]
+            i = up[i]
+        return i
+
+    for i, a in enumerate(boxes):
+        for j in range(i + 1, len(boxes)):
+            b, g = boxes[j], max(gap[i], gap[j])
+            if not (b[0] > a[2] + g or a[0] > b[2] + g or b[1] > a[3] + g or a[1] > b[3] + g):
+                up[root(i)] = root(j)
+    groups: dict[int, list[int]] = defaultdict(list)
+    for i in range(len(pieces)):
+        groups[root(i)].append(i)
+    return list(groups.values())
 
 
 def _part_problems(report: DxfReport) -> list[str]:
@@ -934,13 +1235,6 @@ def _explode_blocks(entities):
 
 _FASTENERS = re.compile(r"(?:MUTTER|RUUV|PULT|NIIT|HOLK|TAPP)\w*\D*?(\d+)\s*(?:KPL|PCS)",
                         re.IGNORECASE)
-
-
-def fasteners_from_texts(texts: list[str]) -> int:
-    """Fasteners the drawing's notes ask for (nuts, screws, bolts, rivets,
-    bushes, studs), e.g. "M5-PURISTEMUTTERIT X4KPL" and "M4-PURISTEMUTTERIT
-    5KPL" make 9."""
-    return sum(n for _, n in fastener_lines(texts))
 
 
 def fastener_lines(texts: list[str]) -> list[tuple[str, int]]:

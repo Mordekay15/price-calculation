@@ -553,3 +553,231 @@ def test_one_odd_dimension_does_not_rescale_a_part(drawing):
     rect(msp, 0, 0, 300, 200)
     msp.add_aligned_dim((0, 200), (300, 200), distance=20, override={"dimlfac": 2}).render()
     assert round(part_of(doc).outline.width_mm) == 300
+
+
+def _sheet(msp):
+    """An A3 frame with a title block joined to it (M3440659-00.dwg's
+    layout) and a projected side view whose outline goes on into its other
+    edges."""
+    rect(msp, 0, 0, 420, 297)                                # the frame
+    msp.add_line((220, 0), (220, 50))                        # the title block
+    msp.add_line((220, 50), (420, 50))
+    msp.add_line((320, 0), (320, 50))
+    msp.add_circle((370, 25), 4)                             # its projection symbol
+    msp.add_text("1:1", dxfattribs={"insert": (330, 20)})
+    rect(msp, 60, 150, 25, 30)                               # the side view
+    msp.add_lwpolyline([(60, 150), (60, 100), (85, 100), (85, 150)])
+
+
+def _flat(msp, x=240, y=200):
+    rect(msp, x, y, 100, 25)
+    msp.add_circle((x + 10, y + 12.5), 2.25)
+    msp.add_circle((x + 90, y + 12.5), 2.25)
+
+
+def test_a_sheet_with_one_view_is_priced_from_that_view(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 420, 297)
+    msp.add_line((220, 0), (220, 50))
+    msp.add_line((220, 50), (420, 50))
+    _flat(msp)
+    report = part_of(doc)
+    assert report.problems == [] and len(report.holes) == 2
+    assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (100, 25)
+
+
+def test_on_a_sheet_the_bend_note_picks_the_view(drawing):
+    doc, msp = drawing()
+    _sheet(msp)
+    _flat(msp)
+    msp.add_text("UP 90° R 2", dxfattribs={"insert": (280, 210)})
+    report = part_of(doc)
+    assert round(report.outline.width_mm) == 100 and report.bends == 1
+
+
+def test_on_a_sheet_dashed_bend_lines_pick_the_view(drawing):
+    doc, msp = drawing()
+    _sheet(msp)
+    _flat(msp)
+    msp.add_line((290, 200), (290, 225), dxfattribs={"linetype": "DASHED"})
+    report = part_of(doc)
+    assert report.problems == [] and round(report.outline.width_mm) == 100
+    assert report.bends == 1 and len(report.reference_lines) == 1
+
+
+def test_on_a_sheet_without_bends_the_outline_that_stands_alone_is_the_part(drawing):
+    # The frame used to be taken as the part here, with the views as holes.
+    doc, msp = drawing()
+    _sheet(msp)
+    _flat(msp)
+    report = part_of(doc)
+    assert report.problems == [] and len(report.holes) == 2
+    assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (100, 25)
+
+
+def test_a_sheet_whose_part_cant_be_told_is_never_priced_as_its_frame(drawing):
+    doc, msp = drawing()
+    _sheet(msp)
+    _flat(msp)
+    _flat(msp, 240, 100)                # a second part just like it
+    report = part_of(doc)
+    assert report.outline is None and "näkymää" in report.problems[0]
+
+
+def test_a_plate_with_holes_is_not_taken_for_a_frame(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 400, 280)
+    for x in (50, 150, 250, 350):
+        msp.add_circle((x, 140), 10)
+    report = part_of(doc)
+    assert report.problems == [] and len(report.holes) == 4
+
+
+def test_the_title_blocks_projection_symbol_is_never_the_part(drawing):
+    # Re91931A.dwg: a plain 440 × 162 PVC plate and its 1.5 mm edge, on a
+    # sheet. The projection symbol (two circles in a box) sits in the title
+    # block between its lines; it had a "hole", so it was taken for the part.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 800, 550)                                # the frame
+    msp.add_line((420, 0), (420, 100))                       # the title block, its lines
+    msp.add_line((420, 80), (800, 80))                       # meeting in Ts, not end to end
+    msp.add_line((520, 0), (520, 80))
+    msp.add_circle((505, 15), 5.7)                           # the projection symbol
+    msp.add_circle((505, 15), 3.9)
+    msp.add_line((498, 15), (512, 15))
+    msp.add_line((505, 8), (505, 22))
+    rect(msp, 140, 200, 440, 162)                            # the plate
+    msp.add_line((580, 281), (580, 362))                     # part of its edge, drawn twice
+    msp.add_lwpolyline([(140, 140), (580, 140), (580, 141.5), (140, 141.5)])   # its edge
+    report = part_of(doc)
+    assert report.problems == [] and report.holes == []
+    assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (440, 162)
+
+
+def _frame_with(msp, title_block):
+    """An A3 frame, its title block drawn by ``title_block(msp)``, a side
+    view and the flat pattern with its bend note."""
+    rect(msp, 0, 0, 420, 297)
+    title_block(msp)
+    rect(msp, 60, 150, 25, 30)                               # the side view
+    msp.add_lwpolyline([(60, 150), (60, 100), (85, 100), (85, 150)])
+    _flat(msp)
+    msp.add_text("UP 90° R 2", dxfattribs={"insert": (280, 210)})
+
+
+def _title_block(d=0.0, **kw):
+    def draw(msp):
+        msp.add_line((d, 50), (420 - d, 50), dxfattribs=kw)
+        for x in (150, 250, 340):
+            msp.add_line((x, d), (x, 50), dxfattribs=kw)
+    return draw
+
+
+@pytest.mark.parametrize("title_block", [
+    _title_block(1.0),                     # its lines stop 1 mm short of the frame
+    _title_block(-1.5),                    # … or run 1.5 mm past it
+    _title_block(layer="TITLE"),           # on a layer of its own, not cut
+    lambda msp: None,                      # no title block at all
+], ids=["gap", "past", "own-layer", "none"])
+def test_a_frame_is_never_the_part_however_its_title_block_is_drawn(drawing, title_block):
+    doc, msp = drawing()
+    _frame_with(msp, title_block)
+    report = part_of(doc)
+    assert report.problems == [] and report.bends == 1
+    assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (100, 25)
+
+
+def test_a_plate_of_a_sheets_proportions_with_edge_to_edge_lines_is_still_a_plate(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 420, 297)
+    msp.add_line((0, 150), (420, 150), dxfattribs={"linetype": "DASHED"})   # a bend line
+    msp.add_line((100, 0), (100, 297), dxfattribs={"layer": "TEXT"})
+    for x in (50, 150, 250, 350):
+        msp.add_circle((x, 60), 10)
+    report = part_of(doc)
+    assert report.problems == [] and len(report.holes) == 4
+    assert round(report.outline.width_mm) == 420
+
+
+def test_a_sheet_with_two_borders_is_read_from_the_inner_frame(drawing):
+    # 30300044 SH2280.DXF: the paper's edge, and inside it the frame the
+    # title block is joined to, with zone ticks between them. The inner
+    # frame used to be taken for the sheet's only view, so it was the part.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 420, 297)                                # the paper's edge
+    for x in (100, 200, 300):                                # zone ticks
+        msp.add_line((x, 0), (x, 5))
+    rect(msp, 5, 5, 410, 287)                                # the frame
+    msp.add_line((5, 55), (415, 55))                         # its title block
+    for x in (150, 250, 340):
+        msp.add_line((x, 5), (x, 55))
+    rect(msp, 60, 150, 25, 30)                               # the side view
+    msp.add_lwpolyline([(60, 150), (60, 100), (85, 100), (85, 150)])
+    _flat(msp)
+    msp.add_text("UP 90° R 2", dxfattribs={"insert": (280, 210)})
+    report = part_of(doc)
+    assert report.problems == [] and report.bends == 1
+    assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (100, 25)
+
+
+def test_a_plate_with_part_of_its_edge_drawn_twice_is_still_a_plate(drawing):
+    # A line on the outline's own edge is a duplicate, not a title block: the
+    # plate was turned down as a sheet with no views.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    msp.add_line((0, 0), (150, 0))
+    report = part_of(doc)
+    assert report.problems == [] and round(report.outline.width_mm) == 300
+
+
+def _letters(msp, x, y, h=10.0):
+    """ "AO" engraved and exported as lines: A's three strokes, O's loop."""
+    msp.add_line((x, y), (x + h / 2, y + h))
+    msp.add_line((x + h / 2, y + h), (x + h, y))
+    msp.add_line((x + h / 4, y + h / 2), (x + 3 * h / 4, y + h / 2))
+    msp.add_circle((x + 1.8 * h, y + h / 2), h / 2)
+
+
+def test_engraved_text_exported_as_lines_is_marked_not_cut(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    msp.add_circle((250, 150), 10)                           # a real hole
+    _letters(msp, 50, 80)
+    report = part_of(doc)
+    assert report.problems == []
+    assert len(report.holes) == 1 and report.open_lines == []
+    assert len(report.engraving) == 3             # A (its strokes chain into two), O
+    assert report.reference_lines == []
+
+
+def test_a_real_gap_in_a_cut_out_is_still_a_problem(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    msp.add_lwpolyline([(50, 50), (150, 50), (150, 120), (50, 120), (50, 52)])   # 2 mm open
+    report = part_of(doc)
+    assert report.problems and "aukko" in report.problems[0]
+
+
+def test_engraved_text_in_an_outline_font_is_marked_not_cut(drawing):
+    from ezdxf.addons import text2path
+
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    msp.add_circle((250, 150), 10)                           # a real hole
+    text = msp.add_text("PART 30300044", dxfattribs={"height": 8, "insert": (40, 90)})
+    for p in text2path.make_paths_from_entity(text):         # exploded to outlines
+        for sub in p.sub_paths():
+            msp.add_lwpolyline([(v.x, v.y) for v in sub.flattening(0.05)], close=True)
+    text.destroy()
+    report = part_of(doc)
+    assert report.problems == [] and len(report.holes) == 1
+    assert len(report.engraving) >= 12 and report.reference_lines == []   # counters too
+
+
+def test_a_row_of_holes_is_cut_not_text(drawing):
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    for x in range(40, 200, 12):
+        msp.add_circle((x, 100), 3)
+    report = part_of(doc)
+    assert report.problems == [] and len(report.holes) == 14

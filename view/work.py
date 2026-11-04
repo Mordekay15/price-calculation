@@ -2,8 +2,10 @@
 inputs on every part card (both tabs), and each product's work cost with the
 per-sheet cutting minimum applied by group (see ``core.work``)."""
 
+from core.model import BoughtPart, Part, Product
 from core.pricing import parse_thickness_mm
 from core.work import (
+    FASTENER_INSERT_EUR,
     LASER,
     PUNCH,
     LaserSpeed,
@@ -13,12 +15,12 @@ from core.work import (
     apply_sheet_minimum,
     cheaper_method,
     default_setup,
+    fastener_price,
     laser_family,
     laser_speed,
-    fastener_price,
-    FASTENER_INSERT_EUR,
     work_cost,
 )
+from view import bought
 from view.ui import st
 
 WORK_LABEL = "Työvaiheet"
@@ -28,6 +30,7 @@ _RATE_KEYS = {          # WorkRates field -> sidebar widget key
     "min_cut_eur_per_sheet": "work_min_cut",
     "weld_m_per_h":          "work_weld_m_per_h",
     "weld_eur_per_h":        "work_weld_eur_per_h",
+    "engrave_eur_per_m":     "work_engrave_eur_per_m",
 }
 _SETUP_KEYS = ("work_setup_1", "work_setup_2", "work_setup_3")
 RATE_KEYS = (*_RATE_KEYS.values(), *_SETUP_KEYS)    # the sidebar's, kept by "Tyhjennä kaikki"
@@ -52,6 +55,10 @@ def render_rates() -> None:
                         key=_RATE_KEYS["weld_m_per_h"])
         c2.number_input("Hitsaus (€/h)", min_value=0.0, value=d.weld_eur_per_h, step=5.0,
                         key=_RATE_KEYS["weld_eur_per_h"])
+        st.number_input("Kaiverrus (€/m)", min_value=0.0, value=d.engrave_eur_per_m,
+                        step=0.05, key=_RATE_KEYS["engrave_eur_per_m"],
+                        help="Osaan kaiverretun tekstin hinta sen viivojen pituuden mukaan "
+                             "(laserilla merkitään, ei leikata).")
         st.markdown("Asetus (€/erä) työvaiheiden mukaan",
                     help="Asetuskustannus ei riipu kappalemäärästä. Työvaiheita ovat "
                          "leikkaus, taivutus, kierteet, hitsaus ja alihankinta.")
@@ -100,15 +107,19 @@ def auto_input(col, label: str, key: str, auto: float | None, *, step: float,
 
 
 def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
-                       qty: int, cut_length_m: float, bends: int = 0,
+                       qty: int, cut_length_m: float, engrave_m: float = 0.0, bends: int = 0,
                        threads: int = 0, fasteners: int = 0,
+                       bought: tuple[Part, list[tuple[str, int]], str] | None = None,
                        in_assembly: bool = False) -> WorkInputs:
     """The card's "Työvaiheet": cutting, bends, threads, fasteners,
-    welding, subcontracting and setup. ``cut_length_m``, ``bends``,
+    welding, subcontracting and setup. ``cut_length_m``, ``engrave_m``, ``bends``,
     ``threads`` and ``fasteners`` are what the drawing gives (the defaults,
-    overwritable); the laser speed comes from the table. ``key`` makes the widget keys unique per card. A card
-    ``in_assembly`` has no fasteners or welding: the assembly prices them (its
-    bought parts and welding), so they can't be counted twice."""
+    overwritable); the laser speed comes from the table. ``key`` makes the
+    widget keys unique per card. ``bought`` (the DXF tab: the card's Part, the
+    fastener lines its drawing calls out and the file they are in) makes the fasteners the
+    part's own Ostetut osat, row by row, instead of a count; they stay on the
+    card in an assembly too. A card ``in_assembly`` has no welding: the
+    assembly welds its parts together."""
     thickness_mm = parse_thickness_mm(thickness)
     table = laser_speed(material, thickness_mm) if material else None
     rates = current_rates()
@@ -134,7 +145,13 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
                 st.warning(f"Laserin leikkausaikaa ei ole taulukossa: "
                            f"{laser_family(material)[0]} {thickness} mm. Anna aika (s/m).")
             # Typed, the punch hits let the card compare the two methods.
-            hits = int(st.columns(4)[0].number_input(
+            c = st.columns(4)
+            if engrave_m:
+                engrave_m = auto_input(c[1], "Kaiverrus (m/kpl)", f"work_engrave_{key}",
+                                       engrave_m, step=0.01, fmt="%.3f",
+                                       help="Osaan kaiverretun tekstin viivat. Hinta "
+                                            "Työn hinnoista (€/m).")
+            hits = int(c[0].number_input(
                 "Levarin iskut (vertailuun)", min_value=0, value=0, step=1,
                 key=f"work_hits_{key}",
                 help="Jos annat iskujen määrän, kortti kertoo, olisiko levari halvempi."))
@@ -155,9 +172,8 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
         eur_per_thread = c[3].number_input("€ / kierre", min_value=0.0, value=0.20,
                                            step=0.05, key=f"work_thread_eur_{key}")
 
-        if in_assembly:
-            n_fasteners, eur_per_fastener, eur_per_insert, weld_m = 0, 0.0, 0.0, 0.0
-        else:
+        bought_parts = None
+        if bought is None:      # the calculator tab: a count and two prices
             c = st.columns(4)
             n_fasteners = int(auto_input(
                 c[0], "Kiinnikkeet (kpl/osa)", f"work_fasteners_{key}", fasteners,
@@ -171,19 +187,28 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
                                                value=FASTENER_INSERT_EUR, step=0.05,
                                                key=f"work_insert_eur_{key}",
                                                help="Yhden kiinnikkeen asennus (puristus).")
-            weld_m = c[3].number_input("Hitsaus (m/kpl)", min_value=0.0, value=0.0, step=0.1,
-                                       key=f"work_weld_{key}")
+            weld_col = c[3]
+        else:                   # the DXF tab: the part's own Ostetut osat
+            bought_parts = render_part_bought(*bought, material=material)
+            n_fasteners = sum(b.qty for b in bought_parts)
+            eur_per_fastener, eur_per_insert = 0.0, 0.0
+            weld_col = None if in_assembly else st.columns(4)[0]
+        # A card in an assembly is welded there (the assembly's Hitsaus).
+        weld_m = 0.0 if in_assembly or weld_col is None else weld_col.number_input(
+            "Hitsaus (m/kpl)", min_value=0.0, value=0.0, step=0.1, key=f"work_weld_{key}")
 
         c = st.columns(4)
         subcontract = c[0].number_input("Alihankinta (€/kpl)", min_value=0.0, value=0.0,
                                         step=0.5, key=f"work_sub_{key}",
                                         help="Esim. anodisointi tai sinkitys.")
-        inputs = WorkInputs(method=method, cut_length_m=cut_length_m, laser=laser, hits=hits,
+        inputs = WorkInputs(method=method, cut_length_m=cut_length_m,
+                            engrave_m=(engrave_m or 0.0) if method == LASER else 0.0,
+                            laser=laser, hits=hits,
                             bends=n_bends, eur_per_bend=eur_per_bend, threads=n_threads,
                             eur_per_thread=eur_per_thread, fasteners=n_fasteners,
                             eur_per_fastener=eur_per_fastener,
-                            eur_per_insert=eur_per_insert, weld_m=weld_m,
-                            subcontract_eur=subcontract)
+                            eur_per_insert=eur_per_insert, bought=bought_parts,
+                            weld_m=weld_m, subcontract_eur=subcontract)
         setup = auto_input(c[1], "Asetus (€/erä)", f"work_setup_{key}",
                       default_setup(inputs, rates), step=5.0, fmt="%.0f",
                       help="Oletus työvaiheiden määrän mukaan (sivupalkin Työn hinnat).")
@@ -201,6 +226,25 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
     return inputs
 
 
+def render_part_bought(part, lines: list[tuple[str, int]], source: str, *,
+                       material: str | None) -> tuple[BoughtPart, ...]:
+    """The part's Ostetut osat (``Part.bought``): the fasteners its drawing
+    calls out (``lines`` in ``source``), each with its price and putting in,
+    editable; rows can be added by hand. Read again (and the edits dropped)
+    only when the drawing's lines change."""
+    widget = f"work_bought_{part.id}"
+    read = [list(x) for x in lines]
+    if part.bought_lines != read:
+        part.bought_lines = read
+        part.bought = bought.fastener_parts(lines, material, source)
+        bought.reset(widget)
+    st.markdown(f"Ostetut osat ({len(part.bought)})" if part.bought else "Ostetut osat",
+                help=bought.HELP + " Luetaan piirustuksen teksteistä, ja ne pysyvät osan "
+                     "mukana myös kokoonpanossa.")
+    part.bought = bought.editor(part.bought, widget, "Kpl / osa")
+    return tuple(part.bought)
+
+
 def _speed_help(material: str | None) -> str:
     return (f"Taulukosta ({laser_family(material)[0]}): 1 metrin leikkausaika, kolmen "
             "leikkuuteknologian keskiarvo (Platino 6 kW ja Genius 6 kW).")
@@ -214,12 +258,16 @@ def _card_summary(inp: WorkInputs, cost: WorkCost) -> str:
     elif inp.laser is not None:
         bits.append(f"laser {inp.cut_length_m:.2f} m × {inp.laser.s_per_m:g} s/m "
                     f"= {cost.cut_seconds:.0f} s")
+    if inp.engrave_m:
+        bits.append(f"kaiverrus {inp.engrave_m:.2f} m {cost.engraving:.2f} €")
     if inp.bends:
         bits.append("1 taivutus" if inp.bends == 1 else f"{inp.bends} taivutusta")
     if inp.threads:
         bits.append("1 kierre" if inp.threads == 1 else f"{inp.threads} kierrettä")
     if inp.fasteners:
         bits.append("1 kiinnike" if inp.fasteners == 1 else f"{inp.fasteners} kiinnikettä")
+        if inp.bought is not None:
+            bits[-1] += f" {cost.fasteners:.2f} €"
     if inp.weld_m:
         bits.append(f"hitsaus {inp.weld_m:g} m")
     bits.append(f"asetus {cost.setup:.0f} €/erä")
@@ -230,14 +278,14 @@ def _card_summary(inp: WorkInputs, cost: WorkCost) -> str:
 
 # ── Costs for the pieces summary ──────────────────────────────────────────────
 
-def work_costs(products: list[dict], groups: dict[tuple, list[dict]],
+def work_costs(products: list[Product], groups: dict[tuple, list[Product]],
                sheets: dict[tuple, int]) -> dict[str, WorkCost]:
     """Each product's work cost by id, the cutting raised to the per-sheet
     minimum over its group's sheets (groups not yet calculated get none)."""
     rates = current_rates()
-    out = {p["id"]: work_cost(p["work"], p["qty"], rates) for p in products if "work" in p}
+    out = {p.id: work_cost(p.work, p.qty, rates) for p in products if p.work is not None}
     for key, prods in groups.items():
-        ids = [p["id"] for p in prods if p["id"] in out]
+        ids = [p.id for p in prods if p.id in out]
         if key in sheets and ids:
             for pid, c in zip(ids, apply_sheet_minimum([out[i] for i in ids],
                                                        sheets[key], rates)):

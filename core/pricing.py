@@ -42,28 +42,39 @@ def build_lookup(data: dict) -> dict:
         (thickness: str, product: str) -> price_eur_per_ton: float
 
     Picks up any section in `data` whose rows carry a 'Paksuus (mm)' column,
-    so new supplier parsers plug in without changes here.
+    so new supplier parsers plug in without changes here. Thicknesses are
+    written with a dot, one value each (``thickness_labels``): a row for
+    "0,7/0,75" prices both 0.7 and 0.75, unless a row of its own prices one.
     """
-    lookup = {}
+    lookup, shared = {}, {}
     for section_rows in data.values():
         if not isinstance(section_rows, list):
             continue
         for row in section_rows:
             if not isinstance(row, dict):
                 continue
-            t = row.get(THICKNESS_KEY)
-            if not t:
-                continue
-            for col, val in row.items():
-                if col != THICKNESS_KEY and val is not None:
-                    lookup[(t, col)] = val
-    return lookup
+            labels = thickness_labels(row.get(THICKNESS_KEY))
+            for t in labels:
+                into = lookup if len(labels) == 1 else shared
+                for col, val in row.items():
+                    if col != THICKNESS_KEY and val is not None:
+                        into[(t, col)] = val
+    return {**shared, **lookup}
+
+
+def thickness_labels(raw) -> list[str]:
+    """A price list's thickness as the labels it prices, each with a dot:
+    "0,7/0,75" is ["0.7", "0.75"], "1,25" is ["1.25"]."""
+    if raw is None or raw == "":
+        return []
+    parts = [p.strip().replace(",", ".") for p in str(raw).split("/")]
+    return [p for p in parts if p]
 
 
 # ── Thickness ─────────────────────────────────────────────────────────────────
 
 def parse_thickness_mm(thickness_str: str | None) -> float | None:
-    """Convert a thickness label like '0,7/0,75' or '1,25' to mm as float;
+    """Convert a thickness label like '0.75', '1,25' or '0,7/0,75' (the first) to mm;
     None when there is none or it isn't a number."""
     try:
         return float(thickness_str.replace(",", ".").split("/")[0].split("x")[0])
@@ -128,7 +139,7 @@ COPPER_LABEL = f"{COPPER_MATERIAL} | {COPPER_SIZE}"
 # Thicknesses (mm) copper is stocked in, in Finnish decimal-comma format to
 # match the rest of the app (parse_thickness_mm / thickness_sort_key handle it).
 COPPER_THICKNESSES = sorted(
-    ["0,5", "0,8", "1", "1,5", "2", "3", "4", "5", "6"],
+    ["0.5", "0.8", "1", "1.5", "2", "3", "4", "5", "6"],
     key=thickness_sort_key,
 )
 

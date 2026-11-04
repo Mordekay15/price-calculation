@@ -2,7 +2,6 @@
 
 import io
 import zipfile
-from datetime import date
 
 import ezdxf
 import openpyxl
@@ -11,7 +10,6 @@ from core.batches import BatchPrice
 from core.work import WorkCost
 from core.quote import (
     CleanPart,
-    QuoteInfo,
     QuoteLine,
     clean_dxf,
     clean_dxf_zip,
@@ -23,11 +21,6 @@ from core.quote import (
 
 SQUARE = [(0, 0), (100, 0), (100, 50), (0, 50)]
 HOLE = [(10, 10), (20, 10), (20, 20), (10, 20)]
-
-
-def _info():
-    return QuoteInfo(number="T-1", customer="Asiakas Oy", quote_date=date(2026, 10, 1),
-                     notes="Rivi 1\nRivi 2 <b>")
 
 
 def _lines():
@@ -43,10 +36,6 @@ def test_fmt_eur_is_finnish():
     assert fmt_eur(None) == ""
 
 
-def test_valid_until():
-    assert _info().valid_until == date(2026, 10, 31)
-
-
 def test_line_prices():
     a, b = _lines()[0].prices
     assert a.unit == 30.0
@@ -55,17 +44,18 @@ def test_line_prices():
 
 
 def test_quote_pdf_is_a_pdf():
-    data = quote_pdf(_info(), _lines(), [1, 10], [30.0, None])
+    data = quote_pdf(_lines(), [1, 10], [30.0, None])
     assert data.startswith(b"%PDF")
-    assert quote_pdf(_info(), _lines(), [1, 10], [30.0, None],
+    assert quote_pdf(_lines(), [1, 10], [30.0, None],
                      show_material=False).startswith(b"%PDF")
 
 
 def test_quote_xlsx_opens_with_both_sheets():
-    wb = openpyxl.load_workbook(io.BytesIO(quote_xlsx(_info(), _lines(), [1, 10])))
+    wb = openpyxl.load_workbook(io.BytesIO(quote_xlsx(_lines(), [1, 10])))
     assert wb.sheetnames == ["Tarjous", "Erittely"]
     values = [c.value for row in wb["Tarjous"].iter_rows() for c in row]
-    assert "osa_1" in values and "Asiakas Oy" in values
+    assert "osa_1" in values
+    assert [c.value for c in wb["Tarjous"][1]][0] == "Nimike"      # no header fields
 
 
 def test_dxf_file_name_template():
@@ -91,3 +81,11 @@ def test_clean_dxf_zip_deduplicates_names():
         CleanPart("b.dxf", "S355MC", "2", SQUARE)]
     with zipfile.ZipFile(io.BytesIO(clean_dxf_zip(parts))) as zf:
         assert zf.namelist() == ["a_S355MC_2mm.dxf", "a_S355MC_2mm_2.dxf", "b_S355MC_2mm.dxf"]
+
+
+def test_engraving_is_on_its_own_layer_in_the_clean_dxf():
+    text = [[(10, 10), (15, 20), (20, 10)]]
+    doc = ezdxf.read(io.StringIO(clean_dxf(CleanPart("p.dxf", "S235", "2", SQUARE,
+                                                     engraving=text)).decode()))
+    layers = [e.dxf.layer for e in doc.modelspace()]
+    assert layers.count("ENGRAVE") == 1 and layers.count("CUT") == 1

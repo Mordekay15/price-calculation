@@ -4,21 +4,19 @@ is a candidate shape for the card of its part number (``core.items``): the
 card of its DXF, or a card of its own. A 3D preview shows the model, and the
 cards carry the model's quantities.
 
-Session keys: ``MODELS`` holds ``{file id: {"name", "model", "flats",
-"cards"}}``, where ``flats`` maps a part key to its ``FlatPart`` and
-``cards`` to its flat ``DxfFile``. A model's part has the source id
-``"{file id}|{part key}"``."""
+A model is kept once, as its file's ``ReadResult`` (``view.files``): its
+record is the ``StepModel`` and each body's ``FlatPart``, its shapes the
+cards' ``FlatShape``s. A model's part has the source id ``"{file id}|{part
+key}"``."""
 
 from __future__ import annotations
 
 import streamlit as st
 
 from core import step
-from core.dxf import read_dxf
 from core.items import Source
 from core.linking import base_key
 
-MODELS = "dxf_step_models"
 K_FACTOR = "dxf_step_k"
 _SEP = "|"
 
@@ -28,17 +26,17 @@ def is_step(name: str) -> bool:
 
 
 def add_model(file_id: str, name: str, data: bytes) -> step.StepModel:
-    """Read a dropped STEP file and unfold its parts. The 3D bodies are let
-    go after unfolding when the file is kept (``attachments``): they are read
+    """Read a dropped STEP file with the STEP reader (``core.readers``): its
+    parts, each one unfolded with the K factor. The 3D bodies are let go
+    after unfolding when the file is kept (``view.files``): they are read
     again for a 3D view or a new K factor (see ``shapes``)."""
-    from view import attachments
+    from core.readers import read_step_file
+    from view import files
 
-    model = step.read_step(data, name)
-    k = st.session_state.get(K_FACTOR, step.DEFAULT_K_FACTOR)
-    st.session_state.setdefault(MODELS, {})[file_id] = {
-        "name": name, "model": model,
-        "flats": {p.key: step.unfold(p.shape, k) for p in model.parts}}
-    if file_id in attachments.docs():
+    res = read_step_file(data, file_id, name, st.session_state.get(K_FACTOR))
+    model = res.record[0]
+    files.keep(file_id, res)
+    if files.get(file_id) is not None:
         for p in model.parts:
             p.shape = None
     return model
@@ -57,7 +55,13 @@ def shapes(file_id: str) -> dict:
 
 
 def models() -> dict[str, dict]:
-    return st.session_state.get(MODELS, {})
+    """The STEP models read, ``{file id: {"name", "model", "flats"}}``: a view
+    of their files' ReadResults, nothing kept beside them."""
+    from view import files
+
+    return {fid: {"name": res.record[0].name, "model": res.record[0], "flats": res.record[1]}
+            for fid, res in files.results().items()
+            if isinstance(res.record, tuple) and isinstance(res.record[0], step.StepModel)}
 
 
 def is_assembly(file_id: str) -> bool:
@@ -104,15 +108,6 @@ def sources(hidden: set[str], folder_of=lambda sid: "") -> list[Source]:
     return out
 
 
-def flat_file(source_id: str):
-    """A model part's flat pattern as a ``DxfFile`` (made once per K factor)."""
-    m, part, flat = source(source_id)
-    cache = m.setdefault("cards", {})
-    if part.key not in cache:
-        cache[part.key] = read_dxf(step.flat_dxf(flat, part.name), _file_name(m, part))
-    return cache[part.key]
-
-
 def _file_name(m: dict, part: step.StepPart) -> str:
     """How a model's part is named on its card: the file's own name for a
     file of one part, else the part's name in the assembly."""
@@ -132,16 +127,25 @@ def _keys(m: dict, part: step.StepPart) -> set[str]:
 
 
 def refold(k: float) -> None:
-    """Unfold every model again with a new K factor."""
+    """Unfold every model again with a new K factor (its cards' shapes with
+    it)."""
+    from core.readers import read_step_file, step_result, unfold_all
+    from view import files
+
     for file_id, m in models().items():
-        m["flats"] = {key: step.unfold(shape, k) for key, shape in shapes(file_id).items()}
-        m.pop("cards", None)
+        f = files.get(file_id)
+        if f is not None and f.load is not None:
+            res = read_step_file(f.load(), file_id, m["name"], k)
+            for p in res.record[0].parts:
+                p.shape = None
+        else:       # a model given without its file keeps its bodies
+            res = step_result(m["model"], unfold_all(m["model"], k, shapes(file_id)), file_id)
+        files.keep(file_id, res)
 
 
 def remove_model(file_id: str) -> None:
     from view import attachments
 
-    models().pop(file_id, None)
     attachments.remove_doc(file_id)
 
 

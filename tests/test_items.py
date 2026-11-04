@@ -2,14 +2,21 @@
 
 from types import SimpleNamespace
 
-from core.items import (NO_BLANK, Choice, Source, choose, confirm_unit, group_sources, score_dxf,
-                        STEP_CHOICE)
+from core.items import (
+    NO_BLANK,
+    STEP_CHOICE,
+    Choice,
+    Source,
+    choose,
+    confirm_unit,
+    group_sources,
+    score_dxf,
+)
 
 
-def _report(w, h, dropped=0, problems=()):
-    return SimpleNamespace(problems=list(problems), dropped=[[]] * dropped,
-                           dropped_count=dropped,
-                           outline=SimpleNamespace(width_mm=w, height_mm=h))
+def _shape(w, h, dropped=0, problems=(), guessed=False):
+    return SimpleNamespace(problems=list(problems), outside_count=dropped, unit_guessed=guessed,
+                           outline=[(0, 0), (w, 0), (w, h)], size_mm=(w, h))
 
 
 def test_a_parts_files_are_one_item_and_its_drawing_joins_it():
@@ -22,8 +29,12 @@ def test_a_parts_files_are_one_item_and_its_drawing_joins_it():
         Source("s|1", "Part1.step", "step", keys={"part1", "3aua0000098622"}),
     ]
     drawings = {"dwg"}
-    assert group_sources(sources, lambda sid: sid in drawings) == [
+    linked = {}
+    assert group_sources(sources, lambda sid: sid in drawings, linked=linked) == [
         ["dwg", "dxf"], ["p1", "p2", "s|1"], ["other"]]
+    # How each file came onto its card (PartSource.linked_by).
+    assert linked == {"dwg": "text", "dxf": "part_number", "p1": "part_number",
+                      "p2": "part_number", "other": "part_number", "s|1": "part_number"}
 
 
 def test_a_part_that_mentions_another_part_number_keeps_its_card():
@@ -34,9 +45,9 @@ def test_a_part_that_mentions_another_part_number_keeps_its_card():
 
 
 def test_a_clean_flat_beats_a_drawing_sheet():
-    flat = score_dxf(_report(400, 120), False, [], None)
-    sheet = score_dxf(_report(297, 210), False, ["Title", "Scale 1:2"] * 5, None)
-    views = score_dxf(_report(400, 120, dropped=4), False, [], None)
+    flat = score_dxf(_shape(400, 120), [], None)
+    sheet = score_dxf(_shape(297, 210), ["Title", "Scale 1:2"] * 5, None)
+    views = score_dxf(_shape(400, 120, dropped=4), [], None)
     assert flat.score > views.score > sheet.score
     assert "kehys" in sheet.note and flat.note == "puhdas aihio"
     assert choose({"sheet": sheet, "flat": flat}) == "flat"
@@ -44,16 +55,16 @@ def test_a_clean_flat_beats_a_drawing_sheet():
 
 def test_a_drawing_with_only_lines_beside_its_views_has_no_blank():
     # An assembly drawing: the biggest closed "part" is a 112 × 1 mm line.
-    drawing = score_dxf(_report(112.1, 1.0, dropped=232), True, [], None)
+    drawing = score_dxf(_shape(112.1, 1.0, dropped=232, guessed=True), [], None)
     assert not drawing.valid and drawing.note == NO_BLANK
-    assert score_dxf(_report(112.1, 1.0), False, [], None).valid    # a lone strip is a part
+    assert score_dxf(_shape(112.1, 1.0), [], None).valid    # a lone strip is a part
     assert choose({"d": drawing}) is None
 
 
 def test_the_step_blank_confirms_a_dxf_or_wins_over_a_wrong_one():
     blank = (76.5, 40.0)
-    same = score_dxf(_report(40.0, 76.6), False, [], blank)
-    other = score_dxf(_report(120, 80), False, [], blank)
+    same = score_dxf(_shape(40.0, 76.6), [], blank)
+    other = score_dxf(_shape(120, 80), [], blank)
     step = STEP_CHOICE
     assert "STEP" in same.note
     assert choose({"s": step, "same": same}) == "same"
@@ -67,7 +78,7 @@ def test_the_users_choice_wins_while_valid():
     assert choose(scores, "b") == "b"
     assert choose(scores, "bad") == "a"
     assert choose({"bad": scores["bad"]}) is None
-    assert not score_dxf(_report(10, 10, problems=["x"]), False, [], None).valid
+    assert not score_dxf(_shape(10, 10, problems=["x"]), [], None).valid
 
 
 def test_a_guessed_unit_is_confirmed_by_the_step_blank_or_the_pdf_dimensions():
@@ -88,8 +99,10 @@ def test_a_drawing_that_names_no_part_joins_the_item_in_its_folder():
                Source("other", "100325.dxf", "dxf", [], folder="100325"),
                Source("lone", "DRW-9.dwg", "dxf", [], folder="")]
     drawings = {"dwg", "lone"}
-    assert group_sources(sources, lambda sid: sid in drawings) == [
+    linked = {}
+    assert group_sources(sources, lambda sid: sid in drawings, linked=linked) == [
         ["dwg", "dxf"], ["other"], ["lone"]]
+    assert (linked["dwg"], linked["lone"]) == ("folder", "part_number")
     # Two items in one folder: the drawing can't tell which, it stays apart.
     sources[2] = Source("other", "100325.dxf", "dxf", [], folder="ITM-072558")
     assert group_sources(sources, lambda sid: sid in drawings) == [

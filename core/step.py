@@ -11,16 +11,14 @@ prices like a dropped DXF.
    radius ``inner radius + K × thickness``. The result is the flat outline,
    its holes and the bend lines. A body that isn't sheet (a bought or
    machined part) comes back with ``is_sheet`` False and a reason.
-3. ``flat_dxf`` writes the flat part as a DXF: outline and holes on ``CUT``,
-   bend lines on ``BEND_UP`` / ``BEND_DOWN``, and a note with the thickness,
-   so that the DXF reader counts the bends and the material panel reads the
-   thickness.
+3. The STEP reader (``core.readers.read_step_file``) makes each sheet body
+   the card's FlatShape straight from its flat, checked like a DXF part
+   (``core.readers.shape_from_flat``), with no DXF written and read back.
 4. ``mesh`` triangulates a body for the 3D preview.
 """
 
 from __future__ import annotations
 
-import io
 import math
 import os
 import re
@@ -313,7 +311,12 @@ class _Face:
     def __init__(self, face):
         from OCP.BRepAdaptor import BRepAdaptor_Surface
         from OCP.BRepGProp import BRepGProp
-        from OCP.GeomAbs import GeomAbs_Cylinder, GeomAbs_Plane, GeomAbs_Sphere, GeomAbs_Torus
+        from OCP.GeomAbs import (
+            GeomAbs_Cylinder,
+            GeomAbs_Plane,
+            GeomAbs_Sphere,
+            GeomAbs_Torus,
+        )
         from OCP.GProp import GProp_GProps
 
         self.face = face
@@ -395,7 +398,6 @@ class _NotSheet(Exception):
 def _unfold(solid, flat: FlatPart, k: float) -> None:
     from OCP.TopAbs import TopAbs_FACE
     from OCP.TopExp import TopExp_Explorer
-
     from OCP.TopoDS import TopoDS
 
     faces = []
@@ -811,26 +813,6 @@ def _thin(points: list, n: int = 240) -> list:
 # ── Output ────────────────────────────────────────────────────────────────────
 
 BEND_UP, BEND_DOWN = "BEND_UP", "BEND_DOWN"
-
-
-def flat_dxf(flat: FlatPart, name: str) -> bytes:
-    """The flat part as a DXF in mm (see the module doc)."""
-    import ezdxf
-
-    doc = ezdxf.new("R2010", units=4)
-    doc.header["$INSUNITS"] = 4
-    for layer, colour in (("CUT", 7), (BEND_UP, 3), (BEND_DOWN, 1), ("NOTES", 8)):
-        doc.layers.add(layer, color=colour)
-    msp = doc.modelspace()
-    for loop in (flat.outline, *flat.holes):
-        msp.add_lwpolyline(loop, close=True, dxfattribs={"layer": "CUT"})
-    for b in flat.bends:
-        msp.add_line(b.line[0], b.line[1], dxfattribs={"layer": BEND_UP if b.up else BEND_DOWN})
-    note = f"{name} | t = {flat.thickness_mm:g} mm | {len(flat.bends)} taivutusta (STEP)"
-    msp.add_text(note, height=3, dxfattribs={"layer": "NOTES"})
-    buf = io.StringIO()
-    doc.write(buf)
-    return buf.getvalue().encode("utf-8")
 
 
 def mesh(shape, deflection: float = 0.2) -> tuple[list[tuple], list[tuple]]:

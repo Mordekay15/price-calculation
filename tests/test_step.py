@@ -6,10 +6,18 @@ import pytest
 
 pytest.importorskip("OCP")
 
-from core.dxf import read_dxf                         # noqa: E402
-from core.step import bends_on, flat_dxf, read_step, unfold  # noqa: E402
-from tests.step_models import (                       # noqa: E402
-    assembly_step, bent_part, creo_step, l_bracket, part_step, pin, plate)
+from core.dxf import read_dxf  # noqa: E402
+from core.step import bends_on, read_step, unfold  # noqa: E402
+from tests.step_models import (  # noqa: E402
+    assembly_step,
+    bent_part,
+    creo_step,
+    flat_dxf,  # noqa: E402
+    l_bracket,
+    part_step,
+    pin,
+    plate,
+)
 
 
 def _size(flat):
@@ -147,9 +155,9 @@ def test_a_parts_flat_drawing_model_and_pdf_make_one_card():
         import streamlit as st
         from reportlab.pdfgen import canvas
 
-        from core.step import flat_dxf, unfold
+        from core.step import unfold
         from tests.conftest import dxf_bytes
-        from tests.step_models import l_bracket, part_step
+        from tests.step_models import flat_dxf, l_bracket, part_step
         from view.dxf_files import ingest, sync
         from view.dxf_tab import _render_part_cards
 
@@ -181,8 +189,9 @@ def test_a_parts_flat_drawing_model_and_pdf_make_one_card():
     assert not at.exception
     assert at.session_state["cards"] == [("a", "ITM-072558_A.dxf")]
     files = " ".join(m.proto.help for m in at.markdown if m.value.startswith("**#1**"))
-    assert "✓ ITM-072558_A.dxf (vastaa STEP-mallin aihiota)" in files
+    assert "✓ ITM-072558_A.dxf (vastaa STEP-mallin aihiota; kortilla: osanumero)" in files
     assert "DRW-023179_A.dxf (piirustuksen kehys" in files
+    assert "kortilla: tekstin osanumero)" in files          # its title block named the part
     assert any("DRW-023179_A.pdf" in e.label for e in at.expander)
     at.selectbox(key="dxf_src_a").set_value("d|0:1:1:1/0").run()
     assert at.session_state["cards"] == [("a", "ITM-072558_A.stp")]
@@ -201,9 +210,9 @@ def test_a_card_takes_its_bends_from_the_model_and_its_material_from_the_pdf():
         import streamlit as st
         from reportlab.pdfgen import canvas
 
-        from core.step import flat_dxf, unfold
+        from core.step import unfold
         from tests.conftest import dxf_bytes
-        from tests.step_models import l_bracket, part_step
+        from tests.step_models import flat_dxf, l_bracket, part_step
         from view.dxf_files import auto_fill_materials, ingest, sync
         from view.dxf_tab import _render_part_cards
 
@@ -225,10 +234,10 @@ def test_a_card_takes_its_bends_from_the_model_and_its_material_from_the_pdf():
                      ("b", "ITM-072558_A.pdf", buf.getvalue())]])
         parts = sync()
         lookup = {("2", "S235 | 1000x2000"): 900.0, ("3", "S235 | 1000x2000"): 950.0}
-        auto_fill_materials(parts, ["S235"], lookup)
+        auto_fill_materials(["S235"], lookup)
         products = _render_part_cards(parts, ["S235"], lookup, False)
-        st.session_state["cards"] = [(p["name"], p["material"], p["thickness"],
-                                      p["report"].bends, p["work"].bends) for p in products]
+        st.session_state["cards"] = [(p.name, p.material, p.thickness,
+                                      len(p.shape.bends), p.work.bends) for p in products]
 
     at = AppTest.from_function(page, default_timeout=60).run()
     assert not at.exception
@@ -293,10 +302,15 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
         parts = sync()
         assemblies.sync_from_models()
         _render_part_cards(parts, ["S235"], {("2", "S235 | 1000x2000"): 900.0}, False)
-        st.session_state["asm"] = [(a.name, dict(a.members),
+        st.session_state["asm"] = [(a.name, dict(a.parts),
                                     [(b.name, b.qty, b.fit_eur) for b in a.bought])
                                    for a in assemblies.current(source_cards())]
         st.session_state["parts"] = [(fid, d.name) for fid, d in parts]
+        from view.dxf_files import parts as card_parts
+        st.session_state["on_part"] = sorted((p.qty.value, p.work is not None)
+                                             for p in card_parts().values())
+        st.session_state["store_keys"] = [k for k in st.session_state
+                                          if k in ("dxf_step_models", "dxf_store")]
 
     at = AppTest.from_function(page, default_timeout=60).run()
     assert not at.exception
@@ -312,6 +326,9 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
         "Pohja.dxf", "Kulma.step"]
     # Its cards are nested for the largest batch (10) of assemblies.
     assert [n.value for n in at.number_input if n.key.startswith("dxf_q_")] == [10, 20]
+    # The cards' quantity and work are on their Parts; no second store.
+    assert at.session_state["on_part"] == [(10, True), (20, True)]
+    assert at.session_state["store_keys"] == []
     # The assembly prices fasteners and welding, so its cards don't.
     keys = {n.key for n in at.number_input}
     assert f"work_bends_{cards['Kulma.step']}" in keys
@@ -325,12 +342,13 @@ def test_a_kept_models_bodies_are_read_again_when_needed():
     def page():
         import streamlit as st
 
+        from core.model import InputFile
         from tests.step_models import assembly_step
         from view import attachments, bom
 
         if "done" not in st.session_state:
             data = assembly_step()
-            attachments.add_doc("m", "runko.step", data, load=lambda: data)
+            attachments.add_doc(InputFile("m", "runko.step", "step", lambda: data), data)
             bom.add_model("m", "runko.step", data)
             st.session_state["done"] = True
         parts = bom.models()["m"]["model"].parts
@@ -378,7 +396,7 @@ def test_removing_an_assembly_removes_its_parts_and_its_step_file():
 
     at = AppTest.from_function(page, default_timeout=60).run()
     assert at.session_state["parts"] == ["Pohja.dxf", "Irto.dxf", "Kulma.step"]
-    at.button(key="asm_del_step:s1").click().run()
+    at.button(key="asm_del_runko").click().run()
     assert not at.exception
     at.run()
     assert at.session_state["parts"] == ["Irto.dxf"] and at.session_state["models"] == []

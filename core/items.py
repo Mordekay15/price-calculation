@@ -24,6 +24,7 @@ import re
 from dataclasses import dataclass, field
 
 from core.linking import base_key, link_by_text
+from core.model import Choice
 
 # Paper sheets (mm, short × long): an outline this size is a drawing frame.
 _PAPER = [(210, 297), (297, 420), (420, 594), (594, 841), (841, 1189)]
@@ -50,17 +51,22 @@ class Source:
 
 
 def group_sources(sources: list[Source], is_drawing=lambda source_id: True,
-                  pdf_text=lambda key: "") -> list[list[str]]:
+                  pdf_text=lambda key: "", linked: dict[str, str] | None = None
+                  ) -> list[list[str]]:
     """The items: lists of source ids, each in drop order, the items in the
     order of their first file. A group joins another by its texts only when
     ``is_drawing`` says each of its files is a drawing (not a flat part of
     its own that merely mentions another part number). ``pdf_text(key)`` is
-    the text of the PDFs of a part number (``base_key``), "" when none."""
+    the text of the PDFs of a part number (``base_key``), "" when none.
+    ``linked``, when given, gets how each source joined its item
+    (``part_number``, ``text`` or ``folder``, see ``PartSource``)."""
+    linked = {} if linked is None else linked
     groups: dict[str, list[Source]] = {}
     for s in sources:
         keys = s.part_keys()
         key = next((k for k in sorted(keys) if k in groups), None) or sorted(keys)[0]
         groups.setdefault(key, []).append(s)
+        linked[s.id] = "part_number"
 
     # A group named otherwise whose texts name exactly one other group's part
     # number is that part's drawing: it joins it.
@@ -71,6 +77,7 @@ def group_sources(sources: list[Source], is_drawing=lambda source_id: True,
         found = link_by_text(others, {"x": texts})
         if found:
             target = next(iter(found))
+            linked.update({s.id: "text" for s in groups[key]})
             groups[target].extend(groups.pop(key))
 
     # A drawing still on its own joins the one other item in its folder (a
@@ -81,6 +88,7 @@ def group_sources(sources: list[Source], is_drawing=lambda source_id: True,
         others = [k for k, ms in groups.items()
                   if folder and k != key and any(s.folder == folder for s in ms)]
         if len(others) == 1:
+            linked.update({s.id: "folder" for s in groups[key]})
             groups[others[0]].extend(groups.pop(key))
 
     order = {s.id: i for i, s in enumerate(sources)}
@@ -97,22 +105,17 @@ def _drawings(groups: dict[str, list[Source]], is_drawing):
             yield key, members
 
 
-@dataclass
-class Choice:
-    score: float
-    note: str                          # why, in Finnish, for the card
-    valid: bool = True
+LINKED_BY = {"part_number": "osanumero", "text": "tekstin osanumero", "folder": "kansio"}
 
 
-def score_dxf(report, unit_guessed: bool, texts: list[str],
-              blank_mm: tuple[float, float] | None) -> Choice:
+def score_dxf(shape, texts: list[str], blank_mm: tuple[float, float] | None) -> Choice:
     """How much a DXF/DWG looks like the part's flat pattern (higher is
-    better). ``report`` is its ``DxfReport``, ``blank_mm`` the STEP blank's
+    better). ``shape`` is its ``FlatShape``, ``blank_mm`` the STEP blank's
     size when the item has a model."""
-    if report.problems or report.outline is None:
+    if shape.problems or not shape.outline:
         return Choice(-1e9, "ei luettavaa ääriviivaa", valid=False)
-    w, h = sorted((report.outline.width_mm, report.outline.height_mm))
-    if w < _MIN_PART_MM and report.dropped_count:
+    w, h = sorted(shape.size_mm)
+    if w < _MIN_PART_MM and shape.outside_count:
         # A drawing sheet with no flat pattern on it (an assembly drawing):
         # the "part" found is one of its lines.
         return Choice(-1e9, NO_BLANK, valid=False)
@@ -120,13 +123,13 @@ def score_dxf(report, unit_guessed: bool, texts: list[str],
     if _is_paper(w, h):
         score -= 200
         notes.append("piirustuksen kehys")
-    outside = report.dropped_count
+    outside = shape.outside_count
     if outside:
         score -= 15 * min(outside, 10)
         notes.append(f"{outside} kuviota osan ulkopuolella")
     if texts:
         score -= 2 * min(len(texts), 20)
-    if unit_guessed:
+    if shape.unit_guessed:
         score -= 10
         notes.append("mittayksikkö puuttuu")
     if blank_mm is not None:
@@ -155,13 +158,14 @@ def choose(scored: dict[str, Choice], override: str | None = None) -> str | None
     return max(valid)[2] if valid else None
 
 
-def looks_like_drawing(report) -> bool:
-    """A drawing sheet rather than a part: unreadable, a paper-size frame, or
-    other views and the title block around the part."""
-    if report.problems or report.outline is None:
+def looks_like_drawing(shape) -> bool:
+    """A drawing sheet rather than a part (``shape``: its ``FlatShape``):
+    unreadable, a paper-size frame, or other views and the title block
+    around the part."""
+    if shape.problems or not shape.outline:
         return True
-    w, h = sorted((report.outline.width_mm, report.outline.height_mm))
-    return _is_paper(w, h) or report.dropped_count >= 3
+    w, h = sorted(shape.size_mm)
+    return _is_paper(w, h) or shape.outside_count >= 3
 
 
 _NUMBER = re.compile(r"(?<![\d.,])\d{2,5}(?:[.,]\d{1,2})?(?![\d])")

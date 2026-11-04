@@ -16,6 +16,7 @@ DATA = {
     "thin": [
         {"Paksuus (mm)": "0,7/0,75", "S235 | 1000x2000": 900.0, "S235 | 1250x2500": None},
         {"Paksuus (mm)": "2", "S235 | 1000x2000": 950.0, "ALUMIINI | 1000x2000": 4000.0},
+        {"Paksuus (mm)": "1,25", "S235 | 1000x2000": 920.0},
     ],
     "not_rows": "ignored",
 }
@@ -24,8 +25,10 @@ DATA = {
 def test_build_lookup_flattens_rows_and_skips_missing_prices():
     lookup = build_lookup(DATA)
     assert lookup == {
-        ("0,7/0,75", "S235 | 1000x2000"): 900.0,
+        ("0.7", "S235 | 1000x2000"): 900.0,     # "0,7/0,75": one value each,
+        ("0.75", "S235 | 1000x2000"): 900.0,    # with a dot
         ("2", "S235 | 1000x2000"): 950.0,
+        ("1.25", "S235 | 1000x2000"): 920.0,
         ("2", "ALUMIINI | 1000x2000"): 4000.0,
     }
 
@@ -34,7 +37,13 @@ def test_materials_sizes_and_thicknesses():
     lookup = build_lookup(DATA)
     assert get_materials(lookup) == ["ALUMIINI", "S235"]
     assert get_sizes_for_material(lookup, "S235") == ["1000x2000"]
-    assert get_thicknesses_for_material(lookup, "S235") == ["0,7/0,75", "2"]
+    assert get_thicknesses_for_material(lookup, "S235") == ["0.7", "0.75", "1.25", "2"]
+
+
+def test_a_row_of_its_own_prices_its_thickness_over_a_shared_row():
+    lookup = build_lookup({"a": [{"Paksuus (mm)": "0,7/0,75", "S235 | 1000x2000": 900.0},
+                                 {"Paksuus (mm)": "0.75", "S235 | 1000x2000": 870.0}]})
+    assert lookup == {("0.7", "S235 | 1000x2000"): 900.0, ("0.75", "S235 | 1000x2000"): 870.0}
 
 
 def test_parse_thickness_uses_the_first_value_and_decimal_comma():

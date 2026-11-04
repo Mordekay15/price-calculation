@@ -9,7 +9,8 @@ import streamlit as st
 from tests.conftest import dxf_bytes
 from tests.step_models import assembly_step
 from view import bom
-from view.dxf_files import ITEMS, ingest, resync, sync
+from view.dxf_files import ingest, resync, sync
+from view.dxf_files import parts as cards
 from view.dxf_tab import _render_part_cards
 
 if "dropped" not in st.session_state:
@@ -22,8 +23,8 @@ if "dropped" not in st.session_state:
     st.session_state["dropped"] = True
 parts = sync()
 labels = {fid: f"#{i + 1} · {d.name}" for i, (fid, d) in enumerate(parts)}
-bom.render_bom({sid: labels[cid] for cid, item in st.session_state[ITEMS].items()
+bom.render_bom({sid: labels[cid] for cid, item in cards().items()
                 for sid in item.members}, resync)
 products = _render_part_cards(parts, ["S235"], {("2", "S235 | 1000x2000"): 900.0}, False)
-st.session_state["cards"] = [(p["name"], p["qty"], p["report"].bends,
-                              round(p["width"], 1), round(p["height"], 1)) for p in products]
+st.session_state["cards"] = [(p.name, p.qty, len(p.shape.bends),
+                              round(p.width, 1), round(p.height, 1)) for p in products]
