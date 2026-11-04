@@ -718,3 +718,13 @@ def test_a_sheet_with_two_borders_is_read_from_the_inner_frame(drawing):
     report = part_of(doc)
     assert report.problems == [] and report.bends == 1
     assert (round(report.outline.width_mm), round(report.outline.height_mm)) == (100, 25)
+
+
+def test_a_plate_with_part_of_its_edge_drawn_twice_is_still_a_plate(drawing):
+    # A line on the outline's own edge is a duplicate, not a title block: the
+    # plate was turned down as a sheet with no views.
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    msp.add_line((0, 0), (150, 0))
+    report = part_of(doc)
+    assert report.problems == [] and round(report.outline.width_mm) == 300

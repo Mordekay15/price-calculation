@@ -484,7 +484,8 @@ def _sheet_views(frame: Contour, contours: list[Contour],
     boxes = [bbox(pts) for pts in spans.values()]
     boxes = [b for b in boxes if (b[2] - b[0]) * (b[3] - b[1]) < 0.5 * w * h]
     ref = [ln.points for ln in lines if id(ln) not in joined]
-    return _views([c for c in rest if id(c) not in joined], boxes, ref, frame_box)
+    views = _views([c for c in rest if id(c) not in joined], boxes, ref, frame_box)
+    return views or None                 # nothing drawn on it: a plate, not a sheet
 
 
 def _ends(c: Contour) -> list[Point]:
