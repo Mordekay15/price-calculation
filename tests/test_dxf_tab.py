@@ -612,7 +612,7 @@ def test_a_zip_of_item_folders_becomes_one_card_per_folder():
     assert sorted(at.session_state["skipped"]) == ["100325.dxf.bak", "ITM-072558.prt.1"]
 
 
-def test_the_same_pdf_or_step_in_two_folders_is_on_its_card_once():
+def test_the_same_file_in_two_folders_is_kept_once():
     import pytest
     from streamlit.testing.v1 import AppTest
 
@@ -645,7 +645,9 @@ def test_the_same_pdf_or_step_in_two_folders_is_on_its_card_once():
         c.save()
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
-            zf.writestr("RFQ/100325.dxf", dxf_bytes(doc))
+            dxf = dxf_bytes(doc)
+            zf.writestr("RFQ/100325.dxf", dxf)
+            zf.writestr("RFQ/kopio/100325.dxf", dxf)                # no second card
             zf.writestr("RFQ/100325.pdf", pdf.getvalue())
             zf.writestr("RFQ/kopio/100325.pdf", pdf.getvalue())     # the same file again
             zf.writestr("RFQ/vanha/100325.pdf", other.getvalue())   # same name, not the same
@@ -657,7 +659,8 @@ def test_the_same_pdf_or_step_in_two_folders_is_on_its_card_once():
             ingest([SimpleNamespace(file_id="z", name="RFQ.zip", getvalue=lambda: buf.getvalue())])
             # The same PDF dropped loose as well.
             ingest([SimpleNamespace(file_id="p", name="100325.pdf", getvalue=lambda: pdf.getvalue())])
-        sync()
+        st.session_state["cards"] = len(sync())
+        st.session_state["dxfs"] = len(files.of_kind("dxf"))
         st.session_state["links"] = {c: [files.get(d).folder for d in ids]
                                      for c, ids in card_docs().items()}
         st.session_state["models"] = len(bom.models())
@@ -669,6 +672,7 @@ def test_the_same_pdf_or_step_in_two_folders_is_on_its_card_once():
     (folders,) = at.session_state["links"].values()
     assert sorted(folders) == ["RFQ", "RFQ/vanha"]
     assert at.session_state["models"] == 1
+    assert at.session_state["dxfs"] == 1 and at.session_state["cards"] == 1
     assert [len(s) for s in at.session_state["steps"]] == [1]
     assert at.session_state["dxf_dupes"][0] == ["100325.pdf"]   # the loose one, warned about
 

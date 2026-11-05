@@ -198,10 +198,10 @@ def ingest(uploaded) -> bool:
     the drop area (Streamlit can't remove one file from an uploader, only
     start a new one). A file whose name was dropped already is not added
     again; its name goes to ``_DUPES`` for the warning (a drop without one
-    clears it). Nor is a PDF or STEP file with the same name and the same
-    bytes as one already kept, from whatever folder: an RFQ often has a
-    drawing or model twice (in two folders, or loose and in the ZIP), and
-    the card would list it twice. True when something was dropped."""
+    clears it). Nor is a file with the same name and the same bytes as one
+    already kept, from whatever folder: an RFQ often has a drawing or model
+    twice (in two folders, or loose and in the ZIP), and it would make a
+    second card or be listed twice on one. True when something was dropped."""
     known = files.inputs()
     dropped = [up for up in uploaded or [] if up.file_id not in known]
     names = {(f.folder, f.name) for f in known.values()}
@@ -223,8 +223,8 @@ def ingest(uploaded) -> bool:
             continue
         data = up.getvalue()
         kind = file_kind(name)
-        digest = hashlib.sha1(data).hexdigest() if kind in ("pdf", "step") else ""
-        if digest and (name, digest) in same:
+        digest = hashlib.sha1(data).hexdigest()
+        if (name, digest) in same:
             dupes.append(name)
             continue
         # A file of a ZIP is read from it again when needed; a file dropped on
@@ -242,8 +242,7 @@ def ingest(uploaded) -> bool:
         else:
             add_drawing(f, data)
         names.add((folder, name))
-        if digest:
-            same.add((name, digest))
+        same.add((name, digest))
     if bar is not None:
         bar.empty()
     if dropped:
