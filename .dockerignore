@@ -1,0 +1,8 @@
+.git
+__pycache__
+*.pyc
+price_data*.json
+output/
+bin/*.exe
+bin/libredwg-win64/
+tests/
