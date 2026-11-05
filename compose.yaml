@@ -1,0 +1,12 @@
+# Run the app in Docker: `docker compose up -d --build` (see README, "Run with Docker").
+services:
+  app:
+    build: .
+    image: stremet-price
+    container_name: stremet-price
+    ports:
+      - "8501:8501"
+    volumes:
+      # The saved price lists (price_data_*.json) live here, outside the container.
+      - ./data:/data
+    restart: unless-stopped

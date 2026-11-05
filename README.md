@@ -343,6 +343,23 @@ Sparrow fixed-sheet search (with a small fake solver), the program plans of both
 packers, the supplier store, and a smoke test of the whole page. `tests/test_sparrow.py::test_real_sparrow_binary`
 also runs the real Sparrow executable and is skipped when it is not installed.
 
+## Run with Docker
+
+The `Dockerfile` builds an image with Python 3.12, the packages, the libraries
+the STEP reader needs, and the Linux Sparrow and dwg2dxf from `bin/`. With
+Docker installed (on Windows: Ubuntu in WSL2 with Docker Engine):
+
+```bash
+docker compose up -d --build      # build and start; open http://localhost:8501
+docker compose logs -f            # what the app prints
+git pull && docker compose up -d --build   # update to the latest code
+docker compose down               # stop
+```
+
+The saved price lists are written to `data/` next to `compose.yaml`, so they
+survive rebuilds. The container restarts by itself after a crash or reboot.
+Uploads are allowed up to 500 MB per file (an RFQ ZIP can be over 300 MB).
+
 ## Deploy (Streamlit Community Cloud)
 
 1. Push the repo to GitHub. The Linux Sparrow binary in `bin/sparrow` is
