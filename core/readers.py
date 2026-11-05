@@ -284,12 +284,14 @@ def _list_fasteners(found, file_id: str, facts: list[Fact]) -> list[Fact]:
 def _assembly_facts(found, file_id: str, facts: list[Fact]) -> list[Fact]:
     """The recogniser's verdict (``is_assembly``, as in the data model:
     ``yes``, and ``by`` title | parts_list | callouts, plus ``maybe``,
-    ``score`` and ``why``), and its parts-list rows as
+    ``score``, each cue that counted and ``why``), and its parts-list rows as
     ``bom_qty`` and ``called_out`` facts the text lines didn't already give."""
     qty = {f.value["part_key"] for f in facts if f.kind == "bom_qty"}
     said = {f.value for f in facts if f.kind == "called_out"}
     out = [Fact("is_assembly", {"yes": found.verdict == ASSEMBLY, "maybe": found.verdict == MAYBE,
-                                "by": found.by(), "score": found.score, "why": found.why()},
+                                "by": found.by(), "score": found.score, "why": found.why(),
+                                "cues": [{"key": c.key, "label": c.label, "weight": c.weight,
+                                          "page": c.page} for c in found.cues]},
                 file_id, found.why())]
     for r in found.rows:
         if not r.number:

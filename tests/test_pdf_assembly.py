@@ -118,6 +118,7 @@ def test_the_pdf_reader_gives_the_verdict_and_the_list_rows():
     [verdict] = r.of("is_assembly")
     assert verdict.value["yes"] and not verdict.value["maybe"]
     assert verdict.value["by"] == ["title", "parts_list"]
+    assert {"key": "bom", "label": "osaluettelo", "weight": 3, "page": 1} in verdict.value["cues"]
     assert {(f.value["part_key"], f.value["kpl"]) for f in r.of("bom_qty")} == {
         ("100325", 2), ("100326", 1)}
     assert {f.value for f in r.of("called_out")} >= {"100325", "100326"}
