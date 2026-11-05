@@ -429,13 +429,25 @@ def sync_assemblies() -> None:
         ids += [d for d in links.get(cid, []) if files.get(d) is not None
                 and files.get(d).kind == "pdf"]
         return [f for fid in ids for f in files.result(fid).facts]
-    assemblies.sync_from_drawings(items, facts)
+    assemblies.sync_from_drawings(items, facts, _loose_pdfs(links))
     # A part's own fasteners stay on its card (its Ostetut osat); only an
     # assembly drawing's notes are its assembly's.
     drawn = assemblies.drawings().values()
+    lines = {cid: card_fastener_lines(cid, items.get(cid), links.get(cid, []))[0]
+             for cid in drawn}
+    lines.update({d: card_fastener_lines(d, None, [])[0]
+                  for d in assemblies.pdf_drawings().values()})
     assemblies.sync_drawing_fasteners(
-        {cid: card_fastener_lines(cid, items.get(cid), links.get(cid, []))[0] for cid in drawn},
-        lambda cid: items[cid].material.value if cid in items else None)
+        lines, lambda cid: items[cid].material.value if cid in items else None)
+
+
+def _loose_pdfs(links: dict[str, list[str]]) -> dict[str, tuple[str, list]]:
+    """The PDFs on no card, already read (linking reads the ones whose name
+    names no card), ``{doc id: (file name, facts)}``: an assembly drawing
+    among them makes an assembly of its own."""
+    linked = {d for ids in links.values() for d in ids}
+    return {d: (f.name, files.result(d).facts) for d, f in files.of_kind("pdf").items()
+            if d not in linked and files.is_read(d)}
 
 
 def card_fastener_lines(cid: str, item: Part | None,

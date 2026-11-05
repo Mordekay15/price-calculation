@@ -303,6 +303,7 @@ class Assembly:
     #   model's sheet bodies, or the cards joined by hand
     step_bought: list[str] = field(default_factory=list)      # the model's bodies in bought
     drawing: str | None = None                  # the card of its assembly drawing
+    drawing_pdf: str | None = None              # or a PDF on no card that is one
     drawn: dict[str, int] = field(default_factory=dict)       # card id → kpl it calls out
     awaited: list[str] = field(default_factory=list)          # called out, not dropped
     fasteners_read: bool = False                # its drawing's notes are in bought
@@ -310,7 +311,7 @@ class Assembly:
 
     @property
     def described(self) -> bool:
-        return bool(self.step_file or self.drawing or self.by_hand)
+        return bool(self.step_file or self.drawing or self.drawing_pdf or self.by_hand)
 
 
 # ── 5 · Nesting and price ───────────────────────────────────────────────────

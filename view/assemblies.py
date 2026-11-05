@@ -101,14 +101,20 @@ def part_number(name: str) -> str:
     return base_key(name.rsplit(".", 1)[0] if "." in name else name)
 
 
-def sync_from_drawings(items: dict, facts: Callable[[str], list]) -> None:
+def sync_from_drawings(items: dict, facts: Callable[[str], list],
+                       pdfs: dict[str, tuple[str, list]] | None = None) -> None:
     """Make an assembly of every assembly drawing among the cards: ``items``
     are the cards (``core.model.Part`` by card id), ``facts(card id)`` what
     the readers read from its drawings (``core.model.Fact``: the part numbers
     it calls out, its BOM lines). Each part number it calls out is a card in it, or
     a subassembly when that number is another assembly's; × the kpl its BOM
     lines give, else 1. One assembly per part number: a drawing of a STEP
-    assembly's number joins it."""
+    assembly's number joins it.
+
+    ``pdfs`` are the PDFs on no card, ``{doc id: (file name, facts)}``: one
+    the PDF reader found to be an assembly drawing (its ``assembly`` fact,
+    see ``core.pdf_assembly``) makes an assembly too, unless a card's drawing
+    already makes that number's."""
     store = _store()
     keys = {cid: {base_key(n) for n in item.names.values()} for cid, item in items.items()}
     drawings = {}
@@ -116,32 +122,61 @@ def sync_from_drawings(items: dict, facts: Callable[[str], list]) -> None:
         scores = item.scores.values()
         if any(c.valid for c in scores) or not any(c.note == NO_BLANK for c in scores):
             continue
-        said = facts(cid)
-        expects = list(dict.fromkeys(f.value for f in said if f.kind == "called_out"
-                                     and f.value not in keys[cid]))
-        kpl: dict[str, int] = {}
-        for f in said:
-            if f.kind == "bom_qty":
-                kpl.setdefault(f.value["part_key"], f.value["kpl"])
-        if expects:
-            drawings[cid] = (part_number(item.names[cid]), expects, kpl)
+        if found := _called(facts(cid), keys[cid]):
+            drawings[cid] = (part_number(item.names[cid]), *found)
+    on_cards = {pn for pn, _, _ in drawings.values()} | {k for ks in keys.values() for k in ks}
+    from_pdfs = {}
+    for doc, (name, said) in (pdfs or {}).items():
+        pn = part_number(name)
+        verdict = next((f.value["verdict"] for f in said if f.kind == "assembly"), None)
+        if verdict == "assembly" and pn not in on_cards and (found := _called(said, {pn})):
+            from_pdfs[doc] = (pn, *found)
     for aid, a in list(store.items()):
         if a.drawing and a.drawing not in drawings:
             a.drawing, a.drawn, a.children, a.awaited, a.fasteners_read = None, {}, {}, [], False
             _drop_if_undescribed(aid)
+        elif a.drawing_pdf and a.drawing_pdf not in from_pdfs:
+            a.drawing_pdf, a.fasteners_read = None, False
+            if not a.drawing:
+                a.drawn, a.children, a.awaited = {}, {}, []
+            _drop_if_undescribed(aid)
     # The part numbers that are assemblies (one joined by hand has none).
-    numbers = {pn for pn, _, _ in drawings.values()} | {
+    numbers = {pn for pn, _, _ in [*drawings.values(), *from_pdfs.values()]} | {
         aid for aid, a in store.items() if not a.by_hand}
     for cid, (pn, expects, kpl) in drawings.items():
         a = store.setdefault(pn, Assembly(pn, pn.upper()))
         a.drawing = cid
-        found = {k: other for k in expects for other, ks in keys.items()
-                 if k in ks and k not in numbers}
-        a.children = {k: kpl.get(k, 1) for k in expects if k in numbers and k != pn}
-        a.drawn = {c: kpl.get(k, 1) for k, c in found.items()}
-        named = {base_key(b.name) for b in a.bought}
-        a.awaited = [k.upper() for k in expects
-                     if k not in found and k not in a.children and k not in named]
+        _fill(a, expects, kpl, keys, numbers)
+    for doc, (pn, expects, kpl) in from_pdfs.items():
+        a = store.setdefault(pn, Assembly(pn, pn.upper()))
+        a.drawing_pdf = doc
+        _fill(a, expects, kpl, keys, numbers)
+
+
+def _called(said: list, own: set[str]) -> tuple[list[str], dict[str, int]] | None:
+    """The part numbers a drawing calls out (``own`` left out) and the kpl
+    its BOM gives each; None when it calls out none."""
+    expects = list(dict.fromkeys(f.value for f in said if f.kind == "called_out"
+                                 and f.value not in own))
+    kpl: dict[str, int] = {}
+    for f in said:
+        if f.kind == "bom_qty":
+            kpl.setdefault(f.value["part_key"], f.value["kpl"])
+    return (expects, kpl) if expects else None
+
+
+def _fill(a: Assembly, expects: list[str], kpl: dict[str, int],
+          keys: dict[str, set[str]], numbers: set[str]) -> None:
+    """An assembly drawing's parts: the cards it calls out, the
+    subassemblies, and the numbers not dropped yet (``awaited``)."""
+    pn = a.id
+    found = {k: other for k in expects for other, ks in keys.items()
+             if k in ks and k not in numbers}
+    a.children = {k: kpl.get(k, 1) for k in expects if k in numbers and k != pn}
+    a.drawn = {c: kpl.get(k, 1) for k, c in found.items()}
+    named = {base_key(b.name) for b in a.bought}
+    a.awaited = [k.upper() for k in expects
+                 if k not in found and k not in a.children and k not in named]
 
 
 def _widget(aid: str) -> str:
@@ -162,7 +197,7 @@ def sync_drawing_fasteners(lines: dict[str, list[tuple[str, int]]],
     its assembly's bought parts, added once. A part's own fasteners are not
     here: they stay on its card (``view.work``), wherever the part goes."""
     for a in _store().values():
-        cid = a.drawing
+        cid = a.drawing or a.drawing_pdf
         if cid and lines.get(cid) and not a.fasteners_read:
             a.fasteners_read = True
             _add_bought(a, bought.fastener_parts(lines[cid], material(cid), "piirustus"))
@@ -182,6 +217,13 @@ def drawings() -> dict[str, str]:
     """``{assembly id: card id}`` of the assemblies made from a drawing: that
     card is the assembly's drawing, not one of its parts."""
     return {aid: a.drawing for aid, a in _store().items() if a.drawing}
+
+
+def pdf_drawings() -> dict[str, str]:
+    """``{assembly id: PDF id}`` of the assemblies made from a PDF on no
+    card (``sync_from_drawings``'s ``pdfs``)."""
+    return {aid: a.drawing_pdf for aid, a in _store().items()
+            if a.drawing_pdf and not a.drawing}
 
 
 def _cards_of(a: Assembly, card_of: dict[str, str]) -> dict[str, int]:
@@ -289,6 +331,9 @@ def _origin(a: Assembly) -> str | None:
     if a.drawing:
         return ("Tehty kokoonpanopiirustuksesta: osat ovat piirustuksessa mainitut "
                 "osanumerot, 1 kpl / kokoonpano kukin. Tarkista määrät piirustuksesta.")
+    if a.drawing_pdf:
+        return ("Tehty kokoonpanopiirustuksen PDF:stä: osat ja määrät sen osaluettelosta "
+                "tai mainituista osanumeroista. Tarkista määrät piirustuksesta.")
     return "Yhdistetty käsin: toisiinsa kiinnitetyt osat." if a.by_hand else None
 
 
@@ -332,6 +377,10 @@ def _remove(aid: str, card_of: dict[str, str], remove_card: Callable[[str], None
     for cid in [*_cards_of(a, card_of), *filter(None, [a.drawing])]:
         if cid not in others:
             remove_card(cid)
+    if a.drawing_pdf and not a.drawing:
+        from view import attachments
+
+        attachments.remove_doc(a.drawing_pdf)
     if a.step_file:
         bom.remove_model(a.step_file)
 

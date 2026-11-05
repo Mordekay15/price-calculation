@@ -214,6 +214,22 @@ parts, work and contents.
   becomes an assembly of the cards with those numbers, 1 kpl each, with the
   drawing shown in it instead of as a card in Osat. The ones neither dropped
   yet nor added as bought parts are listed as awaited.
+- **From an assembly drawing PDF.** Every PDF is scored as an assembly
+  drawing or not (`core/pdf_assembly.py`), from the signs the drawing
+  standards set (ISO 7200 title block, ISO 7573 parts list, ISO 6433
+  balloons, ISO 2553 welds): a parts-list header (Pos / Qty / Part No in
+  English, Finnish, German or Swedish) +3, two or more made parts in it +3,
+  numbered balloons +2 (+1 when they are its items), the title's words
+  (ASSEMBLY DRAWING, KOKOONPANO, ZUSAMMENBAU…) +3, other part numbers called
+  out +1 each (at most +2), a weld +1, "material: see parts list" +1;
+  against: DETAIL DRAWING −2, a flat pattern or bend notes −2, one material
+  −1. 4 or more is an assembly, 1 to 3 is shown as "Voi olla kokoonpano"
+  with its reasons in Liitetiedostot. An assembly PDF on no card (its name
+  names no card) becomes an assembly of its own: its parts and kpl from its
+  parts list, its bought rows (ISO 4762 M5x12, PEM S-M5-2) as its bought
+  parts with their qty, the PDF shown in it. It is never linked to a part's
+  card because it names that part's number. A page with no text (a scan) is
+  noted; there is no OCR.
 - **One per part number.** A STEP model and an assembly drawing with the
   same part number are one assembly. A part's kpl / kokoonpano comes from the
   STEP model first, then the drawing's BOM lines (`2 ITM-064555 Levy 3 pcs`),

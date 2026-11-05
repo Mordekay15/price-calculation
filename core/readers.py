@@ -232,13 +232,16 @@ def _bom_facts(text: str, file_id: str, page: int, own: str) -> list[Fact]:
 
 def read_pdf_file(data: bytes, file_id: str, name: str) -> ReadResult:
     """A PDF: no shape, only facts (material, part numbers, BOM lines,
-    fastener callouts)."""
-    from core.fasteners import pdf_fasteners
-    from core.materials import pdf_material_fields, pdf_text
+    fastener callouts, and whether it is an assembly drawing, see
+    ``core.pdf_assembly``). Its pages are opened once."""
+    from core.fasteners import fastener_callouts
+    from core.materials import material_field
+    from core.pdf_assembly import analyse, read_pages
 
     own = base_key(name)
-    pages = pdf_text(data)
-    fields = pdf_material_fields(data)
+    read = read_pages(data)
+    pages = [(p.number, p.text) for p in read]
+    fields = [(p.number, f) for p in read if (f := material_field(p.words))]
     facts = [Fact("part_number", own, file_id, name)]
     for page, text in fields:
         facts += _material_facts(text, file_id, page, "field")
@@ -246,12 +249,55 @@ def read_pdf_file(data: bytes, file_id: str, name: str) -> ReadResult:
         facts += _material_facts(text, file_id, page)
         facts += _callout_facts(text, own, file_id, page)
         facts += _bom_facts(text, file_id, page, own)
+    fasteners: dict[str, int] = {}
+    for p in read:
+        for n, k in fastener_callouts(p.words):
+            fasteners[n] = fasteners.get(n, 0) + k
     facts += [Fact("fastener", {"name": n, "kpl": k}, file_id, f"{n} {k} PCS")
-              for n, k in pdf_fasteners(data)]
+              for n, k in fasteners.items()]
+    if read:
+        found = analyse(read, own)
+        facts = _list_fasteners(found, file_id, facts)
+        facts += _assembly_facts(found, file_id, facts)
+    for p in read:          # only what was read is kept: not the words
+        p.words, p.circles = [], []
     result = ReadResult(file_id, facts=facts, record=(pages, fields))
-    if not pages:
+    if not read:
         result.problems.append("PDF-tiedostoa ei voitu lukea.")
     return result
+
+
+def _list_fasteners(found, file_id: str, facts: list[Fact]) -> list[Fact]:
+    """A parts list's bought rows (ISO 4762 M5x12 Screw × 4) as fasteners
+    with their qty, in place of the callouts read from the same row's words."""
+    rows = [r for r in found.rows if r.bought]
+    if not rows:
+        return facts
+    labels = [" ".join(dict.fromkeys(f"{r.code} {r.name}".upper().split())) for r in rows]
+    words = {w for label in labels for w in label.split()}
+    kept = [f for f in facts if f.kind != "fastener" or not set(f.value["name"].split()) <= words]
+    return kept + [Fact("fastener", {"name": label, "kpl": r.qty}, file_id, f"{label} {r.qty} PCS")
+                   for r, label in zip(rows, labels)]
+
+
+def _assembly_facts(found, file_id: str, facts: list[Fact]) -> list[Fact]:
+    """The recogniser's verdict (``assembly``), and its parts-list rows as
+    ``bom_qty`` and ``called_out`` facts the text lines didn't already give."""
+    qty = {f.value["part_key"] for f in facts if f.kind == "bom_qty"}
+    said = {f.value for f in facts if f.kind == "called_out"}
+    out = [Fact("assembly", {"verdict": found.verdict, "score": found.score,
+                             "why": found.why()}, file_id, found.why())]
+    for r in found.rows:
+        if not r.number:
+            continue
+        if r.number not in qty:
+            qty.add(r.number)
+            out.append(Fact("bom_qty", {"part_key": r.number, "kpl": r.qty}, file_id,
+                            f"{r.item or ''} {r.number} {r.name} {r.qty}".strip()))
+        if not r.bought and r.number not in said:
+            said.add(r.number)
+            out.append(Fact("called_out", r.number, file_id, r.number))
+    return out
 
 
 # ── Any file ──────────────────────────────────────────────────────────────────

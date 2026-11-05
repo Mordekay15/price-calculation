@@ -67,8 +67,9 @@ def links(parts: dict[str, str | list[str]], card_folders: dict[str, set[str]] |
              for i, n in enumerate([ns] if isinstance(ns, str) else ns)}
     by_name = link_files(names, {d: doc.name for d, doc in all_docs.items()})
     named = {d for ids in by_name.values() for d in ids}
+    # An assembly drawing names its parts' numbers: it is no part's drawing.
     unnamed = {d: text(d) for d, doc in all_docs.items()
-               if d not in named and doc.kind == "pdf"}
+               if d not in named and doc.kind == "pdf" and not _is_assembly(d)}
     auto: dict[str, list[str]] = {}
     for found in (by_name, link_by_text(names, unnamed, lambda k: k.split("\0", 1)[0])):
         for key, ids in found.items():
@@ -90,6 +91,13 @@ def links(parts: dict[str, str | list[str]], card_folders: dict[str, set[str]] |
         if pid and pid in parts and d in all_docs:
             out.setdefault(pid, []).append(d)
     return out
+
+
+def _is_assembly(doc_id: str) -> bool:
+    """The PDF reader found the PDF to be an assembly drawing."""
+    res = files.result(doc_id)
+    return res is not None and any(f.value["verdict"] == "assembly"
+                                   for f in res.of("assembly"))
 
 
 def text(doc_id: str) -> str:
@@ -135,7 +143,9 @@ def render_doc_list(parts: dict[str, str], labels: dict[str, str]) -> None:
     for d in shown:
         doc = all_docs[d]
         c1, c2, c3 = st.columns([3, 4, 1], vertical_alignment="center")
-        c1.markdown(f"{'📄' if doc.kind == 'pdf' else '🧊'} {doc.name}")
+        hint = assembly_hint(d)
+        c1.markdown(f"{'📄' if doc.kind == 'pdf' else '🧊'} {doc.name}"
+                    + (f"  \n:gray[{hint}]" if hint else ""))
         current = linked.get(d, "")
         key = f"dxf_doc_link_{d}_{current}"
         if st.session_state.get(key) not in options:   # seeded, not a default: kept keys
@@ -147,6 +157,23 @@ def render_doc_list(parts: dict[str, str], labels: dict[str, str]) -> None:
             manual[d] = choice
             st.rerun()
         c3.button("Poista", key=f"dxf_doc_del_{d}", on_click=remove_doc, args=(d,))
+
+
+def assembly_hint(doc_id: str) -> str:
+    """What the PDF reader thinks of a read PDF: an assembly drawing, or
+    maybe one, and why (see ``core.pdf_assembly``); "" for a part or a
+    file not read."""
+    if not files.is_read(doc_id):
+        return ""
+    said = files.result(doc_id).of("assembly")
+    if not said:
+        return ""
+    v = said[0].value
+    if v["verdict"] == "assembly":
+        return f"Kokoonpanopiirustus: {v['why']}"
+    if v["verdict"] == "maybe":
+        return f"Voi olla kokoonpano ({v['score']:+d} p, kokoonpano 4+): {v['why']}"
+    return ""
 
 
 def render_card_docs(card_id: str, doc_ids: list[str]) -> None:
