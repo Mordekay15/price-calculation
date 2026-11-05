@@ -237,7 +237,7 @@ def read_pdf_file(data: bytes, file_id: str, name: str) -> ReadResult:
     ``core.pdf_assembly``). Its pages are opened once."""
     from core.fasteners import fastener_callouts
     from core.materials import material_field
-    from core.pdf_assembly import analyse, read_pages
+    from core.pdf_assembly import analyse, print_report, read_pages
 
     own = base_key(name)
     read = read_pages(data)
@@ -258,6 +258,7 @@ def read_pdf_file(data: bytes, file_id: str, name: str) -> ReadResult:
               for n, k in fasteners.items()]
     if read:
         found = analyse(read, own)
+        print_report(found, name)
         facts = _list_fasteners(found, file_id, facts)
         facts += _assembly_facts(found, file_id, facts)
     for p in read:          # only what was read is kept: not the words

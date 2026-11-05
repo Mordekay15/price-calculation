@@ -123,6 +123,8 @@ class PdfAssembly:
     called_out: list[str] = field(default_factory=list)
     cues: list[Cue] = field(default_factory=list)
     scanned: list[int] = field(default_factory=list)     # page numbers
+    pages: int = 0                                         # pages read
+    title: set[str] = field(default_factory=set)           # title-block numbers
 
     @property
     def score(self) -> int:
@@ -329,12 +331,13 @@ _MATERIAL = re.compile(r"\b(?:material|materiaali|werkstoff)\s*:\s*\S", re.IGNOR
 def analyse(pages: list[PdfPage], own: str) -> PdfAssembly:
     """Steps 2 to 7 over a PDF's pages (``read_pages``); ``own`` is the
     drawing's part number (its file's ``base_key``)."""
-    out = PdfAssembly(own)
+    out = PdfAssembly(own, pages=len(pages))
     lists = {p.number: parts_list(p) for p in pages if not p.scanned}
     listed = {r.number for _, rows in lists.values() for r in rows if r.number}
     # The title block's numbers are the drawing's own, unless they are rows
     # of a parts list that sits in the same corner.
-    ours = {own} | ({k for p in pages for k in title_numbers(p)} - listed)
+    out.title = {k for p in pages for k in title_numbers(p)} - listed
+    ours = {own} | out.title
     header_page = None
     for p in pages:
         if p.scanned:
@@ -383,3 +386,65 @@ def analyse(pages: list[PdfPage], own: str) -> PdfAssembly:
     if out.scanned:
         cue(Cue("scanned", "sivu ilman tekstiä: " + ", ".join(map(str, out.scanned)), 0))
     return out
+
+
+# ── The console report ────────────────────────────────────────────────────────
+
+_CHECKS = [   # (step, check, cue keys) in the pipeline's order
+    ("3", "Parts-list header", ("bom",)),
+    ("4", "Parts-list rows", ("bom_rows",)),
+    ("5", "Balloons", ("balloons",)),
+    ("5", "Balloons = list items", ("balloons_match",)),
+    ("6", "Other part numbers", ("called_out",)),
+    ("6", "Title word (ASSEMBLY...)", ("title",)),
+    ("6", "Detail drawing", ("detail",)),
+    ("6", "See parts list", ("see_list",)),
+    ("6", "One material", ("material",)),
+    ("6", "Weld", ("weld",)),
+    ("6", "Flat pattern / bends", ("flat",)),
+]
+
+
+def report(found: PdfAssembly, name: str) -> str:
+    """Every check of the pipeline for one PDF, matched or not, with its
+    points: printed to the console when a PDF is read (``print_report``)."""
+    cues = {c.key: c for c in found.cues}
+    lines = [f"--- PDF {name}: {found.verdict.upper()} (score {found.score:+d}; "
+             f"assembly at {ASSEMBLY_AT}+, maybe at {MAYBE_AT}-{ASSEMBLY_AT - 1})",
+             f"  1 Pages read               {found.pages}"
+             + (f", no text on page {', '.join(map(str, found.scanned))} (no OCR)"
+                if found.scanned else ""),
+             f"  2 Own number               {found.own}"
+             + (f"; title block: {', '.join(sorted(found.title))}" if found.title else "")]
+    for step, check, keys in _CHECKS:
+        c = next((cues[k] for k in keys if k in cues), None)
+        mark = "yes" if c else "no "
+        detail = c.label if c else ""
+        points = f"{c.weight:+d}" if c else " 0"
+        lines.append(f"  {step} {check:<24} {mark} {points:>3}  {detail}")
+        if keys == ("bom_rows",):
+            for r in found.rows:
+                lines.append(f"        item {r.item if r.item is not None else '-':>3}  "
+                             f"{r.qty:>3} x {r.number or r.code or '-':<22} {r.name}"
+                             + ("  (bought)" if r.bought else ""))
+        if keys == ("balloons",) and found.balloons:
+            lines.append(f"        numbers: {', '.join(map(str, found.balloons))}")
+        if keys == ("called_out",) and found.called_out:
+            lines.append(f"        {', '.join(k.upper() for k in found.called_out)}")
+    lines.append(f"  7 Score                    {found.score:+d} -> {found.verdict}"
+                 + (f" (by {', '.join(found.by())})" if found.by() else ""))
+    return "\n".join(lines)
+
+
+def print_report(found: PdfAssembly, name: str) -> None:
+    """``report`` to the console (where ``streamlit run`` was started);
+    STREMET_PDF_REPORT=0 turns it off."""
+    import os
+
+    if os.environ.get("STREMET_PDF_REPORT", "1") == "0":
+        return
+    text = report(found, name)
+    try:
+        print(text, flush=True)
+    except UnicodeEncodeError:      # a console that can't show "ä"
+        print(text.encode("ascii", "replace").decode(), flush=True)

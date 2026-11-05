@@ -184,3 +184,17 @@ def test_on_the_page_an_assembly_pdf_dropped_with_its_parts_is_an_assembly():
     assert not at.exception
     assert at.session_state["got"] == (True, [2], ["100326"])
     assert any("Kokoonpanot (1)" in m.value for m in at.markdown)
+
+
+def test_reading_a_pdf_prints_every_check_matched_or_not(capsys, monkeypatch):
+    from core.readers import read_pdf_file
+
+    read_pdf_file(_iso_assembly(), "p1", "100200.pdf")
+    out = capsys.readouterr().out
+    assert "--- PDF 100200.pdf: ASSEMBLY (score +13" in out
+    assert "Parts-list header        yes  +3" in out
+    assert "Weld                     no    0" in out
+    assert "4 x ISO 4762 M5x12" in out and "(bought)" in out
+    monkeypatch.setenv("STREMET_PDF_REPORT", "0")
+    read_pdf_file(_iso_assembly(), "p1", "100200.pdf")
+    assert capsys.readouterr().out == ""
