@@ -96,8 +96,7 @@ def links(parts: dict[str, str | list[str]], card_folders: dict[str, set[str]] |
 def _is_assembly(doc_id: str) -> bool:
     """The PDF reader found the PDF to be an assembly drawing."""
     res = files.result(doc_id)
-    return res is not None and any(f.value["verdict"] == "assembly"
-                                   for f in res.of("assembly"))
+    return res is not None and any(f.value["yes"] for f in res.of("is_assembly"))
 
 
 def text(doc_id: str) -> str:
@@ -165,13 +164,13 @@ def assembly_hint(doc_id: str) -> str:
     file not read."""
     if not files.is_read(doc_id):
         return ""
-    said = files.result(doc_id).of("assembly")
+    said = files.result(doc_id).of("is_assembly")
     if not said:
         return ""
     v = said[0].value
-    if v["verdict"] == "assembly":
+    if v["yes"]:
         return f"Kokoonpanopiirustus: {v['why']}"
-    if v["verdict"] == "maybe":
+    if v["maybe"]:
         return f"Voi olla kokoonpano ({v['score']:+d} p, kokoonpano 4+): {v['why']}"
     return ""
 

@@ -144,6 +144,8 @@ class Fact:
       the line gives none)                - thickness: mm (float)
     - part_number / revision / called_out: str
     - bom_qty: ``{"part_key", "kpl"}``    - fastener / bought_body: ``{"name", "kpl"}``
+    - is_assembly (PDF): ``{"yes", "maybe", "by", "score", "why"}``, ``by`` from
+      title | parts_list | callouts (see ``core.pdf_assembly``)
 
     ``strength``: ``field`` (a PDF Material field) beats ``text``;
     ``measured`` is a STEP thickness."""

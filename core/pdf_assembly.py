@@ -132,6 +132,14 @@ class PdfAssembly:
     def verdict(self) -> str:
         return ASSEMBLY if self.score >= ASSEMBLY_AT else MAYBE if self.score >= MAYBE_AT else PART
 
+    def by(self) -> list[str]:
+        """What says it is one, in the data model's words: ``title``,
+        ``parts_list`` (the list, its rows or balloons), ``callouts``."""
+        keys = {c.key for c in self.cues if c.weight > 0}
+        return [name for name, of in (("title", {"title"}),
+                                      ("parts_list", {"bom", "bom_rows", "balloons"}),
+                                      ("callouts", {"called_out"})) if keys & of]
+
     def why(self) -> str:
         """The cues, e.g. "osaluettelo +3 · 5 numeroitua palloa +2"."""
         return " · ".join(f"{c.label} {c.weight:+d}" for c in self.cues if c.weight)

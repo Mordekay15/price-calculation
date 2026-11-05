@@ -112,7 +112,7 @@ def sync_from_drawings(items: dict, facts: Callable[[str], list],
     assembly's number joins it.
 
     ``pdfs`` are the PDFs on no card, ``{doc id: (file name, facts)}``: one
-    the PDF reader found to be an assembly drawing (its ``assembly`` fact,
+    the PDF reader found to be an assembly drawing (its ``is_assembly`` fact,
     see ``core.pdf_assembly``) makes an assembly too, unless a card's drawing
     already makes that number's."""
     store = _store()
@@ -128,8 +128,8 @@ def sync_from_drawings(items: dict, facts: Callable[[str], list],
     from_pdfs = {}
     for doc, (name, said) in (pdfs or {}).items():
         pn = part_number(name)
-        verdict = next((f.value["verdict"] for f in said if f.kind == "assembly"), None)
-        if verdict == "assembly" and pn not in on_cards and (found := _called(said, {pn})):
+        yes = any(f.value["yes"] for f in said if f.kind == "is_assembly")
+        if yes and pn not in on_cards and (found := _called(said, {pn})):
             from_pdfs[doc] = (pn, *found)
     for aid, a in list(store.items()):
         if a.drawing and a.drawing not in drawings:

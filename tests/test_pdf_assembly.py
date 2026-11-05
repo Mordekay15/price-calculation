@@ -115,8 +115,9 @@ def test_the_pdf_reader_gives_the_verdict_and_the_list_rows():
     from core.readers import read_pdf_file
 
     r = read_pdf_file(_iso_assembly(), "p1", "100200.pdf")
-    [verdict] = r.of("assembly")
-    assert verdict.value["verdict"] == ASSEMBLY
+    [verdict] = r.of("is_assembly")
+    assert verdict.value["yes"] and not verdict.value["maybe"]
+    assert verdict.value["by"] == ["title", "parts_list"]
     assert {(f.value["part_key"], f.value["kpl"]) for f in r.of("bom_qty")} == {
         ("100325", 2), ("100326", 1)}
     assert {f.value for f in r.of("called_out")} >= {"100325", "100326"}
@@ -164,7 +165,8 @@ def test_a_pdf_that_is_only_maybe_makes_no_assembly():
         from core.model import Fact
         from view import assemblies
 
-        said = [Fact("assembly", {"verdict": "maybe", "score": 2, "why": ""}, "d", ""),
+        said = [Fact("is_assembly", {"yes": False, "maybe": True, "by": ["title"],
+                                    "score": 2, "why": ""}, "d", ""),
                 Fact("called_out", "100325", "d", "100325")]
         assemblies.sync_from_drawings({}, lambda cid: [], {"d": ("100200.pdf", said)})
         st.session_state["left"] = list(st.session_state.get(assemblies.ASSEMBLIES, {}))
