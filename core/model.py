@@ -59,6 +59,7 @@ class InputFile:
     folder: str = ""                            # path inside the ZIP, "" when dropped alone
     size_bytes: int = 0
     status: str = "read"                        # read | failed | waiting
+    digest: str = ""                            # SHA-1 of the bytes (PDF and STEP files)
 
 
 # ── 2 · Readers' own records ──────────────────────────────────────────────────

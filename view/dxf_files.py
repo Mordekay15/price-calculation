@@ -10,6 +10,7 @@ its material and thickness. It keeps them while files join or leave it, and
 The card itself is drawn by ``view.dxf_tab``."""
 
 import copy
+import hashlib
 import re
 import time
 import unicodedata
@@ -197,10 +198,14 @@ def ingest(uploaded) -> bool:
     the drop area (Streamlit can't remove one file from an uploader, only
     start a new one). A file whose name was dropped already is not added
     again; its name goes to ``_DUPES`` for the warning (a drop without one
-    clears it). True when something was dropped."""
+    clears it). Nor is a PDF or STEP file with the same name and the same
+    bytes as one already kept, from whatever folder: an RFQ often has a
+    drawing or model twice (in two folders, or loose and in the ZIP), and
+    the card would list it twice. True when something was dropped."""
     known = files.inputs()
     dropped = [up for up in uploaded or [] if up.file_id not in known]
     names = {(f.folder, f.name) for f in known.values()}
+    same = {(f.name, f.digest) for f in known.values() if f.digest}
     dupes, skipped = [], []
     todo = _unzipped(dropped, skipped)
     bar = st.progress(0.0) if len(todo) > 5 else None
@@ -217,11 +222,16 @@ def ingest(uploaded) -> bool:
             dupes.append(name)
             continue
         data = up.getvalue()
+        kind = file_kind(name)
+        digest = hashlib.sha1(data).hexdigest() if kind in ("pdf", "step") else ""
+        if digest and (name, digest) in same:
+            dupes.append(name)
+            continue
         # A file of a ZIP is read from it again when needed; a file dropped on
         # its own is kept only when it is read later (a PDF or STEP model).
         again = up.getvalue if hasattr(up, "folder") else None
-        f = InputFile(up.file_id, name, file_kind(name), again, folder=folder,
-                      size_bytes=len(data))
+        f = InputFile(up.file_id, name, kind, again, folder=folder,
+                      size_bytes=len(data), digest=digest)
         if f.kind in ("pdf", "step"):
             attachments.add_doc(f, data)
             if f.kind == "step" and step_available():
@@ -232,6 +242,8 @@ def ingest(uploaded) -> bool:
         else:
             add_drawing(f, data)
         names.add((folder, name))
+        if digest:
+            same.add((name, digest))
     if bar is not None:
         bar.empty()
     if dropped:

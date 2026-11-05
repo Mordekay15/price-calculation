@@ -612,6 +612,67 @@ def test_a_zip_of_item_folders_becomes_one_card_per_folder():
     assert sorted(at.session_state["skipped"]) == ["100325.dxf.bak", "ITM-072558.prt.1"]
 
 
+def test_the_same_pdf_or_step_in_two_folders_is_on_its_card_once():
+    import pytest
+    from streamlit.testing.v1 import AppTest
+
+    pytest.importorskip("OCP")
+
+    def page():
+        import io
+        import zipfile
+        from types import SimpleNamespace
+
+        import ezdxf
+        import streamlit as st
+        from reportlab.pdfgen import canvas
+
+        from tests.conftest import dxf_bytes
+        from tests.step_models import l_bracket, part_step
+        from view import bom, files
+        from view.dxf_files import card_docs, ingest, parts, sync
+
+        doc = ezdxf.new()
+        doc.header["$INSUNITS"] = 4
+        doc.modelspace().add_lwpolyline([(0, 0), (100, 0), (100, 50), (0, 50)], close=True)
+        pdf = io.BytesIO()
+        c = canvas.Canvas(pdf)
+        c.drawString(72, 720, "Drawing sheet")
+        c.save()
+        other = io.BytesIO()
+        c = canvas.Canvas(other)
+        c.drawString(72, 720, "Another revision")
+        c.save()
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("RFQ/100325.dxf", dxf_bytes(doc))
+            zf.writestr("RFQ/100325.pdf", pdf.getvalue())
+            zf.writestr("RFQ/kopio/100325.pdf", pdf.getvalue())     # the same file again
+            zf.writestr("RFQ/vanha/100325.pdf", other.getvalue())   # same name, not the same
+            model = part_step(l_bracket(), "100325")
+            zf.writestr("RFQ/100325.stp", model)
+            zf.writestr("RFQ/kopio/100325.stp", model)
+        if "done" not in st.session_state:
+            st.session_state["done"] = True
+            ingest([SimpleNamespace(file_id="z", name="RFQ.zip", getvalue=lambda: buf.getvalue())])
+            # The same PDF dropped loose as well.
+            ingest([SimpleNamespace(file_id="p", name="100325.pdf", getvalue=lambda: pdf.getvalue())])
+        sync()
+        st.session_state["links"] = {c: [files.get(d).folder for d in ids]
+                                     for c, ids in card_docs().items()}
+        st.session_state["models"] = len(bom.models())
+        st.session_state["steps"] = [[m for m in p.members if bom.is_source(m)]
+                                     for p in parts().values()]
+
+    at = AppTest.from_function(page, default_timeout=60).run()
+    assert not at.exception
+    (folders,) = at.session_state["links"].values()
+    assert sorted(folders) == ["RFQ", "RFQ/vanha"]
+    assert at.session_state["models"] == 1
+    assert [len(s) for s in at.session_state["steps"]] == [1]
+    assert at.session_state["dxf_dupes"][0] == ["100325.pdf"]   # the loose one, warned about
+
+
 def test_a_big_step_model_of_a_large_drop_is_read_when_asked(tmp_path):
     import io
     import zipfile

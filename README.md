@@ -16,7 +16,10 @@ A Streamlit app that prices sheet-metal parts from supplier price lists.
   button removes the part, and **Poista kaikki** above the cards (asks to
   confirm) removes them all. A file whose name is already on a card is not
   added again: a warning names it and its card for 15 seconds (to replace a changed
-  drawing, remove the old card first). When a card has its material and thickness and
+  drawing, remove the old card first). Nor is a PDF or STEP file with the same
+  name and the same bytes as one already kept, from whatever folder (an RFQ often
+  has a drawing twice, in two folders or loose and in the ZIP), so a card lists
+  each linked file once. When a card has its material and thickness and
   others are still empty, a question between it and the first empty card
   below asks whether the empty cards get the same (*Kyllä* / *Ei*). It is
   shown once and goes away once answered; files dropped later are asked
