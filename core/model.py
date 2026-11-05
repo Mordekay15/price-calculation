@@ -283,11 +283,24 @@ class AssemblyWork:
     other_eur: float = 0.0                      # per assembly (packing, painting the whole…)
 
 
+@dataclass(frozen=True)
+class AssemblySource:
+    """One file that describes an assembly (the data model's
+    ``Assembly.sources``): ``step`` (the STEP model's file id), ``drawing``
+    (the card of its assembly drawing, or a PDF on no card: ``file_kind``
+    "pdf"), ``bom`` or ``hand`` (no file)."""
+
+    kind: str                                   # step | drawing | bom | hand
+    file_id: str = ""
+    file_kind: str = ""                         # "pdf" for a PDF on no card
+
+
 @dataclass
 class Assembly:
-    """One per part number, however many files describe it: a STEP model of
-    several bodies, an assembly drawing, or parts joined by hand. It goes
-    when none of them is left (``described``).
+    """One per part number, however many files describe it (``sources``): a
+    STEP model of several bodies, an assembly drawing (a card's, or a PDF's),
+    or parts joined by hand. A removed file drops its source, and the
+    assembly goes when none is left (``described``).
 
     ``parts`` are its cards × kpl / kokoonpano, a part sitting in one place
     (one in a subassembly is not also in its parent), ``children`` its
@@ -300,20 +313,68 @@ class Assembly:
     work: AssemblyWork = AssemblyWork()
     children: dict[str, int] = field(default_factory=dict)    # assembly id → kpl
     # Where it comes from:
-    step_file: str | None = None                # the STEP model's file id
+    sources: list[AssemblySource] = field(default_factory=list)
     members: dict[str, int] = field(default_factory=dict)     # source id → kpl: the
     #   model's sheet bodies, or the cards joined by hand
     step_bought: list[str] = field(default_factory=list)      # the model's bodies in bought
-    drawing: str | None = None                  # the card of its assembly drawing
-    drawing_pdf: str | None = None              # or a PDF on no card that is one
     drawn: dict[str, int] = field(default_factory=dict)       # card id → kpl it calls out
     awaited: list[str] = field(default_factory=list)          # called out, not dropped
     fasteners_read: bool = False                # its drawing's notes are in bought
-    by_hand: bool = False
 
     @property
     def described(self) -> bool:
-        return bool(self.step_file or self.drawing or self.drawing_pdf or self.by_hand)
+        return bool(self.sources)
+
+    # Each kind of source by itself, read and set (None or False removes it).
+
+    def _source(self, kind: str, pdf: bool = False) -> AssemblySource | None:
+        return next((s for s in self.sources
+                     if s.kind == kind and (s.file_kind == "pdf") == pdf), None)
+
+    def _set(self, kind: str, file_id: str | None, pdf: bool = False) -> None:
+        self.sources = [s for s in self.sources
+                        if not (s.kind == kind and (s.file_kind == "pdf") == pdf)]
+        if file_id is not None:
+            self.sources.append(AssemblySource(kind, file_id, "pdf" if pdf else ""))
+
+    @property
+    def step_file(self) -> str | None:
+        """The STEP model's file id."""
+        s = self._source("step")
+        return s.file_id if s else None
+
+    @step_file.setter
+    def step_file(self, file_id: str | None) -> None:
+        self._set("step", file_id)
+
+    @property
+    def drawing(self) -> str | None:
+        """The card of its assembly drawing."""
+        s = self._source("drawing")
+        return s.file_id if s else None
+
+    @drawing.setter
+    def drawing(self, card_id: str | None) -> None:
+        self._set("drawing", card_id)
+
+    @property
+    def drawing_pdf(self) -> str | None:
+        """A PDF on no card that is its assembly drawing."""
+        s = self._source("drawing", pdf=True)
+        return s.file_id if s else None
+
+    @drawing_pdf.setter
+    def drawing_pdf(self, doc_id: str | None) -> None:
+        self._set("drawing", doc_id, pdf=True)
+
+    @property
+    def by_hand(self) -> bool:
+        """Its parts were joined by hand ("Uusi kokoonpano")."""
+        return self._source("hand") is not None
+
+    @by_hand.setter
+    def by_hand(self, yes: bool) -> None:
+        self._set("hand", "" if yes else None)
 
 
 # ── 5 · Nesting and price ───────────────────────────────────────────────────

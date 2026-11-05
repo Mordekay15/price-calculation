@@ -39,7 +39,7 @@ from dataclasses import replace
 
 from core.items import NO_BLANK
 from core.linking import base_key
-from core.model import Assembly
+from core.model import Assembly, AssemblySource
 from view import bom, bought
 from view.ui import is_headless, st
 from view.undo import undoable
@@ -210,7 +210,8 @@ def join(cids: list[str], name: str) -> None:
         return
     aid = f"hand:{uuid.uuid4().hex[:8]}"
     _store()[aid] = Assembly(aid, name.strip() or "Kokoonpano",
-                             members={cid: 1 for cid in cids}, by_hand=True)
+                             members={cid: 1 for cid in cids},
+                             sources=[AssemblySource("hand")])
 
 
 def drawings() -> dict[str, str]:
