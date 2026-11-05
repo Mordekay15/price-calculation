@@ -815,8 +815,12 @@ def _thin(points: list, n: int = 240) -> list:
 BEND_UP, BEND_DOWN = "BEND_UP", "BEND_DOWN"
 
 
-def mesh(shape, deflection: float = 0.2) -> tuple[list[tuple], list[tuple]]:
-    """``(vertices, triangles)`` of a body for the 3D preview."""
+def mesh(shape, deflection: float | None = None, angle: float = 0.1
+         ) -> tuple[list[tuple], list[tuple]]:
+    """``(vertices, triangles)`` of a body for the 3D preview. ``deflection``
+    (mm) is how far a triangle may stray from the true surface, by default
+    a share of the body's size; ``angle`` (radians) is the most one triangle
+    may turn on a curved face, so small holes and bends come out round."""
     from OCP.BRep import BRep_Tool
     from OCP.BRepMesh import BRepMesh_IncrementalMesh
     from OCP.TopAbs import TopAbs_FACE, TopAbs_REVERSED
@@ -824,7 +828,9 @@ def mesh(shape, deflection: float = 0.2) -> tuple[list[tuple], list[tuple]]:
     from OCP.TopLoc import TopLoc_Location
     from OCP.TopoDS import TopoDS
 
-    BRepMesh_IncrementalMesh(shape, deflection, False, 0.5, True)
+    if deflection is None:
+        deflection = min(max(math.dist((0, 0, 0), _bbox(shape)) / 2000, 0.01), 0.2)
+    BRepMesh_IncrementalMesh(shape, deflection, False, angle, True)
     verts, tris = [], []
     exp = TopExp_Explorer(shape, TopAbs_FACE)
     while exp.More():
@@ -844,6 +850,39 @@ def mesh(shape, deflection: float = 0.2) -> tuple[list[tuple], list[tuple]]:
                              base + (b if rev else c) - 1))
         exp.Next()
     return verts, tris
+
+
+def outline(shape) -> list[list[tuple]]:
+    """The body's edges as 3D polylines, drawn over the preview so its
+    outline and holes read sharply. Uses the triangles ``mesh`` made."""
+    from OCP.BRep import BRep_Tool
+    from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.TopoDS import TopoDS
+
+    lines, seen = [], set()
+    faces = TopExp_Explorer(shape, TopAbs_FACE)
+    while faces.More():
+        face = TopoDS.Face(faces.Current())
+        loc = TopLoc_Location()
+        tri = BRep_Tool.Triangulation_s(face, loc)
+        edges = TopExp_Explorer(face, TopAbs_EDGE)
+        while tri is not None and edges.More():
+            edge = TopoDS.Edge(edges.Current())
+            edges.Next()
+            poly = BRep_Tool.PolygonOnTriangulation_s(edge, tri, loc)
+            if poly is None or edge.TShape() in seen:
+                continue
+            seen.add(edge.TShape())
+            trsf, nodes = loc.Transformation(), poly.Nodes()
+            pts = []
+            for i in range(nodes.Lower(), nodes.Upper() + 1):
+                q = tri.Node(nodes.Value(i)).Transformed(trsf)
+                pts.append((q.X(), q.Y(), q.Z()))
+            lines.append(pts)
+        faces.Next()
+    return lines
 
 
 def safe_name(name: str) -> str:

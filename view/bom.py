@@ -232,18 +232,36 @@ def render_3d(shape, cache_key: str) -> None:
         return
     cache = st.session_state.setdefault("dxf_step_meshes", {})
     if cache_key not in cache:
-        cache[cache_key] = step.mesh(shape())
-    verts, tris = cache[cache_key]
+        body = shape()
+        cache[cache_key] = (*step.mesh(body), step.outline(body))
+    verts, tris, lines = cache[cache_key]
     if not tris:
         st.caption("Mallista ei voitu tehdä 3D-näkymää.")
         return
     x, y, z = zip(*verts)
     i, j, k = zip(*tris)
+    # Smooth shading: each face has its own vertices, so curved faces (holes,
+    # bends) shade round while the creases between faces stay sharp.
     fig = go.Figure(go.Mesh3d(x=x, y=y, z=z, i=i, j=j, k=k, color="#9db4c8",
-                              flatshading=True, lighting={"ambient": 0.45, "diffuse": 0.8}))
+                              flatshading=False, hoverinfo="skip",
+                              lighting={"ambient": 0.5, "diffuse": 0.75, "specular": 0.15,
+                                        "roughness": 0.6, "fresnel": 0.1},
+                              lightposition={"x": 1000, "y": 2000, "z": 3000}))
+    # The edges as one line trace, a None between each edge's points.
+    pts = [p for line in lines for p in (*line, (None, None, None))]
+    if pts:
+        ex, ey, ez = zip(*pts)
+        fig.add_trace(go.Scatter3d(x=ex, y=ey, z=ez, mode="lines", hoverinfo="skip",
+                                   line={"color": "#34495e", "width": 2}, showlegend=False))
+    # True proportions with the longest side as 1, so the camera below
+    # frames the whole part however long and thin it is.
+    size = [max(a) - min(a) for a in (x, y, z)]
+    ratio = {n: d / (max(size) or 1) for n, d in zip("xyz", size)}
     fig.update_layout(height=320, margin={"l": 0, "r": 0, "t": 0, "b": 0},
-                      scene={"aspectmode": "data", "xaxis": {"visible": False},
-                             "yaxis": {"visible": False}, "zaxis": {"visible": False}})
+                      scene={"aspectmode": "manual", "aspectratio": ratio,
+                             "xaxis": {"visible": False}, "yaxis": {"visible": False},
+                             "zaxis": {"visible": False},
+                             "camera": {"eye": {"x": 0.9, "y": 0.9, "z": 0.7}}})
     st.plotly_chart(fig, key=f"dxf_step_fig_{cache_key}")
 
 
