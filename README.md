@@ -570,7 +570,9 @@ The app is built on `core/model.py`; data flows one way:
    shows, Sparrow nests and the price measures), its quantity and work, its
    own bought parts, and its material and thickness as `Value`s: what the files say (with where from, or why they disagree) and
    what was chosen by hand, which wins. **Assembly** (one per part number,
-   with subassemblies, its `BoughtPart`s and `AssemblyWork`). All of these
+   with subassemblies, its `BoughtPart`s and `AssemblyWork`, and its
+   `sources`: every file that describes it, `step`, `drawing` (a card's or a
+   PDF's), `bom` or `hand`; it goes when none is left). All of these
    are in `core/model.py`; `core/items.py` and `core/assemblies.py` only
    group, score and price them.
 5. Nesting and price, computed.

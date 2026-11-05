@@ -173,7 +173,7 @@ def test_one_assembly_per_part_number_with_its_subassemblies():
         import streamlit as st
 
         from core.items import NO_BLANK, Choice
-        from core.model import Assembly
+        from core.model import Assembly, AssemblySource
         from tests.test_assemblies import _facts as facts
         from view import assemblies
 
@@ -193,7 +193,7 @@ def test_one_assembly_per_part_number_with_its_subassemblies():
         # The STEP model of the sub has the same part number: one assembly.
         store = st.session_state.setdefault(assemblies.ASSEMBLIES, {})
         store["asm-070100"] = Assembly("asm-070100", "ASM-070100", members={"b": 4},
-                                       step_file="s1")
+                                       sources=[AssemblySource("step", "s1")])
         for _ in range(2):
             assemblies.sync_from_drawings(items, lambda cid: facts(texts.get(cid, "")))
         cards = {c: c for c in items}
@@ -248,11 +248,12 @@ def test_only_an_assembly_drawings_own_notes_are_its_bought_parts():
     def page():
         import streamlit as st
 
-        from core.model import Assembly
+        from core.model import Assembly, AssemblySource
         from view import assemblies
 
         store = st.session_state.setdefault(assemblies.ASSEMBLIES, {})
-        store["drawing:d"] = Assembly("drawing:d", "Runko", members={"p": 1}, drawing="d")
+        store["drawing:d"] = Assembly("drawing:d", "Runko", members={"p": 1},
+                                       sources=[AssemblySource("drawing", "d")])
         lines = {"d": [("M6-RUUVIT", 4)], "p": [("M5-PURISTEMUTTERIT", 4)]}
         assemblies.sync_drawing_fasteners(lines, lambda cid: "RST 1.4301")
         assemblies.sync_drawing_fasteners(lines)                    # only once
@@ -329,3 +330,18 @@ def test_a_parts_own_bought_parts_are_rows_under_it_in_the_price_table():
          "units": [2.0, 2.0, 2.0]}]
     assert _bought_rows(WorkInputs(fasteners=4), 1, 1, 3) == []
     assert _bought_rows(None, 1, 1, 3) == []
+
+
+def test_an_assembly_is_described_by_its_sources_and_goes_with_the_last():
+    from core.model import AssemblySource
+
+    a = Assembly("asm-1", "Runko")
+    a.step_file, a.drawing, a.drawing_pdf, a.by_hand = "s1", "d1", "p1", True
+    assert a.sources == [AssemblySource("step", "s1"), AssemblySource("drawing", "d1"),
+                         AssemblySource("drawing", "p1", "pdf"), AssemblySource("hand")]
+    a.drawing = "d2"                                   # replaced, the PDF kept
+    assert (a.drawing, a.drawing_pdf) == ("d2", "p1")
+    a.step_file = a.drawing = a.drawing_pdf = None
+    assert a.described
+    a.by_hand = False
+    assert a.sources == [] and not a.described
