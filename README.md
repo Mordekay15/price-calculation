@@ -377,9 +377,9 @@ docker compose down               # stop
 ```
 
 The saved price lists are written to `data/` next to `compose.yaml`, so they
-survive rebuilds. To set how many Sparrow runs go at once (see *Sparrow
-executable*), add `environment: [SPARROW_PARALLEL=2]` under `app` in
-`compose.yaml`. The container restarts by itself after a crash or reboot.
+survive rebuilds. `compose.yaml` sets `SPARROW_PARALLEL=3`: three Sparrow
+runs at once, for the server's 4 dedicated cores (see *Sparrow executable*).
+Change the number there, or remove the line to pick it from the cores. The container restarts by itself after a crash or reboot.
 Uploads are allowed up to 500 MB per file (an RFQ ZIP can be over 300 MB).
 
 ## Deploy (Streamlit Community Cloud)
