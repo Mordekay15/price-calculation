@@ -254,6 +254,7 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
                       on_click=undoable(evict_all, f"kaikki {len(parts)} osaa"))
     table_slot = st.container() if view == TABLE else None
     drawing_of = assemblies.drawings()          # assembly id: its drawing's card
+    pdf_of = assemblies.pdf_drawings()          # assembly id: its PDF on no card
     card_of = source_cards()
     index = {fid: idx for idx, (fid, _) in enumerate(parts)}
     per_assembly = per_unit(assemblies.current(card_of))  # card id: kpl in its assemblies
@@ -293,6 +294,8 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
     def draw_assembly(aid: str, cids: dict[str, int]) -> None:
         if aid in drawing_of and not is_headless():   # its drawing, not a card
             attachments.render_card_docs(drawing_of[aid], doc_links.get(drawing_of[aid], []))
+        elif aid in pdf_of and not is_headless():     # a PDF on no card
+            attachments.render_card_docs(f"asm_{aid}", [pdf_of[aid]])
         # A card in two assemblies is drawn in the first one only.
         mine = sorted(index[c] for c in cids if c in index)
         if mine:
