@@ -7,6 +7,7 @@ pass ``mix``: a plan cut from several sheet sizes (see ``compute_options``)."""
 from __future__ import annotations
 
 import math
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 
 from core.model import Product
@@ -239,6 +240,7 @@ def compute_options(
     margin_pct: float = 0.0,
     on_progress=None,
     mix=None,
+    workers: int = 1,
 ) -> GroupCost | None:
     """Price every sheet size of one material + thickness; None when there are
     no pieces or no priced size.
@@ -255,6 +257,10 @@ def compute_options(
     were packed). It returns a plan cut from several sizes as ``[(size index,
     Packing, real part area on its sheets)]``, or None; that plan is one more
     option, last.
+
+    ``workers`` sizes are packed at once (threads: worth it when ``pack``
+    waits on a solver process, as Sparrow's does); the options keep the
+    sizes' order either way. ``on_progress("size_done", ...)`` follows each.
     """
     candidates = size_prices(lookup, material, thickness)
     if n_pieces <= 0 or not candidates:
@@ -275,12 +281,28 @@ def compute_options(
         option = _price(option, price_per_tonne, margin_pct, thickness_mm, material, pieces_kg)
         return with_last_share(option, None)
 
-    options = []
-    for index, (sw, sh, price_per_tonne) in enumerate(candidates):
+    def pack_size(index: int) -> list[Packing]:
+        sw, sh, _ = candidates[index]
+        info = dict(index=index, count=len(candidates), w=sw, h=sh)
         if on_progress is not None:
-            on_progress("size", index=index, count=len(candidates), w=sw, h=sh)
-        for packing in pack(sw, sh):
-            options.append(priced(sw, sh, price_per_tonne, packing))
+            on_progress("size", **info)
+        packings = pack(sw, sh)
+        if on_progress is not None:
+            on_progress("size_done", **info)
+        return packings
+
+    indices = range(len(candidates))
+    if workers > 1 and len(candidates) > 1:
+        pool = ThreadPoolExecutor(max_workers=min(workers, len(candidates)))
+        try:
+            packed = list(pool.map(pack_size, indices))
+        finally:                        # on an error, the sizes not started are dropped
+            pool.shutdown(cancel_futures=True)
+    else:
+        packed = [pack_size(i) for i in indices]
+    options = [priced(sw, sh, price_per_tonne, packing)
+               for (sw, sh, price_per_tonne), packings in zip(candidates, packed)
+               for packing in packings]
 
     if mix is not None:
         plan = mix([sheet_eur(sw, sh, ppt, thickness_mm, material, margin_pct)

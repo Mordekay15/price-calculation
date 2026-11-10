@@ -9,4 +9,8 @@ services:
     volumes:
       # The saved price lists (price_data_*.json) live here, outside the container.
       - ./data:/data
+    environment:
+      # Sparrow runs at once (see README, "Sparrow executable"): 3 on the
+      # server's 4 dedicated cores. Remove the line to pick from the cores.
+      - SPARROW_PARALLEL=3
     restart: unless-stopped

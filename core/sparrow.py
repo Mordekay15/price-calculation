@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -31,6 +32,7 @@ from core.sheet_cost import (
     GroupCost,
     Packing,
     compute_options,
+    size_prices,
     too_big,
     usable_area,
 )
@@ -193,6 +195,46 @@ class SparrowResult:
     strip_width: float | None = None     # length of the nested strip
 
 
+# ── Cores ──
+# A Sparrow run searches until its time limit whatever the cores, so speed comes
+# from running several at once. One run keeps about two cores busy with its
+# default threads, so a group nests ``PARALLEL_RUNS`` sheet sizes at once:
+# the cores this process may use halved (1 on a 2-core host, as before; 2 on 4
+# cores). ``SPARROW_PARALLEL`` overrides it; ``SPARROW_THREADS`` passes
+# ``--workers`` to every run (unset: Sparrow's own default).
+
+
+def available_cpus() -> int:
+    """The cores this process may use, a container's CPU limit included."""
+    try:
+        n = len(os.sched_getaffinity(0))
+    except AttributeError:          # not on Linux
+        n = os.cpu_count() or 1
+    try:                            # cgroup v2 limit, e.g. Docker's --cpus
+        quota, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()[:2]
+        if quota != "max":
+            n = min(n, max(1, int(quota) // int(period)))
+    except (OSError, ValueError):
+        pass
+    return max(1, n)
+
+
+def _env_int(name: str) -> int | None:
+    try:
+        value = int(os.environ.get(name, ""))
+    except ValueError:
+        return None
+    return value if value >= 1 else None
+
+
+THREADS_PER_RUN: int | None = _env_int("SPARROW_THREADS")
+PARALLEL_RUNS: int = _env_int("SPARROW_PARALLEL") or max(1, available_cpus() // 2)
+
+# Every Sparrow process of the app, whoever started it, takes one of these:
+# two people nesting at once share the cores instead of overloading them.
+_SLOTS = threading.BoundedSemaphore(PARALLEL_RUNS)
+
+
 def find_executable() -> str | None:
     """The Sparrow binary: ``$SPARROW_BIN``, then bundled ``bin/``, then PATH."""
     candidates = [os.environ.get(_ENV_VAR), *(str(_BUNDLED_DIR / n) for n in _EXECUTABLE_NAMES),
@@ -212,12 +254,23 @@ def run_sparrow(
     time_limit_sec: int = 4,
     seed: int = 0,
     min_item_separation: float | None = None,
+    threads: int | None = THREADS_PER_RUN,
 ) -> SparrowResult:
     """Run Sparrow on one strip instance in a temporary folder.
 
     The process gets an argument list (never a shell string), a time limit and
     a fixed seed. Sparrow writes ``output/final_<name>.json`` next to its input.
+    ``threads`` is its ``--workers`` (None: Sparrow's default). At most
+    ``PARALLEL_RUNS`` runs go at once in the app; a run past that waits.
     """
+    with _SLOTS:
+        return _run_sparrow(instance, executable=executable, time_limit_sec=time_limit_sec,
+                            seed=seed, min_item_separation=min_item_separation,
+                            threads=threads)
+
+
+def _run_sparrow(instance: dict, *, executable: str, time_limit_sec: int, seed: int,
+                 min_item_separation: float | None, threads: int | None) -> SparrowResult:
     job = Path(tempfile.mkdtemp(prefix="sparrow_job_"))
     try:
         (job / "input.json").write_text(json.dumps(instance), encoding="utf-8")
@@ -225,6 +278,8 @@ def run_sparrow(
                 "-t", str(int(time_limit_sec)), "-s", str(int(seed)), "-x"]
         if min_item_separation is not None:
             args += ["--min-item-separation", str(float(min_item_separation))]
+        if threads is not None:
+            args += ["--workers", str(int(threads))]
         wall_clock = int(time_limit_sec) + _WALL_CLOCK_MARGIN_SEC
         try:
             proc = subprocess.run(args, cwd=job, capture_output=True, text=True,
@@ -509,33 +564,61 @@ def sparrow_options(
     rankavali_mm: int = 0,
     on_progress=None,
     renest_fn=None,
+    parallel: int = 1,
 ) -> GroupCost | None:
     """``core.sheet_cost.compute_options`` with Sparrow shape nesting.
 
     ``on_progress``, if given, receives ``("size", index=, count=, w=, h=)``
-    before each sheet size and ``("sheet", w=, h=, placed=, total=)`` each time
-    a sheet layout is settled. One more option may cut the parts from several
+    before each sheet size, ``("sheet", w=, h=, placed=, total=)`` each time
+    a sheet layout is settled and ``("size_done", index=, count=, w=, h=)``
+    after it. One more option may cut the parts from several
     sizes (see ``core.cutting_stock.MixedSizes``). ``renest_fn``, if given, is
     the solver for nesting a planned sheet again (``_plan_sheets``) instead
     of ``run_fn``: which sheets those are depends on the prices.
+
+    ``parallel`` sheet sizes are nested at once (``run_fn`` must then be safe
+    to call from several threads); the result is the same as one at a time.
     """
     n_pieces = sum(p.quantity for p in parts)
     part_area_mm2 = sum(net_area(p.outer, p.holes) * p.quantity for p in parts)
     separation = float(rankavali_mm) if rankavali_mm else None
     mixed = MixedSizes([p.quantity for p in parts], [net_area(p.outer, p.holes) for p in parts])
+    # Each size's candidates for ``mixed``, by size: with sizes nested at once
+    # they arrive in any order, and ``mixed`` takes them in the sizes' order.
+    kept: dict[tuple[int, int], list[_Kept]] = {}
+    lock = threading.Lock()
 
     def pack_fn(sw: int, sh: int) -> list[Packing]:
-        return _pack_on_short_side(
+        size = _Kept()
+        packings = _pack_on_short_side(
             parts, sw, sh, edges,
-            run_fn=run_fn, separation=separation, on_progress=on_progress, mixed=mixed,
+            run_fn=run_fn, separation=separation, on_progress=on_progress, mixed=size,
             renest_fn=renest_fn,
         )
+        with lock:
+            kept.setdefault((sw, sh), []).append(size)
+        return packings
+
+    def mix(prices):
+        for sw, sh, _ in size_prices(lookup, material, thickness):
+            if kept.get((sw, sh)):
+                mixed.keep(*kept[(sw, sh)].pop(0).args)
+        return mixed.plan(prices)
 
     return compute_options(
         lookup, material, thickness, thickness_mm,
         n_pieces=n_pieces, part_area_mm2=part_area_mm2, pack=pack_fn,
-        margin_pct=margin_pct, on_progress=on_progress, mix=mixed.plan,
+        margin_pct=margin_pct, on_progress=on_progress, mix=mix, workers=parallel,
     )
+
+
+class _Kept:
+    """One size's ``MixedSizes.keep`` call, held until ``mix`` replays it."""
+
+    args: tuple = (None, None, None)
+
+    def keep(self, pool, to_packing, sheet_area=None) -> None:
+        self.args = (pool, to_packing, sheet_area)
 
 
 def _pack_on_short_side(parts, sw, sh, edges, *, run_fn, separation, renest_fn=None,

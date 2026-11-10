@@ -315,9 +315,26 @@ The DXF tab runs the [Sparrow](https://github.com/JeroenGar/sparrow) solver.
 The repo ships both builds in `bin/`. For another platform, build or download
 Sparrow and set `SPARROW_BIN` or replace the file in `bin/`.
 
-Each Sparrow run takes the search time (*Sijoittelun hakuaika*). The DXF tab
-remembers every successful run for the session: the same question (parts,
-strip, cut gap, search time) is answered without running Sparrow again.
+Each Sparrow run takes the search time (*Sijoittelun hakuaika*), however many
+cores it has: more threads only make the layout a little tighter in that time.
+So a group is nested faster by running several runs at once: its sheet sizes
+are nested in parallel, the number set by the cores the app may use (a
+container's CPU limit included), halved because one run keeps about two cores
+busy. That is 1 on a 2-core host (one size at a time, as before) and 2 on 4
+cores. Groups are still nested one after another. Every Sparrow process of the
+app takes one of these slots, so two people nesting at once share the cores.
+Two environment variables override it:
+
+| Variable | Default | What it sets |
+|---|---|---|
+| `SPARROW_PARALLEL` | cores ÷ 2 | Sparrow runs at once, for the whole app |
+| `SPARROW_THREADS` | Sparrow's own (3) | `--workers` of every run |
+
+The DXF tab remembers every successful run for the session: the same question
+(parts, strip, cut gap, search time) is answered without running Sparrow
+again. Sizes with the same short side often ask the same first question (all
+the parts on the same strip); when they are nested at once, the second waits
+for the first run's answer instead of running it too.
 
 A result is stored by what decides the nesting — the parts, their quantities
 and angles, and the sheet sizes — not by what only prices it. So without
@@ -360,7 +377,9 @@ docker compose down               # stop
 ```
 
 The saved price lists are written to `data/` next to `compose.yaml`, so they
-survive rebuilds. The container restarts by itself after a crash or reboot.
+survive rebuilds. `compose.yaml` sets `SPARROW_PARALLEL=3`: three Sparrow
+runs at once, for the server's 4 dedicated cores (see *Sparrow executable*).
+Change the number there, or remove the line to pick it from the cores. The container restarts by itself after a crash or reboot.
 Uploads are allowed up to 500 MB per file (an RFQ ZIP can be over 300 MB).
 
 ## Deploy (Streamlit Community Cloud)
