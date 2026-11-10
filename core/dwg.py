@@ -20,6 +20,7 @@ builds default ones in its place."""
 
 from __future__ import annotations
 
+import logging
 import os
 import pathlib
 import shutil
@@ -27,10 +28,14 @@ import subprocess
 import sys
 import tempfile
 
+_log = logging.getLogger(__name__)
 _TIMEOUT_S = 60
 _BIN = pathlib.Path(__file__).resolve().parent.parent / "bin"
 
-SAVE_AS_DXF = "Tallenna piirustus DXF-muodossa ja lataa se uudelleen."
+SAVE_AS_DXF = ("Avaa piirustus CAD-ohjelmassa, tallenna se DXF-muodossa (Tallenna "
+               "nimellä → DXF) ja lataa se uudelleen.")
+# The converter's own reason (English, technical) is logged, not shown.
+NOT_CONVERTED = "DWG-tiedostoa ei voitu avata: sen muunnos DXF-muotoon ei onnistunut."
 
 
 class ConversionError(Exception):
@@ -72,7 +77,8 @@ def _with_oda(src: pathlib.Path, dst: pathlib.Path) -> None:
     try:
         odafc.convert(src, dst, version="R2018", replace=True)
     except Exception as exc:  # noqa: BLE001
-        raise ConversionError(f"ODA File Converter ei osannut muuntaa tiedostoa ({exc}).")
+        _log.warning("ODA File Converter failed: %s", exc)
+        raise ConversionError(NOT_CONVERTED)
 
 
 def _with_libredwg(exe: str, src: pathlib.Path, dst: pathlib.Path,
@@ -81,14 +87,17 @@ def _with_libredwg(exe: str, src: pathlib.Path, dst: pathlib.Path,
     try:
         done = subprocess.run(args, capture_output=True, text=True, timeout=_TIMEOUT_S)
     except subprocess.TimeoutExpired:
-        raise ConversionError(f"LibreDWG:n muunnos ei valmistunut {_TIMEOUT_S} sekunnissa.")
+        raise ConversionError("DWG-tiedostoa ei voitu avata: sen muunnos DXF-muotoon ei "
+                              f"valmistunut {_TIMEOUT_S} sekunnissa.")
     except OSError as exc:
-        raise ConversionError(f"LibreDWG:tä ei voitu käynnistää ({exc}).")
+        _log.warning("LibreDWG did not start: %s", exc)
+        raise ConversionError("DWG-tiedostoja ei voi nyt avata: muunnin (LibreDWG) ei "
+                              "käynnisty tällä palvelimella.")
     # dwg2dxf can exit non-zero on warnings and still write a usable file.
     if not dst.is_file() or dst.stat().st_size == 0:
         detail = (done.stderr or done.stdout or "").strip().splitlines()
-        raise ConversionError("LibreDWG ei osannut muuntaa tiedostoa"
-                              + (f" ({detail[-1]})." if detail else "."))
+        _log.warning("LibreDWG failed: %s", detail[-1] if detail else "no output")
+        raise ConversionError(NOT_CONVERTED)
 
 
 def dwg_to_dxf(data: bytes, *, minimal: bool = False) -> bytes:
@@ -97,8 +106,8 @@ def dwg_to_dxf(data: bytes, *, minimal: bool = False) -> bytes:
     oda = _oda_installed()
     exe = None if oda else libredwg_executable()
     if not oda and exe is None:
-        raise ConversionError("DWG-tiedostoja ei voi lukea: muunninta (ODA File Converter "
-                              "tai LibreDWG) ei ole asennettu.")
+        raise ConversionError("DWG-tiedostoja ei voi avata tällä palvelimella: muunninta "
+                              "(ODA File Converter tai LibreDWG) ei ole asennettu.")
     with tempfile.TemporaryDirectory() as tmp:
         src, dst = pathlib.Path(tmp, "drawing.dwg"), pathlib.Path(tmp, "drawing.dxf")
         src.write_bytes(data)
@@ -107,7 +116,7 @@ def dwg_to_dxf(data: bytes, *, minimal: bool = False) -> bytes:
         else:
             _with_libredwg(exe, src, dst, minimal)
         if not dst.is_file():
-            raise ConversionError("Muunnin ei tuottanut DXF-tiedostoa.")
+            raise ConversionError(NOT_CONVERTED)
         return _without_objects(_join_broken_values(dst.read_bytes()))
 
 

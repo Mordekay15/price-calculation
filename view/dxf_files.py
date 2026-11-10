@@ -570,7 +570,8 @@ def evict(fid: str) -> None:
             attachments.remove_doc(d)
     for key in (*(material_keys(item) if item else ()), f"dxf_unit_ok_{fid}",
                 f"dxf_src_{fid}",
-                f"dxf_turn_{fid}"):
+                f"dxf_turn_{fid}",
+                *(f"dxf_notcut_{sid}" for sid in (item.members if item else [fid]))):
         ss.pop(key, None)
     shown = ss.get(AUTO_SHOWN, {})
     for key in [k for k in shown if ids_in([fid]).search(k)]:

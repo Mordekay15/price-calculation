@@ -178,6 +178,12 @@ class DxfReport:
     # A profile drawing's blank as the customer drew it, when its width was
     # replaced by the cross-section unfolded (0: not replaced).
     drawn_blank_mm: float = 0.0
+    # A drawing sheet whose part can't be told among its views: the part
+    # built from each of the biggest views, for the user to choose from on
+    # the card (see ``_pick_view``), and on each of them its outline as it
+    # lies on the sheet (``dropped`` is the sheet's lines then).
+    view_options: list["DxfReport"] = field(default_factory=list)
+    on_sheet: list[Point] = field(default_factory=list)
 
     @property
     def dropped_count(self) -> int:
@@ -317,13 +323,46 @@ class DxfFile:
         if view is None and views is not None:
             view = _pick_view(views, self.bend_notes, last=True)
             if view is None:
-                report.problems.append(
-                    f"Piirustuksessa on {len(views)} näkymää, eikä mikään niistä erotu "
-                    "osan aihioksi (ei taivutusmerkintää eikä -viivoja). Lataa osan "
-                    "aukikeritty DXF.")
+                report.view_options = self._view_options(main, views, contours, reference)
+                report.problems.append(views_problem(len(views), bool(report.view_options)))
                 report.dropped = [c.points for c in contours]
                 _trim_dropped(report)
                 return report
+        return self._built(report, main, view, section, contours, reference)
+
+    def _view_options(self, frame: Contour, views: list[_View], contours: list[Contour],
+                      reference: list[_Piece]) -> list[DxfReport]:
+        """The part built from each of a sheet's biggest views, biggest
+        first, for the user to choose from. A view that can't be the part
+        is left out: too small (a symbol, a hole drawn apart), or with no
+        outline of its own (see ``_is_whole_view``)."""
+        def size(v: _View) -> float:
+            return v.outline.width_mm * v.outline.height_mm
+
+        options = []
+        whole = sorted(filter(_is_whole_view, views), key=size, reverse=True)
+        # A hole or a symbol drawn apart is a "view" too: far smaller than the part.
+        whole = [v for v in whole if size(v) >= _VIEW_OPTION_OF_BIGGEST * size(whole[0])]
+        for v in whole[:_VIEW_OPTIONS]:
+            on_sheet = list(v.outline.points)
+            # Only what is drawn in the view, as its own copies: building a
+            # part turns and scales its outlines.
+            box = bbox(on_sheet)
+            copies = {id(c): Contour(list(c.points), c.closed, c.area_mm2, c.depth)
+                      for c in contours if _box_in(bbox(c.points), box)}
+            option = DxfReport(name=self.name, unit_label=self.unit_label)
+            self._built(option, frame, copies[id(v.outline)], None,
+                        list(copies.values()), reference)
+            option.on_sheet = on_sheet
+            option.dropped, option.dropped_more = [], len(contours) - len(copies)
+            options.append(option)
+        return options
+
+    def _built(self, report: DxfReport, main: Contour, view: Contour | None,
+               section: Contour | None, contours: list[Contour],
+               reference: list[_Piece]) -> DxfReport:
+        """``report`` filled with the part: ``view`` on the sheet whose frame
+        is ``main``, or ``main`` itself when ``view`` is None."""
         # Views drawn at the sheet's scale: a frame the size of a paper sheet
         # (a frame drawn at 1:1 round real-size views is the paper / scale).
         at_scale = view is not None and section is None and _paper_size(main)
@@ -405,6 +444,36 @@ def _flat_view(frame: Contour, contours: list[Contour], notes: list[Point]) -> C
     views = [c for c in contours if c.closed and c.depth == frame.depth + 1
              and any(point_in_polygon(n, c.points) for n in notes)]
     return views[0] if len(views) == 1 else None
+
+
+NOT_READ = ("Tiedostoa ei voitu avata: se on vioittunut tai tallennettu muodossa, jota "
+            "sovellus ei lue.")
+
+_VIEW_OPTIONS = 12           # views offered to choose the part from, at most
+_VIEW_OPTION_MIN_MM = 3.0    # a view narrower than this is not a part
+
+
+_VIEW_OPTION_OF_BIGGEST = 0.05   # … nor a view this small a share of the biggest one
+_VIEW_OPTION_SHARE = 0.5     # … and neither is an outline this small a share of its view
+
+
+def _is_whole_view(v: _View) -> bool:
+    """Is the view's outline the view itself, so that it can be the part? A
+    view drawn broken (a long strip shortened with break lines) or in open
+    lines has only its holes and marks as closed outlines."""
+    w, h = v.outline.width_mm, v.outline.height_mm
+    if min(w, h) < _VIEW_OPTION_MIN_MM:
+        return False
+    x0, y0, x1, y1 = bbox([p for c in v.cut for p in c.points])
+    return w >= _VIEW_OPTION_SHARE * (x1 - x0) and h >= _VIEW_OPTION_SHARE * (y1 - y0)
+
+
+def views_problem(n: int, can_choose: bool) -> str:
+    """Why a sheet of ``n`` views has no part, and what to do about it."""
+    return (f"Piirustuksessa on {n} näkymää, eikä osan aihiota voitu tunnistaa niistä "
+            "automaattisesti. "
+            + ("Valitse osa piirustuksesta tai lataa osan aukikeritty DXF." if can_choose
+               else "Lataa osan aukikeritty DXF."))
 
 
 _ON_FRAME_MM = 0.5     # a title block line ending this close to the frame is joined to it
@@ -897,7 +966,10 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
     try:
         doc = _load(data)
     except Exception as exc:  # noqa: BLE001 — never let a bad file crash the app
-        f.problems.append(f"Tiedostoa ei voitu lukea DXF-muodossa ({exc}).")
+        # The reason is the DXF library's own (English, technical): logged,
+        # and the card says what to do instead.
+        _log.warning("%s: not read as DXF: %s", name, exc)
+        f.problems.append(NOT_READ)
         return f
 
     entities = list(_explode_blocks(doc.modelspace()))
@@ -1046,15 +1118,28 @@ def _point_segment_mm(p: Point, a: Point, b: Point) -> float:
     return math.hypot(p[0] - a[0] - s * dx, p[1] - a[1] - s * dy)
 
 
+_UNCLOSED = "sulkeudu ääriviivaksi"
+
+
+def unclosed_problem(n: int) -> str:
+    """The problem of ``n`` lines inside the part that close into no outline."""
+    lines = "1 viiva osan sisällä ei" if n == 1 else f"{n} viivaa osan sisällä ei"
+    return (f"{lines} {_UNCLOSED} (punaisella esikatselussa). Jos viiva on reiän "
+            "ääriviiva, siinä on aukko. Jos se on vain piirrosmerkki, merkitse se alta: "
+            "sitä ei silloin leikata.")
+
+
+def is_unclosed_problem(problem: str) -> bool:
+    return _UNCLOSED in problem
+
+
 def _part_problems(report: DxfReport) -> list[str]:
     """Why a built part cannot be priced — each reason in plain Finnish."""
     out = []
     rings = [report.outline, *report.holes]
     gaps = [line for line in report.open_lines if not is_slit(line)]
     if gaps:
-        n = len(gaps)
-        lines = "1 viiva osan sisällä ei" if n == 1 else f"{n} viivaa osan sisällä ei"
-        out.append(f"{lines} sulkeudu ääriviivaksi — reiän ääriviivassa on aukko?")
+        out.append(unclosed_problem(len(gaps)))
     if any(len(c.points) <= _SELF_INTERSECT_EDGE_CAP and not is_sliver(c.points)
            and _self_intersects(c.points) for c in rings):
         out.append("Ääriviiva leikkaa itseään.")

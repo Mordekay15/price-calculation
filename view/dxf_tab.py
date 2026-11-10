@@ -21,7 +21,7 @@ from core.items import LINKED_BY, NO_BLANK, confirm_unit
 from core.model import FlatShape, Part, Product
 from core.pricing import build_lookup
 from core.sheet_cost import is_ready
-from view import assemblies, attachments, bom
+from view import assemblies, attachments, bom, fixes
 from view.common import (
     materials_with_copper,
     render_material_thickness,
@@ -48,6 +48,7 @@ from view.dxf_files import (
     model_bends,
     render_drop_area,
     render_waiting,
+    shape_of,
     source_cards,
     sync,
     sync_assemblies,
@@ -440,6 +441,13 @@ def _render_part_config(
                     bom.render_card_model(fid, [s for s in item.members if bom.is_source(s)])
             render_waiting(list(doc_ids))
 
+        # A drawing the reader couldn't read on its own, fixed by hand: the
+        # part chosen on its sheet, lines inside the part marked as not cut.
+        if fixes.apply_not_cut(shape) and not is_headless():
+            st.rerun()          # scored and drawn again without the lines
+        sheet = fixes.view_source(shape, item, shape_of)
+        if sheet is not None:
+            fixes.render_view_picker(sheet)
         preview_col, input_col = st.columns([1, 3])
         if item is not None and not any(c.valid for c in item.scores.values()) and any(
                 c.note == NO_BLANK for c in item.scores.values()):
@@ -453,7 +461,9 @@ def _render_part_config(
             _row(fid, idx, shape, _DRAWING)
             return None
         with input_col:
-            size = _checked_size(fid, shape, hdr[1], _unit_reason(shape, item, doc_ids))
+            size = _checked_size(fid, shape, hdr[1], _unit_reason(shape, item, doc_ids),
+                                 choose=sheet is not None and sheet.views.picked is None)
+            fixes.render_not_cut(shape)
         if not is_headless():
             with preview_col:
                 _render_preview(shape, model_bends(fid, shape, item))
@@ -462,7 +472,10 @@ def _render_part_config(
                                help="Painomuodot (esim. kidukset) STEP-mallissa: niitä ei "
                                     "lasketa taivutuksiksi.")
         if size is None:
-            _row(fid, idx, shape, f"{_PROBLEM} ei hinnoiteltavissa" if shape.problems
+            _row(fid, idx, shape,
+                 f"{_OPEN} valitse osa piirustuksesta" if sheet is not None
+                 and sheet.views.picked is None
+                 else f"{_PROBLEM} ei hinnoiteltavissa" if shape.problems
                  else f"{_OPEN} vahvista mittayksikkö")
             return None
         with input_col:
@@ -489,7 +502,8 @@ def _render_part_config(
 
     return Product(fid, item.material.value, item.thickness.value, size[0], size[1],
                    item.qty.value, item.work, name=shape.name, shape=shape, angles=angles,
-                   source=item.chosen)
+                   source=item.chosen if shape.views is None
+                   else f"{item.chosen}#{shape.views.picked}")
 
 
 def _render_preview(shape: FlatShape, bends: list | None = None) -> None:
@@ -526,10 +540,15 @@ def _unit_reason(shape: FlatShape, item: Part | None, doc_ids) -> str | None:
 
 
 def _checked_size(fid: str, shape: FlatShape, badge,
-                  confirmed: str | None = None) -> tuple | None:
+                  confirmed: str | None = None, choose: bool = False) -> tuple | None:
     """The part's ``(width, height)`` in mm, or None (with the reason shown)
     while it can't be priced. ``badge`` is the card header's status slot;
-    ``confirmed`` why a guessed unit is right (see ``core.items.confirm_unit``)."""
+    ``confirmed`` why a guessed unit is right (see ``core.items.confirm_unit``);
+    ``choose``: the part is still to be chosen on the drawing sheet (said
+    above, with the sheet)."""
+    if choose:
+        badge.markdown(":orange[valitse osa]")
+        return None
     if shape.problems:
         badge.markdown(":red[ei hinnoiteltavissa]")
         st.error(

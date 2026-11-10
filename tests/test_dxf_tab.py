@@ -753,3 +753,56 @@ def test_nesting_angle_tiles_show_the_part_turned_and_greyed_when_off():
     assert "#2563eb" in along and "dashed" in across
     assert along != across
     assert orientation_svg(None, 0, True)   # the run row's sample part
+
+
+def test_the_part_is_chosen_on_a_sheet_and_stray_lines_are_marked_on_the_card():
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        from types import SimpleNamespace
+
+        import ezdxf
+        import streamlit as st
+
+        from tests.conftest import dxf_bytes, rect
+        from tests.test_dxf import _flat, _sheet
+        from view.dxf_files import cards, ingest
+        from view.dxf_tab import _render_part_cards
+
+        if not cards():
+            doc = ezdxf.new(setup=True)                  # a sheet, two possible parts
+            doc.header["$INSUNITS"] = 4
+            _sheet(doc.modelspace())
+            _flat(doc.modelspace())
+            _flat(doc.modelspace(), 240, 100)
+            sheet = dxf_bytes(doc)
+            doc = ezdxf.new(setup=True)                  # a plate with a stray line
+            doc.header["$INSUNITS"] = 4
+            rect(doc.modelspace(), 0, 0, 300, 200)
+            doc.modelspace().add_lwpolyline([(50, 50), (80, 50), (80, 90)])
+            plate = dxf_bytes(doc)
+            ingest([SimpleNamespace(file_id="s", name="DRW-1.dxf", getvalue=lambda: sheet),
+                    SimpleNamespace(file_id="p", name="plate.dxf", getvalue=lambda: plate)])
+        products = _render_part_cards(list(cards().items()), ["S235"],
+                                      {("2", "S235 | 1000x2000"): 900.0}, False)
+        st.session_state["priced"] = [(p.id, round(max(p.shape.size_mm)), p.source) for p in products]
+        st.session_state["states"] = [r["Tila"] for r in st.session_state["dxf_rows"].values()]
+
+    at = AppTest.from_function(page, default_timeout=30).run()
+    assert not at.exception
+    assert at.session_state["priced"] == []
+    assert at.session_state["states"] == ["⚠ valitse osa piirustuksesta",
+                                          "⛔ ei hinnoiteltavissa"]
+    assert not at.error or all("näkymää" not in e.value for e in at.error)
+
+    at.button(key="dxf_view_pick_s_1").click().run()         # the second view is the part
+    assert not at.exception
+    assert at.session_state["priced"] == [("s", 100, "s#1")]
+
+    at.session_state["dxf_notcut_p"] = [0]                   # the line is a drawing mark
+    at.run()
+    assert not at.exception
+    assert at.session_state["priced"] == [("s", 100, "s#1"), ("p", 300, "p")]
+
+    at.button(key="dxf_view_pick_s_none").click().run()      # the choice taken back
+    assert at.session_state["priced"] == [("p", 300, "p")]

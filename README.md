@@ -277,6 +277,24 @@ detected automatically). They are saved as `price_data_<supplier>.json` next to
 the app, so re-upload only when a new monthly list arrives. Copper has no list
 price; set its €/kg in the sidebar.
 
+## Fixing a drawing by hand
+
+When a drawing can't be read on its own, the card says what to do instead of
+only refusing it (`core/fixes.py`, `view/fixes.py`):
+
+- **Choosing the part.** A drawing sheet with several views, none of which
+  stands out as the flat pattern (no bend note or bend lines): the card shows
+  the sheet with each possible view numbered. Click a number (or its button)
+  and that view is read as the part, with its holes, exactly as if the reader
+  had picked it. "Poista valinta" takes the choice back. Only whole, closed
+  outlines are offered; a view drawn broken or in open lines is not.
+- **Lines that are not cut.** Lines inside the part that close into no outline
+  stop the pricing (a hole with a gap?). They are numbered on a picture of the
+  part; mark the ones that are only drawing marks (a centre line, an edge
+  drawn twice) and they are drawn but not cut or priced.
+- A file that can't be opened at all says so in plain words and asks for a
+  DXF; the converter's or the DXF library's own reason goes to the log.
+
 ## DWG drawings
 
 The DXF tab also takes DWG files. Python can't read DWG, so each one is first

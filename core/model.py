@@ -113,6 +113,13 @@ class FlatShape:
     unit_label: str = "mm"                      # the drawing's unit
     unit_guessed: bool = False                  # the file didn't say its unit
     drawn_blank_mm: float = 0.0                 # a profile's blank as drawn, when unfolded
+    # A drawing sheet whose part the reader couldn't tell among its views:
+    # the views to choose from by hand (see ``core.fixes``).
+    views: ViewChoice | None = field(default=None, repr=False, compare=False)
+    # The lines inside the part that close into no outline, as read, and
+    # which of them the user said are drawing marks, not cuts (``core.fixes``).
+    unclosed: list[list[Point]] | None = field(default=None, repr=False, compare=False)
+    not_cut: frozenset[int] = frozenset()
 
     @property
     def size_mm(self) -> tuple[float, float]:
@@ -134,6 +141,19 @@ class FlatShape:
                     for c in (self.outline, *self.holes))
                 + sum(length(c) for c in self.open_cuts))
 
+
+
+@dataclass
+class ViewChoice:
+    """A drawing sheet's views, for choosing the part by hand: the sheet's
+    lines, each view's outline as it lies on the sheet and the part built
+    from it, the one chosen and the shape as it was read (without a part)."""
+
+    sheet: list[list[Point]]
+    outlines: list[list[Point]]
+    options: list[FlatShape]
+    unread: FlatShape | None = None
+    picked: int | None = None
 
 
 @dataclass(frozen=True)

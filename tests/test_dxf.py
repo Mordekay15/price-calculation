@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from core.dxf import read_dxf
+from core.dxf import NOT_READ, read_dxf
 from core.geometry import min_area_angle, point_in_polygon, rotate_translate
 from tests.conftest import dxf_bytes, rect
 
@@ -328,7 +328,7 @@ def test_self_crossing_outline(drawing):
 
 def test_not_a_dxf_file():
     report = read_dxf(b"this is not a dxf file", "x.dxf").part()
-    assert "ei voitu lukea" in " ".join(report.problems)
+    assert report.problems == [NOT_READ]
 
 
 def test_a_file_keeps_its_part_after_forgetting_its_lines(drawing):
@@ -620,8 +620,28 @@ def test_a_sheet_whose_part_cant_be_told_is_never_priced_as_its_frame(drawing):
     _sheet(msp)
     _flat(msp)
     _flat(msp, 240, 100)                # a second part just like it
+    msp.add_circle((150, 250), 3)       # a symbol drawn apart: no part
     report = part_of(doc)
     assert report.outline is None and "näkymää" in report.problems[0]
+    # The part built from each whole view, biggest first, for the user to
+    # choose from on the card; where each lies on the sheet.
+    assert "Valitse osa piirustuksesta" in report.problems[0]
+    assert [(round(o.outline.width_mm), round(o.outline.height_mm), len(o.holes), o.problems)
+            for o in report.view_options] == [(100, 25, 2, []), (100, 25, 2, [])]
+    assert sorted(min(y for _, y in o.on_sheet) for o in report.view_options) == [100, 200]
+
+
+def test_a_view_drawn_in_open_lines_is_not_offered_as_the_part(drawing):
+    # A strip drawn broken: its only closed outlines are its holes.
+    doc, msp = drawing()
+    _sheet(msp)
+    for y in (100, 200):
+        msp.add_line((240, y), (340, y))
+        msp.add_line((240, y + 6), (340, y + 6))
+        msp.add_circle((250, y + 3), 2.25)
+    report = part_of(doc)
+    assert report.outline is None and report.view_options == []
+    assert "Valitse" not in report.problems[0]
 
 
 def test_a_plate_with_holes_is_not_taken_for_a_frame(drawing):
