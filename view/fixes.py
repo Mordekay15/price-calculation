@@ -26,23 +26,34 @@ def view_source(shape: FlatShape, item: Part | None, shape_of) -> FlatShape | No
     return next((s for s in members if s is not None and s.views is not None), None)
 
 
+_NO_PART = "dxf_view_nopart"     # {file id}: the last box drawn held no part
+
+
 def _pick(sid: str, k: int | None) -> None:
     res = files.result(sid.split("|", 1)[0])
+    st.session_state.get(_NO_PART, set()).discard(sid)
     if res is not None:
         fixes.pick_view(res, k)
 
 
-def _picked_on_sheet(sid: str, key: str, traces: dict[int, int]) -> None:
-    """The chart's selection: a click on a view's number or outline."""
-    points = (st.session_state.get(key) or {}).get("selection", {}).get("points", [])
-    hits = [traces[p["curve_number"]] for p in points if p.get("curve_number") in traces]
-    if hits:
-        _pick(sid, hits[0])
+def _boxed_on_sheet(sid: str, key: str) -> None:
+    """The chart's selection: a box dragged on the sheet. What lies inside
+    it becomes the part; a box with no part in it changes nothing."""
+    boxes = (st.session_state.get(key) or {}).get("selection", {}).get("box", [])
+    res = files.result(sid.split("|", 1)[0])
+    if not boxes or res is None:
+        return
+    (x0, x1), (y0, y1) = boxes[-1]["x"], boxes[-1]["y"]
+    missed = st.session_state.setdefault(_NO_PART, set())
+    if fixes.pick_box(res, (x0, y0, x1, y1)) is None:
+        missed.add(sid)
+    else:
+        missed.discard(sid)
 
 
 def _figure(shape: FlatShape):
-    """The sheet with its views numbered; returns the figure and which view
-    each selectable trace is (trace number: view)."""
+    """The sheet with the views the reader found numbered, and the part
+    taken from a box in green."""
     import plotly.graph_objects as go
 
     choice = shape.views
@@ -53,13 +64,11 @@ def _figure(shape: FlatShape):
         ys += [y for _, y in line] + [None]
     fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line={"color": _SHEET, "width": 1},
                              hoverinfo="skip"))
-    traces: dict[int, int] = {}
     for k, ring in enumerate(choice.outlines):
         colour = _PICKED if k == choice.picked else _OPTION
         w, h = choice.options[k].size_mm
         label = f"{k + 1} · {w:.0f} × {h:.0f} mm"
         closed = [*ring, ring[0]]
-        traces[len(fig.data)] = k
         fig.add_trace(go.Scatter(
             x=[x for x, _ in closed], y=[y for _, y in closed], mode="lines+markers",
             fill="toself", fillcolor=_rgba(colour, 0.30 if k == choice.picked else 0.10),
@@ -68,17 +77,25 @@ def _figure(shape: FlatShape):
         # The number, at the outline's top left corner: what is clicked.
         x0, y1 = min(x for x, _ in ring), max(y for _, y in ring)
         at = min(ring, key=lambda p: (p[0] - x0) ** 2 + (p[1] - y1) ** 2)
-        traces[len(fig.data)] = k
         fig.add_trace(go.Scatter(
             x=[at[0]], y=[at[1]], mode="markers+text", text=[str(k + 1)],
             textfont={"color": "white", "size": 13},
             marker={"size": 24, "color": colour, "line": {"color": "white", "width": 1.5}},
             hovertext=[label], hoverinfo="text"))
+    if choice.boxed:                    # the part taken from a box: its outer edge
+        ring = [*choice.boxed, choice.boxed[0]]
+        fig.add_trace(go.Scatter(
+            x=[x for x, _ in ring], y=[y for _, y in ring], mode="lines", fill="toself",
+            fillcolor=_rgba(_PICKED, 0.30), line={"color": _PICKED, "width": 3},
+            hoverinfo="skip"))
+    # A box is dragged with the mouse, as when a screenshot's area is taken.
     fig.update_layout(
         height=_HEIGHT_PX, margin={"l": 0, "r": 0, "t": 0, "b": 0}, showlegend=False,
-        dragmode="pan", plot_bgcolor="#f8fafc", paper_bgcolor="rgba(0,0,0,0)",
+        dragmode="select" if choice.can_box else "pan",
+        newselection={"line": {"color": _PICKED, "width": 2, "dash": "dash"}},
+        plot_bgcolor="#f8fafc", paper_bgcolor="rgba(0,0,0,0)",
         xaxis={"visible": False}, yaxis={"visible": False, "scaleanchor": "x"})
-    return fig, traces
+    return fig
 
 
 def _rgba(colour: str, alpha: float) -> str:
@@ -87,43 +104,62 @@ def _rgba(colour: str, alpha: float) -> str:
 
 
 def render_view_picker(shape: FlatShape) -> None:
-    """The drawing sheet with its views numbered: the user clicks a number
-    (or presses its button) and that view becomes the part. Open while nothing is chosen, folded after."""
+    """The drawing sheet, to take the part from: the user drags a box round
+    the part, as when a screenshot's area is taken, and what lies inside it
+    becomes the part; or presses the button of one of the views the reader
+    found (numbered on the sheet). Open while nothing is chosen, folded
+    after."""
     if is_headless():
         return
     choice, sid = shape.views, shape.origin
-    if choice.picked is None:
-        st.warning(f"**Osaa ei tunnistettu automaattisesti.** Piirustuksessa on "
-                   f"{len(choice.options)} mahdollista näkymää. Valitse niistä osan aihio: "
-                   "napsauta sen numeroa kuvassa tai paina näkymän painiketta kuvan alla. "
-                   "Kuvaa voi suurentaa hiiren rullalla ja siirtää vetämällä.")
+    w, h = shape.size_mm
+    if not choice.chosen:
+        how = ("**Vedä hiirellä laatikko osan ympärille kuvassa** (kuten kuvakaappausta "
+               "rajatessa): laatikon sisään jäävät viivat luetaan osaksi."
+               if choice.can_box else "")
+        also = ((" Voit myös" if how else "Voit") + " valita kuvan alta jonkin sovelluksen "
+                "löytämistä näkymistä (numeroitu kuvassa)." if choice.options else "")
+        st.warning("**Osaa ei tunnistettu piirustuksesta automaattisesti.** " + how + also)
         box = st.container()
+    elif choice.box is not None:
+        box = st.expander(f"Osa rajattu piirustuksesta itse ({w:.0f} × {h:.0f} mm). Vaihda",
+                          expanded=False)
     else:
-        w, h = choice.options[choice.picked].size_mm
         box = st.expander(f"Osa valittu piirustuksesta itse: näkymä {choice.picked + 1} "
                           f"({w:.0f} × {h:.0f} mm). Vaihda", expanded=False)
     with box:
         try:
-            fig, traces = _figure(shape)
+            fig = _figure(shape)
         except ImportError:
             st.caption("Piirustuksen näyttämiseen tarvitaan plotly-paketti; valitse "
                        "näkymä painikkeista.")
         else:
-            key = f"dxf_view_fig_{sid}"
-            st.plotly_chart(fig, key=key, on_select=lambda: _picked_on_sheet(sid, key, traces),
-                            selection_mode="points",
-                            config={"displaylogo": False, "scrollZoom": True})
+            # Keyed by what is chosen: a new chart, without the old box on it.
+            key = f"dxf_view_fig_{sid}_{choice.key}"
+            if choice.can_box:
+                st.plotly_chart(fig, key=key, on_select=lambda: _boxed_on_sheet(sid, key),
+                                selection_mode="box",
+                                config={"displaylogo": False, "scrollZoom": True,
+                                        "modeBarButtonsToRemove": ["lasso2d"]})
+            else:
+                st.plotly_chart(fig, key=key, config={"displaylogo": False, "scrollZoom": True})
+        if sid in st.session_state.get(_NO_PART, ()):
+            st.error("Laatikon sisällä ei ollut suljettua muotoa. Vedä laatikko niin, että "
+                     "koko osa jää sen sisään.")
         cols = st.columns(4)
         for k, option in enumerate(choice.options):
-            w, h = option.size_mm
-            cols[k % 4].button(f"{k + 1} · {w:.0f} × {h:.0f} mm", key=f"dxf_view_pick_{sid}_{k}",
+            ow, oh = option.size_mm
+            cols[k % 4].button(f"{k + 1} · {ow:.0f} × {oh:.0f} mm",
+                               key=f"dxf_view_pick_{sid}_{k}",
                                type="primary" if k == choice.picked else "secondary",
                                on_click=_pick, args=(sid, k), width="stretch")
-        if choice.picked is not None:
+        if choice.chosen:
             st.button("Poista valinta", key=f"dxf_view_pick_{sid}_none", on_click=_pick,
                       args=(sid, None))
-        st.caption("Harmaalla piirustuksen muut viivat. Jos osaa ei ole näkymien joukossa, "
-                   "lataa osan aukikeritty DXF.")
+        st.caption("Harmaalla piirustuksen viivat, vihreällä valittu osa. Rajatun osan "
+                   "ulkoreuna on sen ääriviiva, suljetut muodot sen sisällä reikiä, ja muut "
+                   "viivat piirretään mutta niitä ei leikata. Kuvaa voi suurentaa hiiren "
+                   "rullalla.")
 
 
 def not_cut_key(sid: str) -> str:

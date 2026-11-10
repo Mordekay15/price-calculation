@@ -184,6 +184,10 @@ class DxfReport:
     # lies on the sheet (``dropped`` is the sheet's lines then).
     view_options: list["DxfReport"] = field(default_factory=list)
     on_sheet: list[Point] = field(default_factory=list)
+    # … and that sheet's frame and number of views: the part can then also
+    # be taken from a box drawn on the sheet (``DxfFile.part_in_box``).
+    sheet_frame: Contour | None = field(default=None, repr=False)
+    view_count: int = 0
 
     @property
     def dropped_count(self) -> int:
@@ -236,9 +240,42 @@ class DxfFile:
     def forget_lines(self) -> None:
         """Build the part from the default layers, then drop the drawing's
         lines: only the part is used after that (a big RFQ's drawings are
-        millions of points). ``part`` with other layers can't be built after."""
-        self.part()
+        millions of points). ``part`` with other layers can't be built after.
+        The lines of a drawing sheet whose part couldn't be told are kept
+        (up to ``_BOX_KEEP_POINTS`` points), for ``part_in_box``."""
+        report = self.part()
+        if report.sheet_frame is not None:
+            if sum(len(p._xy) for p in self.pieces) // 2 <= _BOX_KEEP_POINTS:
+                return
+            if not report.view_options:     # nothing left to choose from
+                report.problems[-1] = views_problem(report.view_count, False)
         self.pieces = []
+
+    @property
+    def can_box(self) -> bool:
+        """Can the part be taken from a box drawn on the sheet?"""
+        return bool(self.pieces) and self._default is not None \
+            and self._default.sheet_frame is not None
+
+    def part_in_box(self, box: tuple[float, float, float, float]) -> DxfReport | None:
+        """The part made of what lies wholly inside ``box`` (min x, min y,
+        max x, max y, on the sheet), for a sheet whose part the reader
+        couldn't tell: the outer edge round every line in the box is the
+        outline (so a view whose outline other lines run into, and that
+        closes into no single ring, is still a part), the closed shapes
+        inside it are its holes, every other line is drawn, not cut. None
+        when the lines in the box enclose nothing."""
+        if not self.can_box:
+            return None
+        chosen = set(self.suggested_layers())
+        inside = [p for p in self.pieces if _box_in(bbox(p.points), box, 0.0)]
+        cut = _distinct([p for p in inside if p.layer in chosen and p.solid])
+        report = self._part_of_lines(self._default.sheet_frame,
+                                     [(p.points, p.closed) for p in cut],
+                                     [p for p in inside if p.layer not in chosen or not p.solid])
+        if report is not None:
+            report.dropped_more = max(0, len(self.pieces) - len(inside))
+        return report
 
     def available_layers(self) -> list[str]:
         """Layers that carry geometry, sorted."""
@@ -324,7 +361,8 @@ class DxfFile:
             view = _pick_view(views, self.bend_notes, last=True)
             if view is None:
                 report.view_options = self._view_options(main, views, contours, reference)
-                report.problems.append(views_problem(len(views), bool(report.view_options)))
+                report.sheet_frame, report.view_count = main, len(views)
+                report.problems.append(views_problem(len(views), True))
                 report.dropped = [c.points for c in contours]
                 _trim_dropped(report)
                 return report
@@ -333,30 +371,73 @@ class DxfFile:
     def _view_options(self, frame: Contour, views: list[_View], contours: list[Contour],
                       reference: list[_Piece]) -> list[DxfReport]:
         """The part built from each of a sheet's biggest views, biggest
-        first, for the user to choose from. A view that can't be the part
-        is left out: too small (a symbol, a hole drawn apart), or with no
-        outline of its own (see ``_is_whole_view``)."""
-        def size(v: _View) -> float:
-            return v.outline.width_mm * v.outline.height_mm
-
+        first, for the user to choose from. A view is everything its lines
+        enclose, taken by its outer edge (``_part_of_lines``): its outline
+        often closes into no single ring, because other lines run into it,
+        and its biggest ring is then only one of its holes. The title
+        block's cells (no view in them) and views too small to be a part
+        (a symbol) are left out."""
+        box = bbox(frame.points)
+        lines = [c for c in contours if c is not frame]
+        marks = [representative_point(v.outline.points) for v in views]
+        # The "frame" is the sheet's frame when the views are drawn in it;
+        # with the sheet's own frame on a layer that isn't cut, it is only
+        # the biggest view.
+        if sum(_box_in(bbox(c.points), box) for c in lines) >= 0.9 * len(lines):
+            lines = [c for c in lines if _box_in(bbox(c.points), box)
+                     and bbox_wh(c.points)[0] * bbox_wh(c.points)[1] < 0.5 * frame.area_mm2]
+        else:
+            lines.append(frame)
+            marks.append(representative_point(frame.points))
+        found = []
+        for edge in _outer_edges([(c.points, c.closed) for c in lines]):
+            w, h = bbox_wh(edge)
+            if min(w, h) < _VIEW_OPTION_MIN_MM or not any(point_in_polygon(m, edge)
+                                                         for m in marks):
+                continue
+            found.append((w * h, edge))
+        found.sort(key=lambda f: -f[0])
         options = []
-        whole = sorted(filter(_is_whole_view, views), key=size, reverse=True)
-        # A hole or a symbol drawn apart is a "view" too: far smaller than the part.
-        whole = [v for v in whole if size(v) >= _VIEW_OPTION_OF_BIGGEST * size(whole[0])]
-        for v in whole[:_VIEW_OPTIONS]:
-            on_sheet = list(v.outline.points)
-            # Only what is drawn in the view, as its own copies: building a
-            # part turns and scales its outlines.
-            box = bbox(on_sheet)
-            copies = {id(c): Contour(list(c.points), c.closed, c.area_mm2, c.depth)
-                      for c in contours if _box_in(bbox(c.points), box)}
-            option = DxfReport(name=self.name, unit_label=self.unit_label)
-            self._built(option, frame, copies[id(v.outline)], None,
-                        list(copies.values()), reference)
-            option.on_sheet = on_sheet
-            option.dropped, option.dropped_more = [], len(contours) - len(copies)
-            options.append(option)
+        for size, edge in found[:_VIEW_OPTIONS]:
+            if size < _VIEW_OPTION_OF_BIGGEST * found[0][0]:
+                break
+            span = bbox(edge)
+            inside = [(c.points, c.closed) for c in lines
+                      if _box_in(bbox(c.points), span, _JOIN_TOL_MM)]
+            option = self._part_of_lines(frame, inside, reference)
+            if option is not None:
+                option.dropped_more = len(contours) - len(inside)
+                options.append(option)
         return options
+
+    def _part_of_lines(self, frame: Contour, cut: list[tuple[list[Point], bool]],
+                       reference: list[_Piece]) -> DxfReport | None:
+        """The part made of the cut lines ``cut`` (points, closed) on the
+        sheet whose frame is ``frame``: the outer edge round everything they
+        enclose is the outline, the closed shapes inside it are its holes,
+        every other line (and ``reference``) is drawn, not cut. None when
+        they enclose nothing."""
+        edge = _outer_edge(cut)
+        if edge is None:
+            return None
+        outline = Contour(edge, True, area(edge))
+        rings = [Contour(list(pts), True) for pts, closed in cut if closed and len(pts) >= 3]
+        opened = [pts for pts, closed in cut if not closed]
+        rings += [c for c in _chain_open_segments(opened, _JOIN_TOL_MM)
+                  if c.closed and len(c.points) >= 3]
+        # A ring on the outer edge is part of it (the plate itself, a corner
+        # of it that other lines close off), not a hole.
+        holes = [c for c in rings
+                 if not any(_near_ring(q, edge, _JOIN_TOL_MM) for q in _ends(c))]
+        for c in holes:
+            c.area_mm2 = area(c.points)
+        contours = [outline, *holes]
+        _mark_depths(contours)
+        report = DxfReport(name=self.name, unit_label=self.unit_label)
+        drawn = [_Piece(pts, False, "0", True) for pts in opened]
+        self._built(report, frame, outline, None, contours, [*reference, *drawn])
+        report.on_sheet, report.dropped = edge, []
+        return report
 
     def _built(self, report: DxfReport, main: Contour, view: Contour | None,
                section: Contour | None, contours: list[Contour],
@@ -449,30 +530,60 @@ def _flat_view(frame: Contour, contours: list[Contour], notes: list[Point]) -> C
 NOT_READ = ("Tiedostoa ei voitu avata: se on vioittunut tai tallennettu muodossa, jota "
             "sovellus ei lue.")
 
+_BOX_KEEP_POINTS = 400_000   # a sheet's lines kept for a box drawn on it, at most
 _VIEW_OPTIONS = 12           # views offered to choose the part from, at most
 _VIEW_OPTION_MIN_MM = 3.0    # a view narrower than this is not a part
 
 
 _VIEW_OPTION_OF_BIGGEST = 0.05   # … nor a view this small a share of the biggest one
-_VIEW_OPTION_SHARE = 0.5     # … and neither is an outline this small a share of its view
 
 
-def _is_whole_view(v: _View) -> bool:
-    """Is the view's outline the view itself, so that it can be the part? A
-    view drawn broken (a long strip shortened with break lines) or in open
-    lines has only its holes and marks as closed outlines."""
-    w, h = v.outline.width_mm, v.outline.height_mm
-    if min(w, h) < _VIEW_OPTION_MIN_MM:
-        return False
-    x0, y0, x1, y1 = bbox([p for c in v.cut for p in c.points])
-    return w >= _VIEW_OPTION_SHARE * (x1 - x0) and h >= _VIEW_OPTION_SHARE * (y1 - y0)
+def _outer_edges(lines: list[tuple[list[Point], bool]]) -> list[list[Point]]:
+    """The edge round each separate thing the lines enclose, as rings: the
+    lines are cut where they meet or cross and the faces they close are
+    joined. Ends within the join tolerance are one point. None when they
+    enclose nothing (or shapely is missing)."""
+    try:
+        from shapely.geometry import LineString
+        from shapely.ops import polygonize, unary_union
+    except ImportError:
+        return []
+    nodes: dict[tuple[int, int], Point] = {}
+
+    def node(p: Point) -> Point:
+        i, j = round(p[0] / _JOIN_TOL_MM), round(p[1] / _JOIN_TOL_MM)
+        for key in ((i + a, j + b) for a in (0, -1, 1) for b in (0, -1, 1)):
+            if key in nodes and math.dist(nodes[key], p) <= _JOIN_TOL_MM:
+                return nodes[key]
+        nodes[i, j] = p
+        return p
+
+    strings = []
+    for points, closed in lines:
+        pts = [node(points[0]), *points[1:-1], node(points[-1])] if len(points) > 1 else []
+        if closed and pts:
+            pts.append(pts[0])
+        if len(pts) >= 2:
+            strings.append(LineString(pts))
+    if not strings:
+        return []
+    faces = unary_union(list(polygonize(unary_union(strings))))
+    pieces = [] if faces.is_empty else getattr(faces, "geoms", [faces])
+    return [[(x, y) for x, y in g.exterior.coords[:-1]] for g in pieces
+            if g.geom_type == "Polygon"]
+
+
+def _outer_edge(lines: list[tuple[list[Point], bool]]) -> list[Point] | None:
+    """The outer edge of the biggest thing the lines enclose (see
+    ``_outer_edges``), None when they enclose nothing."""
+    return max(_outer_edges(lines), key=area, default=None)
 
 
 def views_problem(n: int, can_choose: bool) -> str:
     """Why a sheet of ``n`` views has no part, and what to do about it."""
     return (f"Piirustuksessa on {n} näkymää, eikä osan aihiota voitu tunnistaa niistä "
             "automaattisesti. "
-            + ("Valitse osa piirustuksesta tai lataa osan aukikeritty DXF." if can_choose
+            + ("Rajaa osa piirustuksesta tai lataa osan aukikeritty DXF." if can_choose
                else "Lataa osan aukikeritty DXF."))
 
 

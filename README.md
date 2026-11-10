@@ -284,10 +284,14 @@ only refusing it (`core/fixes.py`, `view/fixes.py`):
 
 - **Choosing the part.** A drawing sheet with several views, none of which
   stands out as the flat pattern (no bend note or bend lines): the card shows
-  the sheet with each possible view numbered. Click a number (or its button)
-  and that view is read as the part, with its holes, exactly as if the reader
-  had picked it. "Poista valinta" takes the choice back. Only whole, closed
-  outlines are offered; a view drawn broken or in open lines is not.
+  the sheet. Drag a box round the part, as when taking a screenshot of an
+  area, and what lies inside the box is read as the part: the outer edge
+  round its lines is the outline (also when other lines run into the outline,
+  so that it closes into no single ring), the closed shapes inside are holes,
+  the other lines are drawn but not cut. The views the reader found are
+  numbered on the sheet, each with a button under it, and are read the same
+  way. "Poista valinta" takes the choice back. A sheet's lines are kept for
+  this (up to 400 000 points); needs `shapely`.
 - **Lines that are not cut.** Lines inside the part that close into no outline
   stop the pricing (a hole with a gap?). They are numbered on a picture of the
   part; mark the ones that are only drawing marks (a centre line, an edge

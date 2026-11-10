@@ -462,7 +462,7 @@ def _render_part_config(
             return None
         with input_col:
             size = _checked_size(fid, shape, hdr[1], _unit_reason(shape, item, doc_ids),
-                                 choose=sheet is not None and sheet.views.picked is None)
+                                 choose=sheet is not None and not sheet.views.chosen)
             fixes.render_not_cut(shape)
             fixes.render_outer_edge(shape)
         if not is_headless():
@@ -475,7 +475,7 @@ def _render_part_config(
         if size is None:
             _row(fid, idx, shape,
                  f"{_OPEN} valitse osa piirustuksesta" if sheet is not None
-                 and sheet.views.picked is None
+                 and not sheet.views.chosen
                  else f"{_PROBLEM} ei hinnoiteltavissa" if shape.problems
                  else f"{_OPEN} vahvista mittayksikkö")
             return None
@@ -505,7 +505,7 @@ def _render_part_config(
                    item.qty.value, item.work, name=shape.name, shape=shape, angles=angles,
                    # What was fixed by hand is part of what is nested.
                    source=item.chosen
-                   + (f"#{shape.views.picked}" if shape.views is not None else "")
+                   + (f"#{shape.views.key}" if shape.views is not None else "")
                    + ("#edge" if shape.drawn_rings is not None else ""))
 
 
