@@ -5,6 +5,7 @@ parts and the sheet sizes) and priced again when only the prices change."""
 
 import hashlib
 import json
+import threading
 from dataclasses import dataclass, field, replace
 
 from core.model import FlatShape, Product
@@ -20,6 +21,7 @@ from core.sheet_cost import (
 )
 from core.sparrow import (
     NESTING_ANGLES,
+    PARALLEL_RUNS,
     find_executable,
     part_from_shape,
     run_sparrow,
@@ -269,18 +271,36 @@ def _nester(lookup: dict, settings: _Settings, exe, *, remembered_only: bool = F
         return hashlib.sha1(json.dumps([instance, separation, settings.time_limit],
                                        sort_keys=True).encode()).hexdigest()
 
+    # Sheet sizes are nested at once (``PARALLEL_RUNS``), and sizes with the
+    # same short side often ask the same question (all the parts on the same
+    # strip): a question already running is waited for, not run twice.
+    lock = threading.Lock()
+    running: dict[str, threading.Event] = {}
+
     def run_fn(instance, *, separation):
         key = key_of(instance, separation)
-        if key in runs:
-            return runs[key]
-        progress.run_started()
-        result = run_sparrow(instance, executable=exe, time_limit_sec=settings.time_limit,
-                             min_item_separation=separation)
-        if result.ok:                   # a failed run (say a timeout) is tried again
-            runs[key] = result
-            while len(runs) > _RUNS_MAX:
-                runs.pop(next(iter(runs)))
-        return result
+        while True:
+            with lock:
+                if key in runs:
+                    return runs[key]
+                other = running.get(key)
+                if other is None:
+                    running[key] = threading.Event()
+                    break
+            other.wait()                # then remembered, or failed: run it here
+        try:
+            progress.run_started()
+            result = run_sparrow(instance, executable=exe, time_limit_sec=settings.time_limit,
+                                 min_item_separation=separation)
+            if result.ok:               # a failed run (say a timeout) is tried again
+                with lock:
+                    runs[key] = result
+                    while len(runs) > _RUNS_MAX:
+                        runs.pop(next(iter(runs)))
+            return result
+        finally:
+            with lock:
+                running.pop(key).set()
 
     def remembered(instance, *, separation):
         key = key_of(instance, separation)
@@ -299,12 +319,13 @@ def _nester(lookup: dict, settings: _Settings, exe, *, remembered_only: bool = F
                       rankavali_mm=settings.sheet.rankavali_mm)
         if remembered_only:
             try:
-                result = sparrow_options(*args, run_fn=remembered, renest_fn=run_fn, **kwargs)
+                result = sparrow_options(*args, run_fn=remembered, renest_fn=run_fn,
+                                         parallel=PARALLEL_RUNS, **kwargs)
             except _NotRemembered:
                 return None
         else:
             result = run_with_progress(progress, _group_label(key, prods), sparrow_options,
-                                       *args, run_fn=run_fn, **kwargs)
+                                       *args, run_fn=run_fn, parallel=PARALLEL_RUNS, **kwargs)
         return {"result": result, "parts": parts, "areas": areas,
                 "nesting": settings.nesting(),
                 "pricing": _pricing(lookup, key, settings.margin_pct)}

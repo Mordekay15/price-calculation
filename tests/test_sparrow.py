@@ -285,3 +285,66 @@ def test_a_ring_that_crosses_itself_is_made_simple_for_sparrow():
     outer, (hole,) = shape["data"]["outer"], shape["data"]["inner"]
     assert first_crossing([tuple(p) for p in outer]) is None
     assert first_crossing([tuple(p) for p in hole]) is None
+
+
+def _summary(result):
+    return [(o.sw, o.sh, o.sheets_needed, round(o.total_eur, 6), o.programs, len(o.mix))
+            for o in result.options]
+
+
+def test_sizes_nested_at_once_give_the_same_options_in_the_same_order():
+    import threading
+    import time
+
+    sizes = ["1000x2000", "1250x2500", "1500x3000", "1000x3000", "1250x3000"]
+    lookup = {("2", f"S235 | {s}"): 900.0 + i for i, s in enumerate(sizes)}
+    parts = [square(size=230, quantity=17, name="a"), square(size=410, quantity=9, name="b")]
+    at_once, most = [0], [0]
+    lock = threading.Lock()
+
+    def slow_solver(instance, *, separation):
+        with lock:
+            at_once[0] += 1
+            most[0] = max(most[0], at_once[0])
+        time.sleep(0.002)               # long enough for the sizes to overlap
+        try:
+            return fake_solver(instance, separation=separation)
+        finally:
+            with lock:
+                at_once[0] -= 1
+
+    one = sparrow_options(lookup, "S235", "2", 2.0, parts, run_fn=fake_solver)
+    events = []
+    three = sparrow_options(lookup, "S235", "2", 2.0, parts, run_fn=slow_solver, parallel=3,
+                            on_progress=lambda kind, **kw: events.append((kind, kw.get("index"))))
+    assert _summary(three) == _summary(one)
+    assert most[0] > 1
+    assert sorted(i for k, i in events if k == "size_done") == list(range(len(sizes)))
+
+
+def test_an_error_in_one_size_stops_the_parallel_nesting():
+    sizes = ["1000x2000", "1250x2500", "1500x3000"]
+    lookup = {("2", f"S235 | {s}"): 900.0 for s in sizes}
+
+    def failing(instance, *, separation):
+        raise RuntimeError("no answer")
+
+    with pytest.raises(RuntimeError):
+        sparrow_options(lookup, "S235", "2", 2.0, [square(quantity=4)], run_fn=failing,
+                        parallel=2)
+
+
+def test_run_sparrow_passes_the_thread_count(monkeypatch, tmp_path):
+    import core.sparrow as sp
+
+    seen = {}
+
+    def fake_run(args, **kw):
+        seen["args"] = args
+        raise OSError("not started")
+
+    monkeypatch.setattr(sp.subprocess, "run", fake_run)
+    run_sparrow({"items": []}, executable="sparrow", threads=2)
+    assert seen["args"][-2:] == ["--workers", "2"]
+    run_sparrow({"items": []}, executable="sparrow", threads=None)
+    assert "--workers" not in seen["args"]
