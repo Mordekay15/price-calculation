@@ -184,10 +184,6 @@ class DxfReport:
     # lies on the sheet (``dropped`` is the sheet's lines then).
     view_options: list["DxfReport"] = field(default_factory=list)
     on_sheet: list[Point] = field(default_factory=list)
-    # … and that sheet's frame and number of views: the part can then also
-    # be taken from a box drawn on the sheet (``DxfFile.part_in_box``).
-    sheet_frame: Contour | None = field(default=None, repr=False)
-    view_count: int = 0
 
     @property
     def dropped_count(self) -> int:
@@ -240,42 +236,9 @@ class DxfFile:
     def forget_lines(self) -> None:
         """Build the part from the default layers, then drop the drawing's
         lines: only the part is used after that (a big RFQ's drawings are
-        millions of points). ``part`` with other layers can't be built after.
-        The lines of a drawing sheet whose part couldn't be told are kept
-        (up to ``_BOX_KEEP_POINTS`` points), for ``part_in_box``."""
-        report = self.part()
-        if report.sheet_frame is not None:
-            if sum(len(p._xy) for p in self.pieces) // 2 <= _BOX_KEEP_POINTS:
-                return
-            if not report.view_options:     # nothing left to choose from
-                report.problems[-1] = views_problem(report.view_count, False)
+        millions of points). ``part`` with other layers can't be built after."""
+        self.part()
         self.pieces = []
-
-    @property
-    def can_box(self) -> bool:
-        """Can the part be taken from a box drawn on the sheet?"""
-        return bool(self.pieces) and self._default is not None \
-            and self._default.sheet_frame is not None
-
-    def part_in_box(self, box: tuple[float, float, float, float]) -> DxfReport | None:
-        """The part made of what lies wholly inside ``box`` (min x, min y,
-        max x, max y, on the sheet), for a sheet whose part the reader
-        couldn't tell: the outer edge round every line in the box is the
-        outline (so a view whose outline other lines run into, and that
-        closes into no single ring, is still a part), the closed shapes
-        inside it are its holes, every other line is drawn, not cut. None
-        when the lines in the box enclose nothing."""
-        if not self.can_box:
-            return None
-        chosen = set(self.suggested_layers())
-        inside = [p for p in self.pieces if _box_in(bbox(p.points), box, 0.0)]
-        cut = _distinct([p for p in inside if p.layer in chosen and p.solid])
-        report = self._part_of_lines(self._default.sheet_frame,
-                                     [(p.points, p.closed) for p in cut],
-                                     [p for p in inside if p.layer not in chosen or not p.solid])
-        if report is not None:
-            report.dropped_more = max(0, len(self.pieces) - len(inside))
-        return report
 
     def available_layers(self) -> list[str]:
         """Layers that carry geometry, sorted."""
@@ -361,8 +324,7 @@ class DxfFile:
             view = _pick_view(views, self.bend_notes, last=True)
             if view is None:
                 report.view_options = self._view_options(main, views, contours, reference)
-                report.sheet_frame, report.view_count = main, len(views)
-                report.problems.append(views_problem(len(views), True))
+                report.problems.append(views_problem(len(views), bool(report.view_options)))
                 report.dropped = [c.points for c in contours]
                 _trim_dropped(report)
                 return report
@@ -530,7 +492,6 @@ def _flat_view(frame: Contour, contours: list[Contour], notes: list[Point]) -> C
 NOT_READ = ("Tiedostoa ei voitu avata: se on vioittunut tai tallennettu muodossa, jota "
             "sovellus ei lue.")
 
-_BOX_KEEP_POINTS = 400_000   # a sheet's lines kept for a box drawn on it, at most
 _VIEW_OPTIONS = 12           # views offered to choose the part from, at most
 _VIEW_OPTION_MIN_MM = 3.0    # a view narrower than this is not a part
 
@@ -583,7 +544,7 @@ def views_problem(n: int, can_choose: bool) -> str:
     """Why a sheet of ``n`` views has no part, and what to do about it."""
     return (f"Piirustuksessa on {n} näkymää, eikä osan aihiota voitu tunnistaa niistä "
             "automaattisesti. "
-            + ("Rajaa osa piirustuksesta tai lataa osan aukikeritty DXF." if can_choose
+            + ("Valitse osa piirustuksesta tai lataa osan aukikeritty DXF." if can_choose
                else "Lataa osan aukikeritty DXF."))
 
 

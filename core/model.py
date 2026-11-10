@@ -151,29 +151,13 @@ class FlatShape:
 class ViewChoice:
     """A drawing sheet's views, for choosing the part by hand: the sheet's
     lines, each view's outline as it lies on the sheet and the part built
-    from it, the one chosen and the shape as it was read (without a part).
-    The part can also be whatever lies in a box drawn on the sheet."""
+    from it, the one chosen and the shape as it was read (without a part)."""
 
     sheet: list[list[Point]]
     outlines: list[list[Point]]
     options: list[FlatShape]
     unread: FlatShape | None = None
     picked: int | None = None
-    # Or a box drawn on the sheet (min x, min y, max x, max y): the part is
-    # what lies inside it, ``boxed`` its outer edge on the sheet.
-    can_box: bool = False
-    box: tuple[float, float, float, float] | None = None
-    boxed: list[Point] | None = None
-
-    @property
-    def chosen(self) -> bool:
-        return self.picked is not None or self.box is not None
-
-    @property
-    def key(self) -> str:
-        """What is chosen, for the nesting's cache key."""
-        return (str(self.picked) if self.picked is not None
-                else "box:" + ",".join(f"{v:.1f}" for v in self.box) if self.box else "")
 
 
 @dataclass(frozen=True)

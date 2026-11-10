@@ -102,21 +102,3 @@ def test_a_part_that_doesnt_cross_itself_is_not_offered_its_outer_edge(drawing):
     shape = read_dxf_file(dxf_bytes(doc), "f1", "plate.dxf").shapes[0]
     assert not can_use_outer_edge(shape) and not use_outer_edge(shape, False)
     assert shape.drawn_rings is None
-
-
-def test_what_lies_in_a_box_drawn_on_the_sheet_becomes_the_files_part(drawing):
-    from core.fixes import pick_box
-
-    result = _two_views(drawing)
-    unread = result.shapes[0]
-    assert unread.views.can_box
-    shape = pick_box(result, (350, 235, 230, 190))           # dragged from any corner
-    assert result.shapes == [shape] and shape.views.chosen and shape.views.picked is None
-    assert shape.problems == [] and len(shape.holes) == 2
-    assert tuple(round(v) for v in shape.size_mm) == (100, 25)
-    assert len(shape.views.boxed) == 4 and shape.views.key.startswith("box:")
-
-    assert pick_box(result, (0, 0, 5, 5)) is None            # nothing in it: as it was
-    assert result.shapes == [shape]
-    assert pick_view(result, 0).views.box is None            # a view instead
-    assert pick_view(result, None) is unread and not unread.views.chosen

@@ -2,9 +2,8 @@
 own, pure (no Streamlit):
 
 - **Choosing the part** on a drawing sheet whose views the reader couldn't
-  tell apart (``FlatShape.views``): ``pick_box`` makes what lies inside a
-  box drawn on the sheet the file's shape, ``pick_view`` one of the views
-  the reader found, exactly as if the reader had picked it.
+  tell apart (``FlatShape.views``): ``pick_view`` makes the chosen view's
+  part the file's shape, exactly as if the reader had picked it.
 - **Marking lines as not cut** when lines inside the part close into no
   outline (``FlatShape.unclosed``): ``set_not_cut`` moves them to the part's
   markings (drawn, never cut) and takes the problem off once none is left.
@@ -41,33 +40,8 @@ def pick_view(result: ReadResult, k: int | None) -> FlatShape | None:
     choice = result.shapes[at].views
     if k is not None and not 0 <= k < len(choice.options):
         k = None
-    choice.picked, choice.box, choice.boxed = k, None, None
+    choice.picked = k
     shape = choice.unread if k is None else replace(choice.options[k], views=choice)
-    result.shapes[at] = shape
-    result.is_drawing = looks_like_drawing(shape)
-    return shape
-
-
-def pick_box(result: ReadResult, box: tuple[float, float, float, float]) -> FlatShape | None:
-    """Make what lies inside ``box`` on the file's drawing sheet its part
-    (see ``DxfFile.part_in_box``). Returns the file's shape after, None
-    (and nothing changed) when the box holds no part."""
-    from core.readers import shape_from_report
-
-    at = next((i for i, s in enumerate(result.shapes) if s.views is not None), None)
-    drawing = result.record[1] if isinstance(result.record, tuple) else result.record
-    if at is None or not hasattr(drawing, "part_in_box"):
-        return None
-    x0, x1 = sorted((box[0], box[2]))
-    y0, y1 = sorted((box[1], box[3]))
-    report = drawing.part_in_box((x0, y0, x1, y1))
-    if report is None or report.outline is None:
-        return None
-    choice = result.shapes[at].views
-    unread = choice.unread
-    choice.picked, choice.box, choice.boxed = None, (x0, y0, x1, y1), report.on_sheet
-    shape = shape_from_report(report, unread.origin, unread.layers_used, unread.unit_guessed)
-    shape.views = choice
     result.shapes[at] = shape
     result.is_drawing = looks_like_drawing(shape)
     return shape

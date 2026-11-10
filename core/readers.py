@@ -57,7 +57,7 @@ def shape_from_report(report: DxfReport, origin: str, layers: list[str] | None =
     if report.outline is None:
         shape = FlatShape(origin, [], problems=list(report.problems) or ["ei ääriviivaa"],
                           **about)
-        if report.sheet_frame is not None:
+        if report.view_options:
             shape.views = ViewChoice(
                 report.dropped, [o.on_sheet for o in report.view_options],
                 [shape_from_report(o, origin, layers, unit_guessed)
@@ -85,10 +85,6 @@ def _from_dxf_file(f: DxfFile, file_id: str, name: str, record=None) -> ReadResu
     layers = f.suggested_layers() if f.pieces else None
     f.forget_lines()                    # the part is all that's used after (memory)
     shape = shape_from_report(report, file_id, layers, f.unit_guessed)
-    if shape.views is not None:
-        shape.views.can_box = f.can_box
-        if not (f.can_box or shape.views.options):
-            shape.views = None              # nothing to choose from
     text = "\n".join(f.texts)
     own = base_key(name)
     facts = [Fact("part_number", own, file_id, name)]
