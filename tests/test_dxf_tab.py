@@ -806,3 +806,40 @@ def test_the_part_is_chosen_on_a_sheet_and_stray_lines_are_marked_on_the_card():
 
     at.button(key="dxf_view_pick_s_none").click().run()      # the choice taken back
     assert at.session_state["priced"] == [("p", 300, "p")]
+
+
+def test_the_outer_edge_of_a_self_crossing_outline_is_used_from_the_card():
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        from types import SimpleNamespace
+
+        import ezdxf
+        import streamlit as st
+
+        from tests.conftest import dxf_bytes
+        from view.dxf_files import cards, ingest
+        from view.dxf_tab import _render_part_cards
+
+        if not cards():
+            doc = ezdxf.new(setup=True)
+            doc.header["$INSUNITS"] = 4
+            doc.modelspace().add_lwpolyline(
+                [(0, 0), (300, 0), (300, 200), (0, 200), (0, 150), (-10, 160), (10, 170)],
+                close=True)
+            data = dxf_bytes(doc)
+            ingest([SimpleNamespace(file_id="p", name="plate.dxf", getvalue=lambda: data)])
+        products = _render_part_cards(list(cards().items()), ["S235"],
+                                      {("2", "S235 | 1000x2000"): 900.0}, False)
+        st.session_state["priced"] = [(p.id, round(p.width), p.source) for p in products]
+
+    at = AppTest.from_function(page, default_timeout=30).run()
+    assert not at.exception and at.session_state["priced"] == []
+    assert any("leikkaa itseään" in e.value for e in at.error)
+
+    at.button(key="dxf_view_edge_on_p").click().run()
+    assert not at.exception and not at.error
+    assert at.session_state["priced"] == [("p", 300, "p#edge")]
+
+    at.button(key="dxf_view_edge_off_p").click().run()       # taken back
+    assert at.session_state["priced"] == [] and at.error

@@ -63,3 +63,42 @@ def test_lines_marked_as_not_cut_are_drawn_not_cut_and_the_part_is_priced(drawin
     set_not_cut(shape, set())                                # taken back
     assert "2 viivaa" in shape.problems[0] and len(shape.open_cuts) == 2
     assert shape.markings == [] and round(shape.cut_length_mm) == round(cut)
+
+
+def _folded(drawing):
+    """A plate whose outline runs back across its own edge near a corner,
+    leaving a small stray loop outside the plate."""
+    doc, msp = drawing()
+    msp.add_lwpolyline([(0, 0), (300, 0), (300, 200), (0, 200), (0, 150), (-10, 160),
+                        (10, 170)], close=True)
+    msp.add_circle((150, 100), 20)
+    return read_dxf_file(dxf_bytes(doc), "f1", "plate.dxf").shapes[0]
+
+
+def test_the_outer_edge_of_an_outline_that_crosses_itself_can_be_used(drawing):
+    from core.dxf import SELF_CROSSING
+    from core.fixes import can_use_outer_edge, crossings, use_outer_edge
+
+    shape = _folded(drawing)
+    assert shape.problems == [SELF_CROSSING] and can_use_outer_edge(shape)
+    drawn = shape.outline
+    assert len(crossings(drawn)) == 1 and crossings(shape.holes[0]) == []
+
+    assert use_outer_edge(shape)
+    assert shape.problems == [] and crossings(shape.outline) == []
+    assert tuple(round(v) for v in shape.size_mm) == (300, 200)   # the plate; the stray loop is left out
+    assert len(shape.holes) == 1 and score_dxf(shape, [], None).valid
+    assert can_use_outer_edge(shape)                         # still there to take back
+
+    use_outer_edge(shape, False)
+    assert shape.outline is drawn and shape.problems == [SELF_CROSSING]
+
+
+def test_a_part_that_doesnt_cross_itself_is_not_offered_its_outer_edge(drawing):
+    from core.fixes import can_use_outer_edge, use_outer_edge
+
+    doc, msp = drawing()
+    rect(msp, 0, 0, 300, 200)
+    shape = read_dxf_file(dxf_bytes(doc), "f1", "plate.dxf").shapes[0]
+    assert not can_use_outer_edge(shape) and not use_outer_edge(shape, False)
+    assert shape.drawn_rings is None

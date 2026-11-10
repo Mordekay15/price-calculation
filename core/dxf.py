@@ -1118,6 +1118,17 @@ def _point_segment_mm(p: Point, a: Point, b: Point) -> float:
     return math.hypot(p[0] - a[0] - s * dx, p[1] - a[1] - s * dy)
 
 
+SELF_CROSSING = ("Ääriviiva leikkaa itseään (kohdat näkyvät alla kuvassa). Voit käyttää "
+                 "osan ulkoreunaa tai korjata piirustuksen.")
+
+
+def crosses_itself(ring: list[Point]) -> bool:
+    """Does the ring cross itself, so that it can't be priced as drawn? (A
+    ring of more edges than ``_SELF_INTERSECT_EDGE_CAP`` isn't checked.)"""
+    return (len(ring) <= _SELF_INTERSECT_EDGE_CAP and not is_sliver(ring)
+            and _self_intersects(ring))
+
+
 _UNCLOSED = "sulkeudu ääriviivaksi"
 
 
@@ -1140,9 +1151,8 @@ def _part_problems(report: DxfReport) -> list[str]:
     gaps = [line for line in report.open_lines if not is_slit(line)]
     if gaps:
         out.append(unclosed_problem(len(gaps)))
-    if any(len(c.points) <= _SELF_INTERSECT_EDGE_CAP and not is_sliver(c.points)
-           and _self_intersects(c.points) for c in rings):
-        out.append("Ääriviiva leikkaa itseään.")
+    if any(crosses_itself(c.points) for c in rings):
+        out.append(SELF_CROSSING)
     if report.outline.area_mm2 < 1e-6:
         out.append("Ääriviivan pinta-ala on nolla (viallinen geometria).")
     return out

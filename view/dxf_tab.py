@@ -464,6 +464,7 @@ def _render_part_config(
             size = _checked_size(fid, shape, hdr[1], _unit_reason(shape, item, doc_ids),
                                  choose=sheet is not None and sheet.views.picked is None)
             fixes.render_not_cut(shape)
+            fixes.render_outer_edge(shape)
         if not is_headless():
             with preview_col:
                 _render_preview(shape, model_bends(fid, shape, item))
@@ -502,8 +503,10 @@ def _render_part_config(
 
     return Product(fid, item.material.value, item.thickness.value, size[0], size[1],
                    item.qty.value, item.work, name=shape.name, shape=shape, angles=angles,
-                   source=item.chosen if shape.views is None
-                   else f"{item.chosen}#{shape.views.picked}")
+                   # What was fixed by hand is part of what is nested.
+                   source=item.chosen
+                   + (f"#{shape.views.picked}" if shape.views is not None else "")
+                   + ("#edge" if shape.drawn_rings is not None else ""))
 
 
 def _render_preview(shape: FlatShape, bends: list | None = None) -> None:

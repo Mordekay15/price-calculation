@@ -292,6 +292,11 @@ only refusing it (`core/fixes.py`, `view/fixes.py`):
   stop the pricing (a hole with a gap?). They are numbered on a picture of the
   part; mark the ones that are only drawing marks (a centre line, an edge
   drawn twice) and they are drawn but not cut or priced.
+- **An outline that crosses itself.** Edges drawn over each other, or a
+  flange drawn folded onto the plate, make an outline the laser can't follow.
+  The card rings each crossing on a picture and shows the outer edge round
+  what the outline encloses; "Käytä osan ulkoreunaa" prices that instead
+  (needs `shapely`), and it can be taken back.
 - A file that can't be opened at all says so in plain words and asks for a
   DXF; the converter's or the DXF library's own reason goes to the log.
 

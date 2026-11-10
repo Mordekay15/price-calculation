@@ -120,6 +120,10 @@ class FlatShape:
     # which of them the user said are drawing marks, not cuts (``core.fixes``).
     unclosed: list[list[Point]] | None = field(default=None, repr=False, compare=False)
     not_cut: frozenset[int] = frozenset()
+    # The outline and holes as drawn, while the user has the outer edge of
+    # the ones that cross themselves used instead (``core.fixes``).
+    drawn_rings: tuple[list[Point], list[list[Point]]] | None = field(
+        default=None, repr=False, compare=False)
 
     @property
     def size_mm(self) -> tuple[float, float]:

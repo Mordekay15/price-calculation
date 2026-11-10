@@ -226,3 +226,73 @@ def render_not_cut(shape: FlatShape) -> None:
         st.button(f"Merkitse kaikki {len(lines)} viivaa: ei leikata",
                   key=f"dxf_view_all_{shape.origin}", on_click=_mark_all,
                   args=(key, len(lines)))
+
+
+def _use_outer_edge(shape: FlatShape, on: bool) -> None:
+    fixes.use_outer_edge(shape, on)
+
+
+def _crossing_figure(shape: FlatShape):
+    """The part as drawn with the places where its outline crosses itself
+    ringed in red, and the outer edge that would be used in green."""
+    import plotly.graph_objects as go
+
+    outline, holes = shape.drawn_rings or (shape.outline, shape.holes)
+    fig = go.Figure()
+
+    def add(rings, colour, width, dash=None, fill=None):
+        xs, ys = [], []
+        for ring in rings:
+            xs += [x for x, _ in ring] + [ring[0][0], None]
+            ys += [y for _, y in ring] + [ring[0][1], None]
+        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", hoverinfo="skip", fill=fill,
+                                 fillcolor=_rgba(colour, 0.10),
+                                 line={"color": colour, "width": width, "dash": dash}))
+
+    edges = [fixes.outer_edge(r) for r in (outline, *holes) if fixes.crossings(r)]
+    add([e for e in edges if e], _PICKED, 5, fill="toself")
+    add([outline, *holes], _OPTION, 1.5)
+    marks = [p for r in (outline, *holes) for p in fixes.crossings(r)]
+    fig.add_trace(go.Scatter(
+        x=[x for x, _ in marks], y=[y for _, y in marks], mode="markers", hoverinfo="text",
+        hovertext=["ääriviiva leikkaa itseään tässä"] * len(marks),
+        marker={"size": 18, "color": "rgba(0,0,0,0)", "line": {"color": "#dc2626", "width": 3}}))
+    fig.update_layout(
+        height=360, margin={"l": 0, "r": 0, "t": 0, "b": 0}, showlegend=False,
+        dragmode="pan", plot_bgcolor="#f8fafc", paper_bgcolor="rgba(0,0,0,0)",
+        xaxis={"visible": False}, yaxis={"visible": False, "scaleanchor": "x"})
+    return fig, len(marks)
+
+
+def render_outer_edge(shape: FlatShape) -> None:
+    """A part whose outline crosses itself, on a picture that zooms and
+    pans: where it crosses, the outer edge that could be cut instead, and
+    the choice to use it (or to go back to the drawing as it is)."""
+    if is_headless() or not fixes.can_use_outer_edge(shape):
+        return
+    sid, used = shape.origin, shape.drawn_rings is not None
+    w, h = shape.size_mm
+    if used:
+        box = st.expander(f"Ääriviiva leikkasi itseään: käytössä osan ulkoreuna "
+                          f"({w:.1f} × {h:.1f} mm). Näytä tai peru", expanded=False)
+    else:
+        box = st.container()
+    with box:
+        try:
+            fig, n = _crossing_figure(shape)
+        except ImportError:
+            n = 0
+        else:
+            st.plotly_chart(fig, key=f"dxf_view_cross_{sid}",
+                            config={"displaylogo": False, "scrollZoom": True})
+            st.caption(f"Sininen: ääriviiva piirustuksessa. Punaiset renkaat ({n}): kohdat, "
+                       "joissa se leikkaa itseään (esim. reuna piirretty kahteen kertaan tai "
+                       "taitettu laippa piirretty levyn päälle). Vihreä: ulkoreuna, joka "
+                       "kiertää kaiken, minkä ääriviiva sulkee sisäänsä. Kuvaa voi suurentaa "
+                       "hiiren rullalla.")
+        if used:
+            st.button("Peru: käytä ääriviivaa sellaisenaan", key=f"dxf_view_edge_off_{sid}",
+                      on_click=_use_outer_edge, args=(shape, False))
+        else:
+            st.button("Käytä osan ulkoreunaa (vihreä)", key=f"dxf_view_edge_on_{sid}",
+                      type="primary", on_click=_use_outer_edge, args=(shape, True))
