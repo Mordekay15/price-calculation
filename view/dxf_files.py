@@ -84,9 +84,8 @@ def render_drop_area() -> list[tuple[str, DxfFile]]:
     parts = sync()
     sync_assemblies()
     if not step_available() and any(bom.is_step(d.name) for d in attachments.docs().values()):
-        st.warning("STEP-malleja ei voi lukea tällä palvelimella: Open CASCADE (cadquery-ocp) "
-                   "ei lataudu, yleensä koska libGL puuttuu (packages.txt). Osat hinnoitellaan "
-                   "DXF:stä ja piirustuksista ilman STEP-mallia.")
+        st.warning("STEP-malleja ei voi avata tällä palvelimella. Osat hinnoitellaan "
+                   "DXF:stä ja piirustuksista.")
     skipped = st.session_state.get(_SKIPPED)
     if skipped:
         more = len(skipped) - _SKIPPED_SHOWN
@@ -184,11 +183,9 @@ def _duplicate_warning(names: list[str], until: float,
     lines = [f"- **{n}** (osa #{idx[n] + 1})" if n in idx else f"- **{n}**"
              for n in names]
     st.warning(
-        ("Tiedosto on jo lisätty, joten sitä ei lisätty uudelleen:"
-         if len(names) == 1 else
-         "Tiedostot on jo lisätty, joten niitä ei lisätty uudelleen:")
+        ("Jo lisätty:" if len(names) == 1 else "Jo lisätyt:")
         + "\n\n" + "\n".join(lines)
-        + "\n\nJos tiedosto on muuttunut, poista vanha osa ensin ja lataa se sitten uudelleen."
+        + "\n\nPoista vanha osa ensin, jos haluat ladata uuden version."
     )
 
 

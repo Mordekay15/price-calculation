@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 
 from core import dwg
-from core.dxf import DxfFile, DxfReport, fastener_lines, read_dxf
+from core.dxf import NO_OUTLINE, DxfFile, DxfReport, fastener_lines, read_dxf
 from core.linking import _QTY, base_key, callouts
 from core.materials import extract_hints
 from core.model import DwgConversion, Fact, FlatBend, FlatShape, ReadResult, ViewChoice
@@ -55,7 +55,7 @@ def shape_from_report(report: DxfReport, origin: str, layers: list[str] | None =
     about = {"name": report.name, "unit_label": report.unit_label,
              "unit_guessed": unit_guessed, "outside_count": report.dropped_count}
     if report.outline is None:
-        shape = FlatShape(origin, [], problems=list(report.problems) or ["ei ääriviivaa"],
+        shape = FlatShape(origin, [], problems=list(report.problems) or [NO_OUTLINE],
                           **about)
         if report.view_options:
             shape.views = ViewChoice(
@@ -256,7 +256,7 @@ def read_pdf_file(data: bytes, file_id: str, name: str) -> ReadResult:
               for n, k in pdf_fasteners(data)]
     result = ReadResult(file_id, facts=facts, record=(pages, fields))
     if not pages:
-        result.problems.append("PDF-tiedostoa ei voitu lukea.")
+        result.problems.append("PDF-tiedostoa ei voi avata.")
     return result
 
 

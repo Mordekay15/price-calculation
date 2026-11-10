@@ -252,10 +252,7 @@ def render_groups(groups: dict[tuple, list[Product]], render_one):
     if not have_solver():
         # Without it the fewest-sheets and mixed-size plans silently vanish
         # and an old, worse plan is shown: say so.
-        st.warning("Levysuunnitelmien optimointi ei ole käytössä: Python-paketti **scipy** "
-                   "puuttuu. Asenna se (`pip install -r requirements.txt`) ja käynnistä "
-                   "sovellus uudelleen — muuten näytetään vain levy kerrallaan täytetyt "
-                   "suunnitelmat.")
+        st.warning("Levyjen yhdistely ei ole käytössä, joten levyt täytetään yksi kerrallaan.")
     prices: dict[str, float] = {}
     sheets: dict[tuple, int] = {}
     totals: dict[tuple, float] = {}

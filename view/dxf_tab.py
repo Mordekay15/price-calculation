@@ -554,10 +554,7 @@ def _checked_size(fid: str, shape: FlatShape, badge,
         return None
     if shape.problems:
         badge.markdown(":red[ei hinnoiteltavissa]")
-        st.error(
-            "**Tätä osaa ei voi vielä hinnoitella:**\n\n"
-            + "\n".join(f"- {p}" for p in shape.problems)
-        )
+        st.error("\n\n".join(shape.problems))
         return None
 
     width, height = (round(v, 1) for v in shape.size_mm)
@@ -572,11 +569,7 @@ def _checked_size(fid: str, shape: FlatShape, badge,
         note = st.empty()
         if not st.checkbox(f"Koko {width:g} × {height:g} mm on oikein",
                            key=f"dxf_unit_ok_{fid}"):
-            note.warning(
-                "Piirustuksesta puuttuu mittayksikkö. Oletimme yksiköksi "
-                f"**{shape.unit_label}**, jolloin osan koko on "
-                f"**{width:g} × {height:g} mm**. Tarkista mitat piirustuksesta."
-            )
+            note.warning("Mittayksikkö puuttuu. Tarkista, että koko on oikein.")
             badge.markdown(":orange[vahvista yksikkö]")
             return None
 
@@ -618,8 +611,7 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict,
     p.material.set(material)
     p.thickness.set(thickness)
     if not note and not material and (check := p.material.conflict):
-        st.warning(f"Piirustukset eivät ole yksimielisiä materiaalista ({check}). "
-                   "Valitse materiaali itse.")
+        st.warning(f"Piirustuksissa on eri materiaaleja ({check}). Valitse materiaali.")
     batch = max(current_sizes())
     if in_bom and not per_assembly:
         auto, why = in_bom[0], f"BOM: {in_bom[0]} kpl ({', '.join(in_bom[1])})"

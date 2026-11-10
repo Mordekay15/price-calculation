@@ -123,19 +123,17 @@ def render_view_picker(shape: FlatShape) -> None:
         return
     choice, sid = shape.views, shape.origin
     if choice.picked is None:
-        st.warning("**Osaa ei tunnistettu piirustuksesta automaattisesti.** Napsauta "
-                   "kuvassa sitä näkymää (sininen), joka on osan aihio.")
+        st.warning("**Valitse osa:** napsauta sitä kuvassa.")
         box = st.container()
     else:
         w, h = shape.size_mm
-        box = st.expander(f"Osa valittu piirustuksesta itse: näkymä {choice.picked + 1} "
-                          f"({w:.0f} × {h:.0f} mm). Vaihda", expanded=False)
+        box = st.expander(f"Valittu osa {choice.picked + 1} ({w:.0f} × {h:.0f} mm). Vaihda",
+                          expanded=False)
     with box:
         try:
             fig, traces = _figure(shape)
         except ImportError:
-            st.caption("Piirustuksen näyttämiseen tarvitaan plotly-paketti; valitse "
-                       "näkymä painikkeista.")
+            st.caption("Valitse osa painikkeista.")
         else:
             # Keyed by what is chosen: a new chart, without the old click on it.
             key = f"dxf_view_fig_{sid}_{choice.picked}"
@@ -152,10 +150,6 @@ def render_view_picker(shape: FlatShape) -> None:
         if choice.picked is not None:
             st.button("Poista valinta", key=f"dxf_view_pick_{sid}_none", on_click=_pick,
                       args=(sid, None))
-        st.caption("Siniset: näkymät, joista osan voi valita; vihreä: valittu. Näkymän "
-                   "ulkoreuna on osan ääriviiva, suljetut muodot sen sisällä reikiä, ja "
-                   "muut viivat piirretään mutta niitä ei leikata. Kuvaa voi suurentaa "
-                   "hiiren rullalla ja siirtää vetämällä.")
 
 
 def not_cut_key(sid: str) -> str:
@@ -249,11 +243,8 @@ def render_not_cut(shape: FlatShape) -> None:
     st.pills(
         "Viivat, joita ei leikata", list(range(len(lines))), selection_mode="multi",
         format_func=lambda i: f"viiva {i + 1}", key=key,
-        help="Punaiset, numeroidut viivat eivät sulkeudu ääriviivaksi. Jos viiva on "
-             "vain piirrosmerkki (esim. keskiviiva tai kahteen kertaan piirretty reuna), "
-             "valitse se tästä tai napsauta sen numeroa kuvassa: se piirretään, mutta "
-             "sitä ei leikata eikä hinnoitella. Jos se on reiän ääriviiva, jossa on "
-             "aukko, korjaa piirustus. Kuvaa voi suurentaa hiiren rullalla.")
+        help="Valitse viivat, jotka ovat vain piirrosmerkkejä (esim. keskiviiva). "
+             "Niitä ei leikata eikä hinnoitella.")
     if len(lines) > 1 and len(shape.not_cut) < len(lines):
         st.button(f"Merkitse kaikki {len(lines)} viivaa: ei leikata",
                   key=f"dxf_view_all_{shape.origin}", on_click=_mark_all,
@@ -305,25 +296,21 @@ def render_outer_edge(shape: FlatShape) -> None:
     sid, used = shape.origin, shape.drawn_rings is not None
     w, h = shape.size_mm
     if used:
-        box = st.expander(f"Ääriviiva leikkasi itseään: käytössä osan ulkoreuna "
-                          f"({w:.1f} × {h:.1f} mm). Näytä tai peru", expanded=False)
+        box = st.expander(f"Käytössä osan ulkoreuna ({w:.1f} × {h:.1f} mm). Näytä tai peru",
+                          expanded=False)
     else:
         box = st.container()
     with box:
         try:
-            fig, n = _crossing_figure(shape)
+            fig, _ = _crossing_figure(shape)
         except ImportError:
-            n = 0
+            pass
         else:
             st.plotly_chart(fig, key=f"dxf_view_cross_{sid}",
                             config={"displaylogo": False, "scrollZoom": True})
-            st.caption(f"Sininen: ääriviiva piirustuksessa. Punaiset renkaat ({n}): kohdat, "
-                       "joissa se leikkaa itseään (esim. reuna piirretty kahteen kertaan tai "
-                       "taitettu laippa piirretty levyn päälle). Vihreä: ulkoreuna, joka "
-                       "kiertää kaiken, minkä ääriviiva sulkee sisäänsä. Kuvaa voi suurentaa "
-                       "hiiren rullalla.")
+            st.caption("Punainen rengas: ääriviiva leikkaa itseään. Vihreä: osan ulkoreuna.")
         if used:
-            st.button("Peru: käytä ääriviivaa sellaisenaan", key=f"dxf_view_edge_off_{sid}",
+            st.button("Peru", key=f"dxf_view_edge_off_{sid}",
                       on_click=_use_outer_edge, args=(shape, False))
         else:
             st.button("Käytä osan ulkoreunaa (vihreä)", key=f"dxf_view_edge_on_{sid}",

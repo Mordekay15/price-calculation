@@ -278,7 +278,7 @@ class DxfFile:
 
         top = [c for c in contours if c.closed and c.depth == 0 and len(c.points) >= 3]
         if not top:
-            report.problems.append("Valituilta tasoilta ei löytynyt suljettua ääriviivaa.")
+            report.problems.append(NO_OUTLINE)
             report.dropped = [c.points for c in contours]
             _trim_dropped(report)
             return report
@@ -489,8 +489,8 @@ def _flat_view(frame: Contour, contours: list[Contour], notes: list[Point]) -> C
     return views[0] if len(views) == 1 else None
 
 
-NOT_READ = ("Tiedostoa ei voitu avata: se on vioittunut tai tallennettu muodossa, jota "
-            "sovellus ei lue.")
+NOT_READ = "Tiedostoa ei voi avata."
+NO_OUTLINE = "Osan ääriviivaa ei löytynyt."
 
 _VIEW_OPTIONS = 12           # views offered to choose the part from, at most
 _VIEW_OPTION_MIN_MM = 3.0    # a view narrower than this is not a part
@@ -542,10 +542,8 @@ def _outer_edge(lines: list[tuple[list[Point], bool]]) -> list[Point] | None:
 
 def views_problem(n: int, can_choose: bool) -> str:
     """Why a sheet of ``n`` views has no part, and what to do about it."""
-    return (f"Piirustuksessa on {n} näkymää, eikä osan aihiota voitu tunnistaa niistä "
-            "automaattisesti. "
-            + ("Valitse osa piirustuksesta tai lataa osan aukikeritty DXF." if can_choose
-               else "Lataa osan aukikeritty DXF."))
+    return ("Valitse osa kuvasta." if can_choose
+            else "Osaa ei löytynyt piirustuksesta. Lataa osan aukikeritty DXF.")
 
 
 _ON_FRAME_MM = 0.5     # a title block line ending this close to the frame is joined to it
@@ -1190,8 +1188,7 @@ def _point_segment_mm(p: Point, a: Point, b: Point) -> float:
     return math.hypot(p[0] - a[0] - s * dx, p[1] - a[1] - s * dy)
 
 
-SELF_CROSSING = ("Ääriviiva leikkaa itseään (kohdat näkyvät alla kuvassa). Voit käyttää "
-                 "osan ulkoreunaa tai korjata piirustuksen.")
+SELF_CROSSING = "Ääriviiva leikkaa itseään. Käytä osan ulkoreunaa tai korjaa piirustus."
 
 
 def crosses_itself(ring: list[Point]) -> bool:
@@ -1206,10 +1203,8 @@ _UNCLOSED = "sulkeudu ääriviivaksi"
 
 def unclosed_problem(n: int) -> str:
     """The problem of ``n`` lines inside the part that close into no outline."""
-    lines = "1 viiva osan sisällä ei" if n == 1 else f"{n} viivaa osan sisällä ei"
-    return (f"{lines} {_UNCLOSED} (punaisella esikatselussa). Jos viiva on reiän "
-            "ääriviiva, siinä on aukko. Jos se on vain piirrosmerkki, merkitse se alta: "
-            "sitä ei silloin leikata.")
+    lines = "1 viiva ei" if n == 1 else f"{n} viivaa ei"
+    return f"{lines} {_UNCLOSED}. Merkitse alta ne, joita ei leikata."
 
 
 def is_unclosed_problem(problem: str) -> bool:
@@ -1226,7 +1221,7 @@ def _part_problems(report: DxfReport) -> list[str]:
     if any(crosses_itself(c.points) for c in rings):
         out.append(SELF_CROSSING)
     if report.outline.area_mm2 < 1e-6:
-        out.append("Ääriviivan pinta-ala on nolla (viallinen geometria).")
+        out.append("Osan muoto on viallinen.")
     return out
 
 

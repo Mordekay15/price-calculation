@@ -137,8 +137,8 @@ def render_work_inputs(key: str, *, material: str | None, thickness: str | None,
             if s_per_m is not None and eur_per_s is not None:
                 laser = LaserSpeed(s_per_m, eur_per_s)
             elif material and thickness_mm is not None:
-                st.warning(f"Laserin leikkausaikaa ei ole taulukossa: "
-                           f"{laser_family(material)[0]} {thickness} mm. Anna aika (s/m).")
+                st.warning(f"Leikkausaika puuttuu ({laser_family(material)[0]} "
+                           f"{thickness} mm). Anna aika (s/m).")
             # Typed, the punch hits let the card compare the two methods.
             hits = int(st.columns(4)[0].number_input(
                 "Levarin iskut (vertailuun)", min_value=0, value=0, step=1,

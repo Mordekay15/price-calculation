@@ -32,10 +32,10 @@ _log = logging.getLogger(__name__)
 _TIMEOUT_S = 60
 _BIN = pathlib.Path(__file__).resolve().parent.parent / "bin"
 
-SAVE_AS_DXF = ("Avaa piirustus CAD-ohjelmassa, tallenna se DXF-muodossa (Tallenna "
-               "nimellä → DXF) ja lataa se uudelleen.")
+SAVE_AS_DXF = "Tallenna se DXF-muodossa ja lataa uudelleen."
 # The converter's own reason (English, technical) is logged, not shown.
-NOT_CONVERTED = "DWG-tiedostoa ei voitu avata: sen muunnos DXF-muotoon ei onnistunut."
+NOT_CONVERTED = "DWG-tiedostoa ei voi avata."
+NO_CONVERTER = "DWG-tiedostoja ei voi avata tällä palvelimella."
 
 
 class ConversionError(Exception):
@@ -87,12 +87,11 @@ def _with_libredwg(exe: str, src: pathlib.Path, dst: pathlib.Path,
     try:
         done = subprocess.run(args, capture_output=True, text=True, timeout=_TIMEOUT_S)
     except subprocess.TimeoutExpired:
-        raise ConversionError("DWG-tiedostoa ei voitu avata: sen muunnos DXF-muotoon ei "
-                              f"valmistunut {_TIMEOUT_S} sekunnissa.")
+        _log.warning("LibreDWG took over %s s", _TIMEOUT_S)
+        raise ConversionError(NOT_CONVERTED)
     except OSError as exc:
         _log.warning("LibreDWG did not start: %s", exc)
-        raise ConversionError("DWG-tiedostoja ei voi nyt avata: muunnin (LibreDWG) ei "
-                              "käynnisty tällä palvelimella.")
+        raise ConversionError(NO_CONVERTER)
     # dwg2dxf can exit non-zero on warnings and still write a usable file.
     if not dst.is_file() or dst.stat().st_size == 0:
         detail = (done.stderr or done.stdout or "").strip().splitlines()
@@ -106,8 +105,8 @@ def dwg_to_dxf(data: bytes, *, minimal: bool = False) -> bytes:
     oda = _oda_installed()
     exe = None if oda else libredwg_executable()
     if not oda and exe is None:
-        raise ConversionError("DWG-tiedostoja ei voi avata tällä palvelimella: muunninta "
-                              "(ODA File Converter tai LibreDWG) ei ole asennettu.")
+        _log.warning("No DWG converter (ODA File Converter or LibreDWG) installed")
+        raise ConversionError(NO_CONVERTER)
     with tempfile.TemporaryDirectory() as tmp:
         src, dst = pathlib.Path(tmp, "drawing.dwg"), pathlib.Path(tmp, "drawing.dxf")
         src.write_bytes(data)

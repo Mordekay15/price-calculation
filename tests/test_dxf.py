@@ -297,7 +297,7 @@ def test_gap_in_the_outline(drawing):
     doc, msp = drawing()
     for a, b in [((0, 0), (300, 0)), ((300, 0), (300, 200)), ((300, 200), (0, 200)), ((0, 200), (0, 2))]:
         msp.add_line(a, b)
-    assert "suljettua ääriviivaa" in refused(doc)
+    assert "ääriviivaa ei löytynyt" in refused(doc)
 
 
 def test_gap_in_a_hole(drawing):
@@ -622,10 +622,10 @@ def test_a_sheet_whose_part_cant_be_told_is_never_priced_as_its_frame(drawing):
     _flat(msp, 240, 100)                # a second part just like it
     msp.add_circle((150, 250), 3)       # a symbol drawn apart: no part
     report = part_of(doc)
-    assert report.outline is None and "näkymää" in report.problems[0]
+    assert report.outline is None and "Valitse osa" in report.problems[0]
     # The part built from each whole view, biggest first, for the user to
     # choose from on the card; where each lies on the sheet.
-    assert "Valitse osa piirustuksesta" in report.problems[0]
+    assert "Valitse osa kuvasta" in report.problems[0]
     assert [(round(o.outline.width_mm), round(o.outline.height_mm), len(o.holes), o.problems)
             for o in report.view_options] == [(100, 25, 2, []), (100, 25, 2, []),
                                               (80, 25, 0, [])]      # and the side view
