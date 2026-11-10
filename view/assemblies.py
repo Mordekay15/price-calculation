@@ -306,9 +306,8 @@ def _render_one(aid: str, a: Assembly, cards: dict[str, int],
                   help="Purkaa kokoonpanon: osat jäävät irto-osiksi." if a.by_hand else
                   "Poistaa kokoonpanon ja sen osat (kortit, piirustuksen ja STEP-mallin).")
         if a.awaited:
-            st.warning("Piirustuksessa on osia, joita ei ole ladattu: "
-                       + ", ".join(a.awaited) + ". Lataa niiden DXF- tai STEP-tiedostot, "
-                       "tai lisää ne alle ostettuina osina.")
+            st.warning("Puuttuvat osat: " + ", ".join(a.awaited)
+                       + ". Lataa niiden tiedostot tai lisää ne ostettuina osina.")
         if parent is not None:
             st.caption(f"Alikokoonpano: {parent[1]} kpl kokoonpanossa {parent[0]}, "
                        "hinnoitellaan siinä.")

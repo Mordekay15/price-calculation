@@ -85,15 +85,14 @@ def render_group(
 def _render_unpriced(material: str) -> None:
     if material == COPPER_MATERIAL:
         st.info(
-            "Aseta kuparin hinta (€/kg) sivupalkista, niin levylaskenta "
-            "tulee näkyviin."
+            "Anna kuparin hinta (€/kg) sivupalkissa."
         )
     else:
         st.info("Tälle yhdistelmälle ei ole levykohtaista hinnoittelua.")
 
 
 def _render_no_fit(options: list[SheetOption]) -> None:
-    st.warning("Osat eivät mahtuneet millekään hinnoitellulle levykoolle.")
+    st.warning("Osat eivät mahdu millekään levykoolle.")
     # Show why each size failed — a Sparrow error (e.g. a broken binary)
     # otherwise looks exactly like "the parts are too big".
     reasons = {o.reason for o in options if o.reason}
@@ -110,8 +109,7 @@ def _selected_index(event, options: list[SheetOption], cheapest_idx: int) -> int
     if 0 <= idx < len(options) and options[idx].ok:
         return idx
     st.warning(
-        f"**{_size_label(options[idx])}** on liian pieni — osat eivät mahdu. "
-        "Käytetään edullisinta levykokoa."
+        f"**{_size_label(options[idx])}** on liian pieni. Käytetään edullisinta levyä."
     )
     return cheapest_idx
 

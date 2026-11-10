@@ -47,7 +47,7 @@ def test_a_missing_solver_is_said_on_the_page(monkeypatch):
 
     monkeypatch.setattr(view.common, "have_solver", lambda: False)
     at = AppTest.from_function(page).run()
-    assert any("scipy" in w.value for w in at.warning)
+    assert any("yhdistely" in w.value for w in at.warning)
     monkeypatch.setattr(view.common, "have_solver", lambda: True)
     assert not AppTest.from_function(page).run().warning
 
@@ -78,7 +78,7 @@ def test_each_screen_keeps_the_others_inputs_and_prices_on_hinnoittelu(tmp_path,
     at.number_input(key="work_bends_f0").set_value(3.0).run()     # work is on the card
     at.session_state["dxf_menu"] = PRICING
     at.run()
-    assert any("ei ole vielä nestattu" in i.value for i in at.info)
+    assert any("Laske levykäyttö" in i.value for i in at.info)
     at.session_state["dxf_menu"] = NESTING
     at.run()
     at.number_input(key="dxf_sparrow_t").set_value(1).run()

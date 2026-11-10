@@ -277,6 +277,31 @@ detected automatically). They are saved as `price_data_<supplier>.json` next to
 the app, so re-upload only when a new monthly list arrives. Copper has no list
 price; set its €/kg in the sidebar.
 
+## Fixing a drawing by hand
+
+When a drawing can't be read on its own, the card says what to do instead of
+only refusing it (`core/fixes.py`, `view/fixes.py`):
+
+- **Choosing the part.** A drawing sheet with several views, none of which
+  stands out as the flat pattern (no bend note or bend lines): the card shows
+  the sheet with its views coloured and numbered. One click anywhere on a
+  view makes it the part (its button under the picture does the same): the
+  outer edge round its lines is the outline (also when other lines run into
+  the outline, so that it closes into no single ring), the closed shapes
+  inside are holes, the other lines are drawn but not cut. "Poista valinta"
+  takes the choice back. Needs `shapely`.
+- **Lines that are not cut.** Lines inside the part that close into no outline
+  stop the pricing (a hole with a gap?). They are numbered on a picture of the
+  part; mark the ones that are only drawing marks (a centre line, an edge
+  drawn twice) and they are drawn but not cut or priced.
+- **An outline that crosses itself.** Edges drawn over each other, or a
+  flange drawn folded onto the plate, make an outline the laser can't follow.
+  The card rings each crossing on a picture and shows the outer edge round
+  what the outline encloses; "Käytä osan ulkoreunaa" prices that instead
+  (needs `shapely`), and it can be taken back.
+- A file that can't be opened at all says so in plain words and asks for a
+  DXF; the converter's or the DXF library's own reason goes to the log.
+
 ## DWG drawings
 
 The DXF tab also takes DWG files. Python can't read DWG, so each one is first

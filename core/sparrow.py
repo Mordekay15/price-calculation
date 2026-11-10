@@ -5,6 +5,7 @@ repeatable-program plan (``core.programs``) and costing. The solver is passed in
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -36,6 +37,8 @@ from core.sheet_cost import (
     too_big,
     usable_area,
 )
+
+_log = logging.getLogger(__name__)
 
 Point = tuple[float, float]
 
@@ -439,12 +442,13 @@ def greedy_fixed_sheets(
         total = sum(remaining)
         err, best, strip_len = probe(total)
         if err is not None:
-            return PackResult(ok=False, sheets=sheets, reason=err)
+            _log.warning("Sparrow failed: %s", err)
+            return PackResult(ok=False, sheets=sheets, reason="laskenta epäonnistui")
         if not best:
             # Nothing fit within the sheet although each part fits in isolation —
             # usually the separation gap makes even one part overflow.
             return PackResult(ok=False, sheets=sheets,
-                              reason="osat eivät mahtuneet levylle annetulla rankavälillä")
+                              reason="osat eivät mahdu rakoineen")
 
         # lo: most parts seen on one sheet; hi: smallest probe that didn't fit
         # entirely (None until one misses). Try the strip-density estimate,

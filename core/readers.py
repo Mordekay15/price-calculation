@@ -14,10 +14,10 @@ from __future__ import annotations
 import re
 
 from core import dwg
-from core.dxf import DxfFile, DxfReport, fastener_lines, read_dxf
+from core.dxf import NO_OUTLINE, DxfFile, DxfReport, fastener_lines, read_dxf
 from core.linking import _QTY, base_key, callouts
 from core.materials import extract_hints
-from core.model import DwgConversion, Fact, FlatBend, FlatShape, ReadResult
+from core.model import DwgConversion, Fact, FlatBend, FlatShape, ReadResult, ViewChoice
 
 # A part number in a BOM line: a word with five digits in a row, its
 # revision (.A, -revB) taken off by ``base_key``.
@@ -55,8 +55,14 @@ def shape_from_report(report: DxfReport, origin: str, layers: list[str] | None =
     about = {"name": report.name, "unit_label": report.unit_label,
              "unit_guessed": unit_guessed, "outside_count": report.dropped_count}
     if report.outline is None:
-        return FlatShape(origin, [], problems=list(report.problems) or ["ei ääriviivaa"],
-                         **about)
+        shape = FlatShape(origin, [], problems=list(report.problems) or [NO_OUTLINE],
+                          **about)
+        if report.view_options:
+            shape.views = ViewChoice(
+                report.dropped, [o.on_sheet for o in report.view_options],
+                [shape_from_report(o, origin, layers, unit_guessed)
+                 for o in report.view_options], unread=shape)
+        return shape
     return FlatShape(
         origin=origin,
         outline=report.outline.points,
@@ -250,7 +256,7 @@ def read_pdf_file(data: bytes, file_id: str, name: str) -> ReadResult:
               for n, k in pdf_fasteners(data)]
     result = ReadResult(file_id, facts=facts, record=(pages, fields))
     if not pages:
-        result.problems.append("PDF-tiedostoa ei voitu lukea.")
+        result.problems.append("PDF-tiedostoa ei voi avata.")
     return result
 
 

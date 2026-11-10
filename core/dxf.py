@@ -178,6 +178,12 @@ class DxfReport:
     # A profile drawing's blank as the customer drew it, when its width was
     # replaced by the cross-section unfolded (0: not replaced).
     drawn_blank_mm: float = 0.0
+    # A drawing sheet whose part can't be told among its views: the part
+    # built from each of the biggest views, for the user to choose from on
+    # the card (see ``_pick_view``), and on each of them its outline as it
+    # lies on the sheet (``dropped`` is the sheet's lines then).
+    view_options: list["DxfReport"] = field(default_factory=list)
+    on_sheet: list[Point] = field(default_factory=list)
 
     @property
     def dropped_count(self) -> int:
@@ -272,7 +278,7 @@ class DxfFile:
 
         top = [c for c in contours if c.closed and c.depth == 0 and len(c.points) >= 3]
         if not top:
-            report.problems.append("Valituilta tasoilta ei löytynyt suljettua ääriviivaa.")
+            report.problems.append(NO_OUTLINE)
             report.dropped = [c.points for c in contours]
             _trim_dropped(report)
             return report
@@ -317,13 +323,89 @@ class DxfFile:
         if view is None and views is not None:
             view = _pick_view(views, self.bend_notes, last=True)
             if view is None:
-                report.problems.append(
-                    f"Piirustuksessa on {len(views)} näkymää, eikä mikään niistä erotu "
-                    "osan aihioksi (ei taivutusmerkintää eikä -viivoja). Lataa osan "
-                    "aukikeritty DXF.")
+                report.view_options = self._view_options(main, views, contours, reference)
+                report.problems.append(views_problem(len(views), bool(report.view_options)))
                 report.dropped = [c.points for c in contours]
                 _trim_dropped(report)
                 return report
+        return self._built(report, main, view, section, contours, reference)
+
+    def _view_options(self, frame: Contour, views: list[_View], contours: list[Contour],
+                      reference: list[_Piece]) -> list[DxfReport]:
+        """The part built from each of a sheet's biggest views, biggest
+        first, for the user to choose from. A view is everything its lines
+        enclose, taken by its outer edge (``_part_of_lines``): its outline
+        often closes into no single ring, because other lines run into it,
+        and its biggest ring is then only one of its holes. The title
+        block's cells (no view in them) and views too small to be a part
+        (a symbol) are left out."""
+        box = bbox(frame.points)
+        lines = [c for c in contours if c is not frame]
+        marks = [representative_point(v.outline.points) for v in views]
+        # The "frame" is the sheet's frame when the views are drawn in it;
+        # with the sheet's own frame on a layer that isn't cut, it is only
+        # the biggest view.
+        if sum(_box_in(bbox(c.points), box) for c in lines) >= 0.9 * len(lines):
+            lines = [c for c in lines if _box_in(bbox(c.points), box)
+                     and bbox_wh(c.points)[0] * bbox_wh(c.points)[1] < 0.5 * frame.area_mm2]
+        else:
+            lines.append(frame)
+            marks.append(representative_point(frame.points))
+        found = []
+        for edge in _outer_edges([(c.points, c.closed) for c in lines]):
+            w, h = bbox_wh(edge)
+            if min(w, h) < _VIEW_OPTION_MIN_MM or not any(point_in_polygon(m, edge)
+                                                         for m in marks):
+                continue
+            found.append((w * h, edge))
+        found.sort(key=lambda f: -f[0])
+        options = []
+        for size, edge in found[:_VIEW_OPTIONS]:
+            if size < _VIEW_OPTION_OF_BIGGEST * found[0][0]:
+                break
+            span = bbox(edge)
+            inside = [(c.points, c.closed) for c in lines
+                      if _box_in(bbox(c.points), span, _JOIN_TOL_MM)]
+            option = self._part_of_lines(frame, inside, reference)
+            if option is not None:
+                option.dropped_more = len(contours) - len(inside)
+                options.append(option)
+        return options
+
+    def _part_of_lines(self, frame: Contour, cut: list[tuple[list[Point], bool]],
+                       reference: list[_Piece]) -> DxfReport | None:
+        """The part made of the cut lines ``cut`` (points, closed) on the
+        sheet whose frame is ``frame``: the outer edge round everything they
+        enclose is the outline, the closed shapes inside it are its holes,
+        every other line (and ``reference``) is drawn, not cut. None when
+        they enclose nothing."""
+        edge = _outer_edge(cut)
+        if edge is None:
+            return None
+        outline = Contour(edge, True, area(edge))
+        rings = [Contour(list(pts), True) for pts, closed in cut if closed and len(pts) >= 3]
+        opened = [pts for pts, closed in cut if not closed]
+        rings += [c for c in _chain_open_segments(opened, _JOIN_TOL_MM)
+                  if c.closed and len(c.points) >= 3]
+        # A ring on the outer edge is part of it (the plate itself, a corner
+        # of it that other lines close off), not a hole.
+        holes = [c for c in rings
+                 if not any(_near_ring(q, edge, _JOIN_TOL_MM) for q in _ends(c))]
+        for c in holes:
+            c.area_mm2 = area(c.points)
+        contours = [outline, *holes]
+        _mark_depths(contours)
+        report = DxfReport(name=self.name, unit_label=self.unit_label)
+        drawn = [_Piece(pts, False, "0", True) for pts in opened]
+        self._built(report, frame, outline, None, contours, [*reference, *drawn])
+        report.on_sheet, report.dropped = edge, []
+        return report
+
+    def _built(self, report: DxfReport, main: Contour, view: Contour | None,
+               section: Contour | None, contours: list[Contour],
+               reference: list[_Piece]) -> DxfReport:
+        """``report`` filled with the part: ``view`` on the sheet whose frame
+        is ``main``, or ``main`` itself when ``view`` is None."""
         # Views drawn at the sheet's scale: a frame the size of a paper sheet
         # (a frame drawn at 1:1 round real-size views is the paper / scale).
         at_scale = view is not None and section is None and _paper_size(main)
@@ -405,6 +487,63 @@ def _flat_view(frame: Contour, contours: list[Contour], notes: list[Point]) -> C
     views = [c for c in contours if c.closed and c.depth == frame.depth + 1
              and any(point_in_polygon(n, c.points) for n in notes)]
     return views[0] if len(views) == 1 else None
+
+
+NOT_READ = "Tiedostoa ei voi avata."
+NO_OUTLINE = "Osan ääriviivaa ei löytynyt."
+
+_VIEW_OPTIONS = 12           # views offered to choose the part from, at most
+_VIEW_OPTION_MIN_MM = 3.0    # a view narrower than this is not a part
+
+
+_VIEW_OPTION_OF_BIGGEST = 0.05   # … nor a view this small a share of the biggest one
+
+
+def _outer_edges(lines: list[tuple[list[Point], bool]]) -> list[list[Point]]:
+    """The edge round each separate thing the lines enclose, as rings: the
+    lines are cut where they meet or cross and the faces they close are
+    joined. Ends within the join tolerance are one point. None when they
+    enclose nothing (or shapely is missing)."""
+    try:
+        from shapely.geometry import LineString
+        from shapely.ops import polygonize, unary_union
+    except ImportError:
+        return []
+    nodes: dict[tuple[int, int], Point] = {}
+
+    def node(p: Point) -> Point:
+        i, j = round(p[0] / _JOIN_TOL_MM), round(p[1] / _JOIN_TOL_MM)
+        for key in ((i + a, j + b) for a in (0, -1, 1) for b in (0, -1, 1)):
+            if key in nodes and math.dist(nodes[key], p) <= _JOIN_TOL_MM:
+                return nodes[key]
+        nodes[i, j] = p
+        return p
+
+    strings = []
+    for points, closed in lines:
+        pts = [node(points[0]), *points[1:-1], node(points[-1])] if len(points) > 1 else []
+        if closed and pts:
+            pts.append(pts[0])
+        if len(pts) >= 2:
+            strings.append(LineString(pts))
+    if not strings:
+        return []
+    faces = unary_union(list(polygonize(unary_union(strings))))
+    pieces = [] if faces.is_empty else getattr(faces, "geoms", [faces])
+    return [[(x, y) for x, y in g.exterior.coords[:-1]] for g in pieces
+            if g.geom_type == "Polygon"]
+
+
+def _outer_edge(lines: list[tuple[list[Point], bool]]) -> list[Point] | None:
+    """The outer edge of the biggest thing the lines enclose (see
+    ``_outer_edges``), None when they enclose nothing."""
+    return max(_outer_edges(lines), key=area, default=None)
+
+
+def views_problem(n: int, can_choose: bool) -> str:
+    """Why a sheet of ``n`` views has no part, and what to do about it."""
+    return ("Valitse osa kuvasta." if can_choose
+            else "Osaa ei löytynyt piirustuksesta. Lataa osan aukikeritty DXF.")
 
 
 _ON_FRAME_MM = 0.5     # a title block line ending this close to the frame is joined to it
@@ -897,7 +1036,10 @@ def read_dxf(data: bytes, name: str = "drawing.dxf") -> DxfFile:
     try:
         doc = _load(data)
     except Exception as exc:  # noqa: BLE001 — never let a bad file crash the app
-        f.problems.append(f"Tiedostoa ei voitu lukea DXF-muodossa ({exc}).")
+        # The reason is the DXF library's own (English, technical): logged,
+        # and the card says what to do instead.
+        _log.warning("%s: not read as DXF: %s", name, exc)
+        f.problems.append(NOT_READ)
         return f
 
     entities = list(_explode_blocks(doc.modelspace()))
@@ -1046,20 +1188,40 @@ def _point_segment_mm(p: Point, a: Point, b: Point) -> float:
     return math.hypot(p[0] - a[0] - s * dx, p[1] - a[1] - s * dy)
 
 
+SELF_CROSSING = "Ääriviiva leikkaa itseään. Käytä osan ulkoreunaa tai korjaa piirustus."
+
+
+def crosses_itself(ring: list[Point]) -> bool:
+    """Does the ring cross itself, so that it can't be priced as drawn? (A
+    ring of more edges than ``_SELF_INTERSECT_EDGE_CAP`` isn't checked.)"""
+    return (len(ring) <= _SELF_INTERSECT_EDGE_CAP and not is_sliver(ring)
+            and _self_intersects(ring))
+
+
+_UNCLOSED = "sulkeudu ääriviivaksi"
+
+
+def unclosed_problem(n: int) -> str:
+    """The problem of ``n`` lines inside the part that close into no outline."""
+    lines = "1 viiva ei" if n == 1 else f"{n} viivaa ei"
+    return f"{lines} {_UNCLOSED}. Merkitse alta ne, joita ei leikata."
+
+
+def is_unclosed_problem(problem: str) -> bool:
+    return _UNCLOSED in problem
+
+
 def _part_problems(report: DxfReport) -> list[str]:
     """Why a built part cannot be priced — each reason in plain Finnish."""
     out = []
     rings = [report.outline, *report.holes]
     gaps = [line for line in report.open_lines if not is_slit(line)]
     if gaps:
-        n = len(gaps)
-        lines = "1 viiva osan sisällä ei" if n == 1 else f"{n} viivaa osan sisällä ei"
-        out.append(f"{lines} sulkeudu ääriviivaksi — reiän ääriviivassa on aukko?")
-    if any(len(c.points) <= _SELF_INTERSECT_EDGE_CAP and not is_sliver(c.points)
-           and _self_intersects(c.points) for c in rings):
-        out.append("Ääriviiva leikkaa itseään.")
+        out.append(unclosed_problem(len(gaps)))
+    if any(crosses_itself(c.points) for c in rings):
+        out.append(SELF_CROSSING)
     if report.outline.area_mm2 < 1e-6:
-        out.append("Ääriviivan pinta-ala on nolla (viallinen geometria).")
+        out.append("Osan muoto on viallinen.")
     return out
 
 

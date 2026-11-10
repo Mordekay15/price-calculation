@@ -19,12 +19,15 @@ prices like a dropped DXF.
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import re
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import PurePath
+
+_log = logging.getLogger(__name__)
 
 DEFAULT_K_FACTOR = 0.44           # neutral axis at r + K·t (air bending, steel)
 _TANGENT_COS = 0.995              # faces this parallel at an edge are one skin
@@ -107,19 +110,23 @@ class StepModel:
 
 # ── Reading ───────────────────────────────────────────────────────────────────
 
+NOT_READ = "STEP-tiedostoa ei voi avata."
+
+
 def read_step(data: bytes, name: str = "model.step") -> StepModel:
     """The model's parts and BOM. Never raises: a bad file comes back with
     problems."""
     model = StepModel(name=name)
     if not available():
-        model.problems.append("STEP-tiedostojen lukuun tarvitaan cadquery-ocp-paketti.")
+        model.problems.append("STEP-malleja ei voi avata tällä palvelimella.")
         return model
     try:
         _read(data, model)
     except Exception as exc:  # noqa: BLE001 - a bad file must not crash the page
-        model.problems.append(f"STEP-tiedostoa ei voitu lukea ({exc}).")
+        _log.warning("%s: not read as STEP: %s", name, exc)
+        model.problems.append(NOT_READ)
     if not model.parts and not model.problems:
-        model.problems.append("STEP-tiedostosta ei löytynyt kappaleita.")
+        model.problems.append("STEP-tiedostossa ei ole osia.")
     return model
 
 
@@ -137,11 +144,11 @@ def _read(data: bytes, model: StepModel) -> None:
         reader = STEPCAFControl_Reader()
         reader.SetNameMode(True)
         if reader.ReadFile(path) != IFSelect_RetDone:
-            model.problems.append("Tiedosto ei ole luettava STEP-tiedosto.")
+            model.problems.append(NOT_READ)
             return
         doc = TDocStd_Document(TCollection_ExtendedString("step"))
         if not reader.Transfer(doc):
-            model.problems.append("STEP-tiedoston muunnos epäonnistui.")
+            model.problems.append(NOT_READ)
             return
     finally:
         os.unlink(path)

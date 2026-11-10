@@ -56,13 +56,15 @@ def test_libredwg_converts_when_oda_is_missing(plate_dxf, no_oda, monkeypatch, t
     assert round(f.part().outline.width_mm) == 300
 
 
-def test_a_failed_conversion_is_a_problem_not_a_crash(no_oda, monkeypatch, tmp_path):
+def test_a_failed_conversion_is_a_problem_not_a_crash(no_oda, monkeypatch, tmp_path, caplog):
     fake = tmp_path / "dwg2dxf"
     fake.write_text('#!/bin/sh\necho "ERROR: unsupported version" >&2\nexit 1\n')
     fake.chmod(0o755)
     monkeypatch.setenv("LIBREDWG_BIN", str(fake))
     f = read_drawing(b"AC1032...", "bad.dwg")
-    assert "unsupported version" in f.problems[0] and dwg.SAVE_AS_DXF in f.problems[0]
+    # The card says what to do; the converter's own words go to the log.
+    assert f.problems == [f"{dwg.NOT_CONVERTED} {dwg.SAVE_AS_DXF}"]
+    assert "unsupported version" in caplog.text
 
 
 def test_oda_is_preferred_when_installed(monkeypatch):
@@ -106,11 +108,12 @@ def _broken_objects_dxf() -> bytes:
     return data[:at] + b"  3\n\n350\n0\n" * 2 + data[at:]
 
 
-def test_a_broken_objects_section_makes_ezdxf_refuse_the_file():
-    from core.dxf import read_dxf
+def test_a_broken_objects_section_makes_ezdxf_refuse_the_file(caplog):
+    from core.dxf import NOT_READ, read_dxf
 
     f = read_dxf(_broken_objects_dxf(), "plate.dxf")
-    assert f.pieces == [] and "Invalid handle 0" in f.problems[0]
+    assert f.pieces == [] and f.problems == [NOT_READ]
+    assert "Invalid handle 0" in caplog.text
 
 
 def test_the_objects_section_is_removed_and_the_rest_kept():

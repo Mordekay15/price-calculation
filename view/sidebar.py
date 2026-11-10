@@ -21,8 +21,7 @@ _PLACEHOLDER_SUPPLIER = "— Valitse toimittaja —"
 # password-protected file). Without this guard the exception propagates out of
 # the sidebar and Streamlit replaces the whole page with a traceback.
 _UNREADABLE_PDF_MSG = (
-    "PDF:ää ei voitu lukea. Tiedosto voi olla vioittunut, keskeneräinen tai "
-    "salasanasuojattu. Tallenna hinnasto uudelleen PDF:ksi ja yritä uudestaan."
+    "Hinnastoa ei voi avata. Tallenna se uudelleen PDF:ksi ja yritä uudestaan."
 )
 
 # Session-state keys.
@@ -90,7 +89,7 @@ def _render_uploader() -> None:
 
     if key is None:
         st.warning(
-            "Toimittajaa ei tunnistettu tästä PDF:stä. Valitse toimittaja itse."
+            "Toimittajaa ei tunnistettu. Valitse toimittaja."
         )
         key = _ask_supplier("manual_route")
         if key is None:
@@ -115,9 +114,7 @@ def _parse_and_save(
 
     if suppliers.is_empty(parsed):
         st.error(
-            f"**{supplier.label}**-jäsennys ei löytänyt yhtään riviä. "
-            "PDF saattaa olla toiselta toimittajalta tai sen rakenne on "
-            "muuttunut. Hintoja ei tallennettu."
+            f"Hinnastosta ei löytynyt hintoja ({supplier.label}). Tarkista toimittaja."
         )
         return
 

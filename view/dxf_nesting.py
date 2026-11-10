@@ -91,11 +91,7 @@ def _render_nesting(products, n_parts, lookup, nest_mode, sheet, margin_pct):
     and the ``NestState``."""
     exe = find_executable()
     if exe is None:
-        st.error(
-            "Sparrow-suoritustiedostoa ei löytynyt — levylaskenta vaatii sen. "
-            "Aseta polku `SPARROW_BIN`-ympäristömuuttujaan tai lisää binääri "
-            "`bin/sparrow`-tiedostoksi."
-        )
+        st.error("Levylaskenta ei ole käytössä tällä palvelimella.")
         return None, NestState(ready=False)
 
     st.divider()
@@ -401,9 +397,7 @@ def _show(groups, settings: _Settings, cache: dict, nest, replan,
     if missing and grand_total is None:
         st.info("Paina **Laske levykäyttö** laskeaksesi levytarpeen ja hinnan.")
     elif missing:
-        st.warning("Yhteissumma sisältää vain lasketut ryhmät — paina **Laske "
-                   "levykäyttö** laskeaksesi loput. Jo laskettuja ei "
-                   "lasketa uudelleen.")
+        st.warning("Osa ryhmistä on laskematta. Paina **Laske levykäyttö**.")
     return bool(replanned), (groups, areas, out)
 
 
@@ -415,12 +409,10 @@ def _render_prices(products: list[Product], priced: tuple | None, margin_pct: fl
         return None
     groups, areas, (prices, grand_total, missing, sheets, totals) = priced
     if missing and grand_total is None:
-        st.info("Levyjä ei ole vielä nestattu: paina **Laske levykäyttö** kohdassa "
-                "2 · Nestaus.")
+        st.info("Paina **Laske levykäyttö** kohdassa 2 · Nestaus.")
         return None
     if missing:
-        st.warning("Hinnoissa ovat vain lasketut ryhmät: laske loput "
-                   "kohdassa 2 · Nestaus.")
+        st.warning("Osa ryhmistä on laskematta (2 · Nestaus).")
     ready = [p for p in products if is_ready(p)]
     return render_batch_prices(ready, prices, groups, sheets, totals, lead="Osa", key="dxf",
                                areas_mm2=areas, clean_parts=[_clean_part(p) for p in ready],
