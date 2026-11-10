@@ -3,9 +3,9 @@ dropped ZIP) as an ``InputFile``, and what its reader made of it, a
 ``ReadResult`` (see ``core.model`` and ``core.readers``). Everything after
 the drop reads files through here.
 
-A DXF or DWG is read when dropped (the cards need its part at once); a PDF
-when something first asks for it (a big RFQ has hundreds); a STEP model
-through ``view.bom``, which unfolds it with the K factor."""
+A DXF or DWG is read when dropped (the cards need its part at once), and so
+is a PDF, under the drop's progress bar (the cards need its text); a STEP
+model through ``view.bom``, which unfolds it with the K factor."""
 
 from __future__ import annotations
 

@@ -150,34 +150,75 @@ def material_field(words: list[dict]) -> str:
     return ""
 
 
-def pdf_material_fields(data: bytes, max_pages: int = 3) -> list[tuple[int, str]]:
-    """``[(page number, Material field text)]`` of a PDF's first pages that
-    have one (see ``material_field``)."""
+@dataclass(frozen=True)
+class PdfPage:
+    """One page of a PDF as the PDF reader reads it: its text and its words
+    (pdfplumber's ``extract_words``: ``text``, ``x0``, ``x1``, ``top``,
+    ``bottom``)."""
+
+    number: int                     # from 1
+    text: str
+    words: list[dict]
+
+
+def pdf_pages(data: bytes, max_pages: int = 3) -> list[PdfPage]:
+    """A PDF's first pages, read once; [] when unreadable. Only the text is
+    read: a drawing's lines and curves (often tens of thousands on a page)
+    are skipped (``_text_only``), and take most of the time otherwise."""
     import io
 
     import pdfplumber
 
     try:
         with pdfplumber.open(io.BytesIO(data)) as pdf:
-            found = [(i + 1, material_field(page.extract_words()))
-                     for i, page in enumerate(pdf.pages[:max_pages])]
+            out = []
+            for i, page in enumerate(pdf.pages[:max_pages]):
+                _text_only(page)
+                out.append(PdfPage(i + 1, page.extract_text() or "", page.extract_words()))
+            return out
     except Exception:  # noqa: BLE001 - any unreadable PDF just gives nothing
         return []
+
+
+def _text_only(page) -> None:
+    """Lay out ``page`` (pdfplumber) without its lines and curves, as the
+    page's own layout, so its text and words are read from the letters only.
+    Done on the page itself, not on pdfminer's classes, so a price list read
+    at the same time (its tables need the lines) is not affected. With a
+    pdfplumber that lays pages out some other way, the page is left as it
+    is (read whole, slower but the same)."""
+    try:
+        from pdfminer.pdfinterp import PDFPageInterpreter
+        from pdfplumber.page import PDFPageAggregatorWithMarkedContent
+    except ImportError:
+        return
+    if hasattr(page, "_layout") or not hasattr(page, "page_obj"):
+        return
+
+    class TextOnly(PDFPageAggregatorWithMarkedContent):
+        def paint_path(self, *args, **kwargs) -> None:
+            pass
+
+    device = TextOnly(page.pdf.rsrcmgr, pageno=page.page_number, laparams=page.pdf.laparams)
+    PDFPageInterpreter(page.pdf.rsrcmgr, device).process_page(page.page_obj)
+    page._layout = device.get_result()
+
+
+def material_fields(pages: list[PdfPage]) -> list[tuple[int, str]]:
+    """``[(page number, Material field text)]`` of the pages that have one
+    (see ``material_field``)."""
+    found = [(p.number, material_field(p.words)) for p in pages]
     return [(page, text) for page, text in found if text]
+
+
+def pdf_material_fields(data: bytes, max_pages: int = 3) -> list[tuple[int, str]]:
+    """``material_fields`` of a PDF's first pages."""
+    return material_fields(pdf_pages(data, max_pages))
 
 
 def pdf_text(data: bytes, max_pages: int = 3) -> list[tuple[int, str]]:
     """``[(page number, text)]`` of a PDF's first pages; [] when unreadable."""
-    import io
-
-    import pdfplumber
-
-    try:
-        with pdfplumber.open(io.BytesIO(data)) as pdf:
-            return [(i + 1, page.extract_text() or "") for i, page in
-                    enumerate(pdf.pages[:max_pages])]
-    except Exception:  # noqa: BLE001 - any unreadable PDF just gives no text
-        return []
+    return [(p.number, p.text) for p in pdf_pages(data, max_pages)]
 
 
 # ── Proposals ─────────────────────────────────────────────────────────────────
