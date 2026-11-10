@@ -109,3 +109,38 @@ def test_a_material_run_into_its_label_is_read():
     words = [_w("Material:HDG", 10, 100), _w("STEEL", 90, 100), _w("SHEET", 130, 100),
              _w("1,5MM", 170, 100)]
     assert material_field(words) == "HDG STEEL SHEET 1,5MM"
+
+
+def test_a_pdf_is_read_once_without_its_lines_and_reads_the_same():
+    # A drawing's lines and curves are skipped (most of the time on a real
+    # drawing): the text, the words and the Material field are the same.
+    import io
+
+    import pdfplumber
+    from reportlab.pdfgen import canvas
+
+    from core.materials import material_fields, pdf_pages
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(1190, 842))
+    for i in range(300):                                    # the drawing
+        c.line(20 + i * 3, 20, 400, 20 + i * 2)
+    c.bezier(10, 10, 200, 400, 600, 0, 800, 300)
+    c.rect(600, 50, 500, 120)
+    c.setFont("Helvetica", 8)
+    c.drawString(620, 140, "Material:")
+    c.drawString(680, 140, "S355MC")
+    c.drawString(620, 120, "Thickness 3 mm  PEM-FH-M4-12 4 pcs")
+    c.showPage()
+    c.drawString(72, 720, "Page two")
+    c.save()
+    data = buf.getvalue()
+
+    pages = pdf_pages(data)
+    with pdfplumber.open(io.BytesIO(data)) as pdf:
+        assert len(pdf.pages[0].lines) == 300                 # read whole, the lines are there
+        whole = [(page.extract_text(), page.extract_words()) for page in pdf.pages]
+    assert [(p.text, p.words) for p in pages] == whole
+    assert [p.number for p in pages] == [1, 2]
+    assert material_fields(pages) == [(1, "S355MC")]
+    assert pdf_pages(b"not a pdf") == []

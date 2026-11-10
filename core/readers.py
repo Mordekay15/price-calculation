@@ -239,12 +239,13 @@ def _bom_facts(text: str, file_id: str, page: int, own: str) -> list[Fact]:
 def read_pdf_file(data: bytes, file_id: str, name: str) -> ReadResult:
     """A PDF: no shape, only facts (material, part numbers, BOM lines,
     fastener callouts)."""
-    from core.fasteners import pdf_fasteners
-    from core.materials import pdf_material_fields, pdf_text
+    from core.fasteners import page_fasteners
+    from core.materials import material_fields, pdf_pages
 
     own = base_key(name)
-    pages = pdf_text(data)
-    fields = pdf_material_fields(data)
+    read = pdf_pages(data)              # opened and read once, for all three
+    pages = [(p.number, p.text) for p in read]
+    fields = material_fields(read)
     facts = [Fact("part_number", own, file_id, name)]
     for page, text in fields:
         facts += _material_facts(text, file_id, page, "field")
@@ -253,7 +254,7 @@ def read_pdf_file(data: bytes, file_id: str, name: str) -> ReadResult:
         facts += _callout_facts(text, own, file_id, page)
         facts += _bom_facts(text, file_id, page, own)
     facts += [Fact("fastener", {"name": n, "kpl": k}, file_id, f"{n} {k} PCS")
-              for n, k in pdf_fasteners(data)]
+              for n, k in page_fasteners(read)]
     result = ReadResult(file_id, facts=facts, record=(pages, fields))
     if not pages:
         result.problems.append("PDF-tiedostoa ei voi avata.")
