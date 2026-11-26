@@ -221,7 +221,7 @@ def _render_status(screen: str, nest: NestState, priced: bool) -> None:
             return ":green[valmis]" if nest.groups else ":gray[odottaa osia]"
         return ":green[hinta valmis]" if priced else ":gray[odottaa nestausta]"
 
-    flow = st.container(border=True)
+    flow = st.container(border=True, key="dxf_flow")
     with flow:
         flow.markdown("  →  ".join(
             (f"**{s}**" if s == screen else s) + " " + state(s) for s in SCREENS),
@@ -231,6 +231,7 @@ def _render_status(screen: str, nest: NestState, priced: bool) -> None:
             what[reason] = what.get(reason, 0) + 1
         if what:
             flow.caption("Kesken: " + " · ".join(f"{r} ({n})" for r, n in what.items()))
+    st.html('<div class="stremet-split"></div>')    # the menu above, the work below
 
 
 def _render_part_cards(parts, materials: list[str], lookup: dict,
