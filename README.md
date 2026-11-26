@@ -705,8 +705,9 @@ ring-shaped part, so keep frames on their own layer.
 
 The app uses Stremet's company look, taken from stremet.fi: the logo blue
 `#285c9f` for buttons, tabs and headings, the lighter blue `#1890d7` for links,
-the Libre Franklin font, and the Stremet logo (blue text, "Levystä tuotteeksi") and "S" icon. The colours and font
+the Libre Franklin font, the Stremet logo (blue text, "Levystä tuotteeksi") in the
+quote bar, "Stremet" alone at the top of the sidebar, and the "S" icon. The colours and font
 are set in `.streamlit/config.toml` (`[theme]`); the logo, the browser-tab icon
 and a few extra touches are in `view/brand.py`, with the image files in `assets/`.
-To change the logo, replace `assets/stremet-logo.png` (and `assets/stremet-icon.png`
-for the tab icon).
+To change the logos, replace `assets/stremet-logo.png` (quote bar),
+`assets/stremet-wordmark.svg` (sidebar) or `assets/stremet-icon.png` (tab icon).

@@ -28,6 +28,7 @@ from core.quote import (
     quote_xlsx,
 )
 from core.sheet_cost import piece_costs
+from view import brand
 from view.ui import is_headless, st
 from view.work import current_rates
 
@@ -55,7 +56,7 @@ def render_header(clear_all=None):
     bar = st.container(border=True)
     with bar:
         name, sizes, clear = st.columns([7, 2, 2], vertical_alignment="bottom")
-        name.markdown("#### Tarjous")
+        brand.quote_logo(name)
         sizes.text_input("Eräkoot (kpl)", value=" ".join(map(str, DEFAULT_BATCH_SIZES)),
                          key=_SIZES_KEY,
                          help="Jokainen osa hinnoitellaan näillä kappalemäärillä, esim. "
