@@ -25,7 +25,20 @@ header[data-testid="stHeader"] {{ border-top: 4px solid {BLUE}; }}
 /* The sidebar's "Stremet" a little bigger than Streamlit's logo size */
 img[data-testid="stSidebarLogo"] {{ height: 2rem; max-width: 100%; }}
 /* The open tab's name a little bolder */
-button[data-baseweb="tab"][aria-selected="true"] p {{ font-weight: 600; }}
+[data-testid="stTab"][aria-selected="true"] p {{ font-weight: 600; }}
+/* The main menu ("Tarjous tiedostoista", "Pikalaskuri") bold and bigger */
+.st-key-menu > div > [role="tablist"] [data-testid="stTab"] p {{
+    font-size: 1.15rem; font-weight: 700; }}
+/* The steps (1 · Osat ja tiedostot ...) a little bigger too */
+.st-key-dxf_menu > div > [role="tablist"] [data-testid="stTab"] p {{
+    font-size: 1.05rem; font-weight: 600; }}
+/* The step strip under them in light blue with a blue edge, so it reads as
+   the menu, apart from the calculations below it */
+.st-key-dxf_flow {{ background: #e8f0fa; border: 1px solid #c4d5ec;
+    border-left: 5px solid {BLUE}; }}
+.st-key-dxf_flow p {{ color: {BLUE}; }}
+/* The blue line that splits the menu from the calculations */
+.stremet-split {{ border-top: 2px solid {BLUE}; margin: 0.25rem 0 0.5rem; }}
 </style>
 """
 

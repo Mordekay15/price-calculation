@@ -14,8 +14,6 @@ one quote line.
   (e.g. "M5-PURISTEMUTTERIT X4KPL") are the part's own Ostetut osat, on its
   card (``view.work``), and come with it into any assembly. Only an assembly
   drawing's own notes are its assembly's bought parts.
-- **By hand.** Parts attached to each other (welded, riveted, screwed
-  together) are joined into one with "Uusi kokoonpano".
 
 Its cards are drawn inside it, apart from the loose parts.
 
@@ -25,15 +23,14 @@ BOM lines, then 1 for a part only called out. A number called out that is
 another assembly's makes that one a subassembly (``children``), and a part
 sits in one place: a card in a subassembly is not also in its parent.
 
-``ASSEMBLIES`` holds ``{assembly id (part number, or "hand:…"): Assembly}``
+``ASSEMBLIES`` holds ``{assembly id (part number): Assembly}``
 (``core.model.Assembly``): where each comes from, its bought parts and work,
-and its ``parts`` (set by ``current``). A STEP or hand member is stored by a
+and its ``parts`` (set by ``current``). A STEP member is stored by a
 source id of its card (see ``core.items``), so it stays on the right card
 when the card's files are regrouped."""
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Callable
 from dataclasses import replace
 
@@ -41,7 +38,7 @@ from core.items import NO_BLANK
 from core.linking import base_key
 from core.model import Assembly
 from view import bom, bought
-from view.ui import is_headless, st
+from view.ui import st
 from view.undo import undoable
 
 ASSEMBLIES = "dxf_assemblies"
@@ -129,9 +126,8 @@ def sync_from_drawings(items: dict, facts: Callable[[str], list]) -> None:
         if a.drawing and a.drawing not in drawings:
             a.drawing, a.drawn, a.children, a.awaited, a.fasteners_read = None, {}, {}, [], False
             _drop_if_undescribed(aid)
-    # The part numbers that are assemblies (one joined by hand has none).
-    numbers = {pn for pn, _, _ in drawings.values()} | {
-        aid for aid, a in store.items() if not a.by_hand}
+    # The part numbers that are assemblies.
+    numbers = {pn for pn, _, _ in drawings.values()} | set(store)
     for cid, (pn, expects, kpl) in drawings.items():
         a = store.setdefault(pn, Assembly(pn, pn.upper()))
         a.drawing = cid
@@ -168,16 +164,6 @@ def sync_drawing_fasteners(lines: dict[str, list[tuple[str, int]]],
             _add_bought(a, bought.fastener_parts(lines[cid], material(cid), "piirustus"))
 
 
-def join(cids: list[str], name: str) -> None:
-    """"Uusi kokoonpano": parts attached to each other, 1 kpl each, as one
-    assembly. Their fasteners stay on their cards."""
-    if not cids:
-        return
-    aid = f"hand:{uuid.uuid4().hex[:8]}"
-    _store()[aid] = Assembly(aid, name.strip() or "Kokoonpano",
-                             members={cid: 1 for cid in cids}, by_hand=True)
-
-
 def drawings() -> dict[str, str]:
     """``{assembly id: card id}`` of the assemblies made from a drawing: that
     card is the assembly's drawing, not one of its parts."""
@@ -186,7 +172,7 @@ def drawings() -> dict[str, str]:
 
 def _cards_of(a: Assembly, card_of: dict[str, str]) -> dict[str, int]:
     """An assembly's own cards with their kpl (members whose card is gone
-    left out): the STEP model's (or joined by hand) first, then the ones its
+    left out): the STEP model's first, then the ones its
     drawing calls out that the model doesn't have."""
     out: dict[str, int] = {}
     for sid, n in a.members.items():
@@ -238,20 +224,16 @@ _WORK_LABELS = {
 
 
 def render(card_of: dict[str, str], draw_cards: Callable[[str, dict[str, int]], None],
-           remove_card: Callable[[str], None], labels: dict[str, str] | None = None) -> None:
+           remove_card: Callable[[str], None]) -> None:
     """The assemblies, apart from the loose parts: each one's cards (drawn by
     ``draw_cards(assembly id, {card id: kpl / kokoonpano})``), bought parts and
     assembly work. Removing an assembly removes its cards and drawing
-    (``remove_card``) and its STEP file. ``labels`` ("#1 · name" by card id)
-    are the parts "Uusi kokoonpano" can join."""
+    (``remove_card``) and its STEP file."""
     store = _store()
-    st.divider()
-    title, new = st.columns([8, 2], vertical_alignment="center")
-    if labels and len(labels) > 1 and not is_headless():
-        _render_new(new, labels)
     if not store:
         return
-    title.markdown(f"**Kokoonpanot ({len(store)})**",
+    st.divider()
+    st.markdown(f"**Kokoonpanot ({len(store)})**",
                 help="Kokoonpano on yksi tarjousrivi: sen osat (kortit), ostetut osat ja "
                      "kokoamistyö. Eräkoko tarkoittaa kokoonpanojen määrää, ja jokainen osa "
                      "hinnoitellaan määrällä eräkoko × kpl / kokoonpano. STEP-kokoonpano "
@@ -264,32 +246,13 @@ def render(card_of: dict[str, str], draw_cards: Callable[[str, dict[str, int]], 
                     parents.get(aid))
 
 
-def _render_new(col, labels: dict[str, str]) -> None:
-    """"Uusi kokoonpano": pick the parts attached to each other."""
-    ss = st.session_state
-    ss["asm_new_parts"] = [c for c in ss.get("asm_new_parts") or [] if c in labels]
-    with col.popover("Uusi kokoonpano", width="stretch"):
-        st.text_input("Nimi", key="asm_new_name")
-        st.multiselect("Osat", list(labels), format_func=labels.get, key="asm_new_parts",
-                       help="Toisiinsa kiinnitetyt osat (hitsatut, niitatut, ruuvatut), "
-                            "1 kpl / kokoonpano kukin. Osien kiinnikkeet pysyvät osien korteilla.")
-        st.button("Yhdistä kokoonpanoksi", key="asm_new_go", type="primary",
-                  on_click=undoable(_join_picked, "uusi kokoonpano"))
-
-
-def _join_picked() -> None:
-    ss = st.session_state
-    join(ss.get("asm_new_parts") or [], ss.get("asm_new_name") or "")
-    ss["asm_new_parts"], ss["asm_new_name"] = [], ""
-
-
 def _origin(a: Assembly) -> str | None:
     if a.step_file:
         return "Tehty STEP-mallista: osat ja määrät mallin rakenteesta."
     if a.drawing:
         return ("Tehty kokoonpanopiirustuksesta: osat ovat piirustuksessa mainitut "
                 "osanumerot, 1 kpl / kokoonpano kukin. Tarkista määrät piirustuksesta.")
-    return "Yhdistetty käsin: toisiinsa kiinnitetyt osat." if a.by_hand else None
+    return None
 
 
 def _render_one(aid: str, a: Assembly, cards: dict[str, int],
@@ -300,11 +263,10 @@ def _render_one(aid: str, a: Assembly, cards: dict[str, int],
         c1, c2 = st.columns([6, 1], vertical_alignment="bottom")
         a.name = c1.text_input("Kokoonpano", value=a.name, key=f"asm_name_{aid}",
                                help=_origin(a))
-        c2.button("Pura" if a.by_hand else "Poista", key=f"asm_del_{aid}",
+        c2.button("Poista", key=f"asm_del_{aid}",
                   on_click=undoable(_remove, f"kokoonpano {a.name}"),
                   args=(aid, card_of, remove_card),
-                  help="Purkaa kokoonpanon: osat jäävät irto-osiksi." if a.by_hand else
-                  "Poistaa kokoonpanon ja sen osat (kortit, piirustuksen ja STEP-mallin).")
+                  help="Poistaa kokoonpanon ja sen osat (kortit, piirustuksen ja STEP-mallin).")
         if a.awaited:
             st.warning("Puuttuvat osat: " + ", ".join(a.awaited)
                        + ". Lataa niiden tiedostot tai lisää ne ostettuina osina.")
@@ -325,7 +287,7 @@ def _remove(aid: str, card_of: dict[str, str], remove_card: Callable[[str], None
     store = _store()
     a = store.pop(aid, None)
     bought.reset(_widget(aid))
-    if a is None or a.by_hand:       # only undone: its parts are loose again
+    if a is None:
         return
     others = {c for b in store.values() for c in _cards_of(b, card_of)}
     for cid in [*_cards_of(a, card_of), *filter(None, [a.drawing])]:

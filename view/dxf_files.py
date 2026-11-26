@@ -581,19 +581,6 @@ def evict(fid: str) -> None:
     sync()
 
 
-def evict_all() -> None:
-    """The "Poista kaikki" button: every card's "Poista" at once."""
-    for fid in list(parts()):
-        evict(fid)
-    for doc_id in list(attachments.docs()):
-        attachments.remove_doc(doc_id)
-    for key in (*files.KEYS, PARTS, _HIDDEN, FILL_ASKED,
-                _DUPES, _SKIPPED,   # these warnings name files that are gone
-                _BEND_LINES,
-                AUTO_SHOWN, bought.SEEDS, *material_agent.KEYS, *assemblies.KEYS):
-        st.session_state.pop(key, None)
-
-
 def model_bends(fid: str, shape: FlatShape, item: Part | None) -> list | None:
     """The card's STEP bend lines on its DXF (a flat DXF often has no bend
     lines of its own), worked out once per shape."""

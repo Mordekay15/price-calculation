@@ -308,14 +308,14 @@ class AssemblyWork:
 @dataclass
 class Assembly:
     """One per part number, however many files describe it: a STEP model of
-    several bodies, an assembly drawing, or parts joined by hand. It goes
+    several bodies or an assembly drawing. It goes
     when none of them is left (``described``).
 
     ``parts`` are its cards × kpl / kokoonpano, a part sitting in one place
     (one in a subassembly is not also in its parent), ``children`` its
     subassemblies × kpl; ``core.assemblies`` prices them."""
 
-    id: str                                     # its part number, or "hand:…"
+    id: str                                     # its part number
     name: str
     parts: dict[str, int] = field(default_factory=dict)       # card id → kpl
     bought: list[BoughtPart] = field(default_factory=list)
@@ -324,17 +324,16 @@ class Assembly:
     # Where it comes from:
     step_file: str | None = None                # the STEP model's file id
     members: dict[str, int] = field(default_factory=dict)     # source id → kpl: the
-    #   model's sheet bodies, or the cards joined by hand
+    #   model's sheet bodies
     step_bought: list[str] = field(default_factory=list)      # the model's bodies in bought
     drawing: str | None = None                  # the card of its assembly drawing
     drawn: dict[str, int] = field(default_factory=dict)       # card id → kpl it calls out
     awaited: list[str] = field(default_factory=list)          # called out, not dropped
     fasteners_read: bool = False                # its drawing's notes are in bought
-    by_hand: bool = False
 
     @property
     def described(self) -> bool:
-        return bool(self.step_file or self.drawing or self.by_hand)
+        return bool(self.step_file or self.drawing)
 
 
 # ── 5 · Nesting and price ───────────────────────────────────────────────────

@@ -279,15 +279,6 @@ def test_one_part_is_never_asked():
     assert not any("samaa materiaalia" in m.value for m in at.markdown)
 
 
-def test_poista_kaikki_removes_every_card_and_its_settings():
-    assert "dxf_del_all" not in [b.key for b in dxf_page(1).button]   # one part: its own Poista
-    at = fill_first_card(dxf_page(2))
-    at.button(key="dxf_del_all").click().run()
-    assert not at.session_state["materials"]
-    assert "dxf_parts" not in at.session_state or not at.session_state["dxf_parts"]
-    assert not [k for k in at.session_state if k.startswith(("dxf_mat_", "dxf_q_"))]
-
-
 def test_a_margin_change_reprices_without_running_sparrow_again():
     # The same group nested twice, at 15 % and 20 % margin: the second time
     # every Sparrow question is answered from the session, and only the price
