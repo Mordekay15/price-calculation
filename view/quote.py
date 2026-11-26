@@ -72,9 +72,11 @@ def render_header(clear_all=None):
                  "materiaali arvioidaan siitä. Pois: jokainen osa hinnoitellaan "
                  "osakorttinsa määrällä, ja tarjouksella on yksi yhteissumma.")
         if not per_card():   # off: the quantities are on the cards
-            row.text_input("Eräkoot (kpl)", value=" ".join(map(str, DEFAULT_BATCH_SIZES)),
-                           key=_SIZES_KEY, width=160, label_visibility="collapsed",
-                           placeholder="esim. 1 5 10")
+            # Empty, with the defaults shown greyed as an example (and priced
+            # until sizes are typed, see current_sizes).
+            row.text_input("Eräkoot (kpl)", value="", key=_SIZES_KEY, width=160,
+                           label_visibility="collapsed",
+                           placeholder=" ".join(map(str, DEFAULT_BATCH_SIZES)))
         if clear_all is not None:
             with row.popover("Tyhjennä kaikki", type="primary"):
                 st.button("Kyllä, tyhjennä", key="ui_clear_all", type="primary",

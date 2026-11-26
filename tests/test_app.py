@@ -142,7 +142,7 @@ def test_a_dxf_part_is_priced_at_the_batch_sizes_or_at_its_own_quantity():
     assert at.number_input(key="dxf_q_f0").value == 1
     # Eräkoot on: the sizes at the top, no Määrä on the card.
     at.toggle(key="quote_batches").set_value(True).run()
-    assert at.text_input(key="quote_batch_sizes").value == "1 5 10"
+    assert at.text_input(key="quote_batch_sizes").value in ("", None)   # 1 5 10 as the example
     assert not any(n.key == "dxf_q_f0" for n in at.number_input)
 
 
@@ -191,7 +191,7 @@ def test_clear_all_empties_the_quote_and_keeps_the_rates():
     at.button(key="ui_clear_all").click().run()
     assert not at.exception
     assert not at.session_state["inputs"]
-    assert at.text_input(key="quote_batch_sizes").value == "1 5 10"
+    assert at.text_input(key="quote_batch_sizes").value in ("", None)   # 1 5 10 as the example
     assert at.number_input(key="work_weld_eur_per_h").value == 99.0     # the sidebar stays
     assert not any(n.key == "dxf_q_f0" for n in at.number_input)
     assert not any(b.key == "ui_undo_do" for b in at.button)       # nothing more to answer
