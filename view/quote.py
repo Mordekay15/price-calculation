@@ -52,15 +52,15 @@ class Totals:
     margin_pct: float | None = None
 
 
-def render_header(clear_all=None):
-    """The bar above the tabs: the batch sizes and, given ``clear_all`` (a
-    callback), "Tyhjennä kaikki" behind one confirming click. Returns the place
-    for the totals, filled once the open tab has priced (``render_totals``).
+def render_header(clear_all=None) -> None:
+    """The bar above the tabs: the logo, the "Eräkoot" switch with the batch
+    sizes and, given ``clear_all`` (a callback), "Tyhjennä kaikki" behind one
+    confirming click. The totals are on the prices (``render_batch_prices``).
     Both tabs read the sizes back with ``current_sizes``."""
-    bar = st.container(border=True, key="quote_bar")   # styled in view/brand.py
+    bar = st.container(border=True)
     with bar:
-        # One row: the logo, the totals (filled by render_totals), the controls.
-        name, totals_slot, controls = st.columns([2.3, 4.5, 5.2], vertical_alignment="center")
+        # One row: the logo, then the controls on the right.
+        name, controls = st.columns([4, 8], vertical_alignment="center")
         brand.quote_logo(name)
         # The controls side by side on the right: with the switch off the
         # batch sizes go and the rest close up, leaving no gap.
@@ -84,27 +84,24 @@ def render_header(clear_all=None):
                           on_click=clear_all, width="stretch",
                           help="Poistaa tiedostot ja osat. Hinnastot ja "
                                "työn hinnat sivupalkissa jäävät.")
-        return totals_slot.container()
 
 
-def render_totals(slot, totals: Totals | None) -> None:
-    """The bar's totals: the quote at each batch size."""
-    with slot:
-        if totals is None or not totals.totals:
-            st.caption("Ei vielä hintaa")
-            return
-        # The totals side by side, the notes in one small line under them.
-        row = st.container(horizontal=True, gap="medium", wrap=True)
+def render_totals(totals: Totals) -> None:
+    """The quote's totals, at each batch size (or one, per card), and under
+    them one small line: the material margin."""
+    with st.container(key="quote_totals"):
+        row = st.container(horizontal=True, gap="large", wrap=True)
         for q, t in zip(totals.sizes, totals.totals):
             row.metric("Yhteensä" if per_card() else f"{q} kpl / nimike", fmt_eur(t) or "–",
                        help=None if t is not None else "Osalta puuttuu hinta.",
                        width="content")
-        notes = ["ALV 0 %"]
+        notes = []
         if totals.margin_pct is not None:
-            notes.append(f"materiaalin kate {totals.margin_pct:g} %")
+            notes.append(f"Kate {totals.margin_pct:g} %")
         if totals.missing:
             notes.append(":orange[arvio: kaikkia ryhmiä ei ole vielä nestattu]")
-        st.caption(" · ".join(notes))
+        if notes:
+            st.caption(" · ".join(notes))
 
 
 def per_card() -> bool:
@@ -207,6 +204,7 @@ def render_batch_prices(products: list[Product], prices: dict[str, float],
 
     if table:
         st.divider()
+    render_totals(result)
     if per_card():
         title, how = "**Hinnat**", (
             "Kpl-hinta osakortin määrällä: materiaali + työ + erän kiinteät kulut "

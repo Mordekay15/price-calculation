@@ -24,10 +24,6 @@ header[data-testid="stHeader"] {{ border-top: 4px solid {BLUE}; }}
 [data-testid="stSidebar"] h3 {{ color: {BLUE}; }}
 /* The sidebar's "Stremet" a little bigger than Streamlit's logo size */
 img[data-testid="stSidebarLogo"] {{ height: 2rem; max-width: 100%; }}
-/* The totals in the quote bar a size smaller, so three batch sizes fit
-   between the logo and the switches */
-.st-key-quote_bar [data-testid="stMetricValue"],
-.st-key-quote_bar [data-testid="stMetricValue"] * {{ font-size: 1.5rem !important; }}
 /* The open tab's name a little bolder */
 button[data-baseweb="tab"][aria-selected="true"] p {{ font-weight: 600; }}
 </style>
@@ -36,7 +32,7 @@ button[data-baseweb="tab"][aria-selected="true"] p {{ font-weight: 600; }}
 
 def quote_logo(slot) -> None:
     """The full logo, with "Levystä tuotteeksi", in the quote bar."""
-    slot.image(str(LOGO), width=200)
+    slot.image(str(LOGO), width=240)
 
 
 def apply() -> None:

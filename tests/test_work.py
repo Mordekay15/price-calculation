@@ -197,7 +197,6 @@ def test_maara_prices_each_products_own_quantity_with_one_total(tmp_path, monkey
     at10 = batches.iloc[0]["10 kpl, €/kpl"]
     at.toggle(key="quote_batches").set_value(False).run()
     assert not any(t.key == "quote_batch_sizes" for t in at.text_input)
-    at.session_state["menu"] = "Pikalaskuri (käsin)"     # the bar shows this tab's total
     at.number_input(key=f"q_{pid}").set_value(10).run()
     assert not at.exception
     table = next(d.value for d in at.dataframe if "€/kpl" in d.value.columns

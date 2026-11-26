@@ -93,13 +93,16 @@ def test_each_screen_keeps_the_others_inputs_and_prices_on_hinnoittelu(tmp_path,
     # The batch-size switchable breakdown, and the quote as the customer sees it.
     [table] = [d.value for d in at.dataframe if "Taivutus" in d.value.columns]
     assert len(table) == 1 and table["Taivutus"].iloc[0] > 0     # the card's 3 bends
+    # The totals are here, on Hinnoittelu, with the margin under them.
+    assert [m.value for m in at.metric if m.label == "10 kpl / nimike"][0] not in ("", "–")
+    assert any(c.value == "Kate 15 %" for c in at.caption)
     at.session_state["dxf_menu"] = BOM
     at.run()
     assert at.number_input(key="work_bends_f0").value == 3.0
     assert at.selectbox(key="dxf_mat_f0").value == "S235"
     assert not any(n.key == "dxf_q_f0" for n in at.number_input)   # Eräkoot: none
-    # The bar has the total on every step, here too.
-    assert [m.value for m in at.metric if m.label == "10 kpl / nimike"][0] not in ("", "–")
+    # Only Hinnoittelu has the totals; the bar at the top has none.
+    assert not any(m.label == "10 kpl / nimike" for m in at.metric)
     at.session_state["dxf_menu"] = NESTING
     at.run()
     assert at.number_input(key="dxf_sparrow_t").value == 1
