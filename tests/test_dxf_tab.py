@@ -677,6 +677,40 @@ def test_the_same_file_in_two_folders_is_kept_once():
     assert at.session_state["dxf_dupes"][0] == ["100325.pdf"]   # the loose one, warned about
 
 
+def test_a_drop_reads_its_pdfs_at_once():
+    # The PDFs are read in the drop (under its progress bar), not on the
+    # next run with nothing on the screen.
+    from streamlit.testing.v1 import AppTest
+
+    def page():
+        import io
+        import zipfile
+        from types import SimpleNamespace
+
+        import streamlit as st
+        from reportlab.pdfgen import canvas
+
+        from view import files
+        from view.dxf_files import ingest
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for i in range(7):
+                pdf = io.BytesIO()
+                c = canvas.Canvas(pdf)
+                c.drawString(72, 720, f"Material: S235JR  drawing {i}")
+                c.save()
+                zf.writestr(f"RFQ/10032{i}.pdf", pdf.getvalue())
+        if "done" not in st.session_state:
+            st.session_state["done"] = True
+            ingest([SimpleNamespace(file_id="z", name="RFQ.zip", getvalue=lambda: buf.getvalue())])
+            st.session_state["read"] = sorted(files.get(f).name for f in files.results())
+
+    at = AppTest.from_function(page, default_timeout=60).run()
+    assert not at.exception
+    assert at.session_state["read"] == [f"10032{i}.pdf" for i in range(7)]
+
+
 def test_a_big_step_model_of_a_large_drop_is_read_when_asked(tmp_path):
     import io
     import zipfile

@@ -203,7 +203,7 @@ def ingest(uploaded) -> bool:
     dropped = [up for up in uploaded or [] if up.file_id not in known]
     names = {(f.folder, f.name) for f in known.values()}
     same = {(f.name, f.digest) for f in known.values() if f.digest}
-    dupes, skipped = [], []
+    dupes, skipped, pdfs = [], [], []
     todo = _unzipped(dropped, skipped)
     bar = st.progress(0.0) if len(todo) > 5 else None
     for n, up in enumerate(todo):
@@ -231,6 +231,8 @@ def ingest(uploaded) -> bool:
                       size_bytes=len(data), digest=digest)
         if f.kind in ("pdf", "step"):
             attachments.add_doc(f, data)
+            if f.kind == "pdf":
+                pdfs.append(f)
             if f.kind == "step" and step_available():
                 if len(todo) > 5 and len(data) > _BIG_STEP_BYTES:
                     f.status = "waiting"
@@ -240,6 +242,7 @@ def ingest(uploaded) -> bool:
             add_drawing(f, data)
         names.add((folder, name))
         same.add((name, digest))
+    _read_pdfs(pdfs, bar)
     if bar is not None:
         bar.empty()
     if dropped:
@@ -251,6 +254,22 @@ def ingest(uploaded) -> bool:
     if len(dropped) > len(dupes) + len(skipped):
         st.session_state.pop(FILL_ASKED, None)  # new empty parts: ask again
     return bool(dropped)
+
+
+def _read_pdfs(pdfs: list[InputFile], bar) -> None:
+    """Read the dropped PDFs now, under the drop's progress bar: the cards
+    need their texts at once (a drawing's title block names its part, its
+    Material field and fasteners fill the card), and reading hundreds would
+    otherwise happen on the next run with nothing on the screen."""
+    if bar is None and len(pdfs) > 5:
+        bar = st.progress(0.0)
+    for n, f in enumerate(pdfs):
+        if bar is not None:
+            bar.progress(n / len(pdfs), text=f"Luetaan PDF-piirustuksia {n + 1} / {len(pdfs)}: "
+                                             f"{f.name}")
+        files.result(f.id)
+    if bar is not None:
+        bar.empty()
 
 
 def add_drawing(f: InputFile, data: bytes) -> None:

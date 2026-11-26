@@ -70,18 +70,18 @@ def fastener_callouts(words: list[dict]) -> list[tuple[str, int]]:
     return list(out.items())
 
 
+def page_fasteners(pages) -> list[tuple[str, int]]:
+    """``[(name, kpl)]`` the drawing's pages (``core.materials.PdfPage``) call
+    out, the same name added up over the pages."""
+    out: dict[str, int] = {}
+    for page in pages:
+        for name, n in fastener_callouts(page.words):
+            out[name] = out.get(name, 0) + n
+    return list(out.items())
+
+
 def pdf_fasteners(data: bytes, max_pages: int = 3) -> list[tuple[str, int]]:
     """``[(name, kpl)]`` the drawing PDF calls out; [] when unreadable."""
-    import io
+    from core.materials import pdf_pages
 
-    import pdfplumber
-
-    out: dict[str, int] = {}
-    try:
-        with pdfplumber.open(io.BytesIO(data)) as pdf:
-            for page in pdf.pages[:max_pages]:
-                for name, n in fastener_callouts(page.extract_words()):
-                    out[name] = out.get(name, 0) + n
-    except Exception:  # noqa: BLE001 - any unreadable PDF just gives none
-        return []
-    return list(out.items())
+    return page_fasteners(pdf_pages(data, max_pages))
