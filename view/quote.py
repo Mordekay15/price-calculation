@@ -58,21 +58,25 @@ def render_header(clear_all=None):
     Both tabs read the sizes back with ``current_sizes``."""
     bar = st.container(border=True)
     with bar:
-        name, mode, sizes, clear = st.columns([5, 2.2, 2.2, 2], vertical_alignment="bottom")
+        name, controls = st.columns([4, 7], vertical_alignment="bottom")
         brand.quote_logo(name)
-        mode.segmented_control(
+        # The controls side by side on the right: with Määrä the batch sizes
+        # go and the rest close up, leaving no gap.
+        row = controls.container(horizontal=True, horizontal_alignment="right",
+                                 vertical_alignment="bottom")
+        row.segmented_control(
             "Määrät", [BATCHES, PER_CARD], default=BATCHES, key=MODE_KEY,
             help="Eräkoot: jokainen nimike hinnoitellaan kirjoitetuilla eräkoilla. "
                  "Määrä: jokainen osa hinnoitellaan osakorttinsa määrällä, ja "
                  "tarjouksella on yksi yhteissumma.")
         if not per_card():   # Määrä: the quantities are on the cards
-            sizes.text_input("Eräkoot (kpl)", value=" ".join(map(str, DEFAULT_BATCH_SIZES)),
-                             key=_SIZES_KEY,
-                             help="Jokainen osa hinnoitellaan näillä kappalemäärillä, esim. "
-                                  "\"1 5 10\". Levyt nestataan suurimmalla eräkoolla; "
-                                  "muiden eräkokojen materiaali arvioidaan siitä.")
+            row.text_input("Eräkoot (kpl)", value=" ".join(map(str, DEFAULT_BATCH_SIZES)),
+                           key=_SIZES_KEY, width=180,
+                           help="Jokainen osa hinnoitellaan näillä kappalemäärillä, esim. "
+                                "\"1 5 10\". Levyt nestataan suurimmalla eräkoolla; "
+                                "muiden eräkokojen materiaali arvioidaan siitä.")
         if clear_all is not None:
-            with clear.popover("Tyhjennä kaikki", type="primary", width="stretch"):
+            with row.popover("Tyhjennä kaikki", type="primary"):
                 st.button("Kyllä, tyhjennä", key="ui_clear_all", type="primary",
                           on_click=clear_all, width="stretch",
                           help="Poistaa tiedostot ja osat. Hinnastot ja "
