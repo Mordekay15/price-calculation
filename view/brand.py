@@ -20,7 +20,7 @@ header[data-testid="stHeader"] {{ border-top: 4px solid {BLUE}; }}
 [data-testid="stMain"] h1, [data-testid="stMain"] h2,
 [data-testid="stMain"] h3, [data-testid="stSidebar"] h2,
 [data-testid="stSidebar"] h3 {{ color: {BLUE}; }}
-/* The logo (white on blue, with "Levystä tuotteeksi") big enough to read */
+/* The logo (blue text with "Levystä tuotteeksi") big enough to read */
 [data-testid="stSidebarHeader"] {{ height: auto; padding-top: 1rem; }}
 img[data-testid="stSidebarLogo"], img[data-testid="stLogo"] {{
     height: 3.5rem; max-width: 100%; border-radius: 6px; }}
