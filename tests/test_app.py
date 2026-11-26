@@ -70,6 +70,7 @@ def test_each_screen_keeps_the_others_inputs_and_prices_on_hinnoittelu(tmp_path,
     doc.header["$INSUNITS"] = 4
     doc.modelspace().add_lwpolyline([(0, 0), (300, 0), (300, 200), (0, 200)], close=True)
     at = AppTest.from_file("../app.py", default_timeout=120)
+    at.session_state["quote_batches"] = True    # Eräkoot on
     _drop(at, {"f0": ("p.dxf", dxf_bytes(doc))})
     at.session_state["menu"] = FILES
     at.run()
@@ -125,11 +126,7 @@ def test_a_dxf_part_is_priced_at_the_batch_sizes_or_at_its_own_quantity():
     _drop(at, {"f0": ("p.dxf", dxf_bytes(doc))})
     at.session_state["menu"] = FILES
     at.run()
-    # Eräkoot (the default): the sizes at the top, no Määrä on the card.
-    assert any(t.key == "quote_batch_sizes" for t in at.text_input)
-    assert not any(n.key == "dxf_q_f0" for n in at.number_input)
-    # Määrä: the card's own quantity (1 by default), no sizes at the top.
-    at.button_group(key="quote_qty_mode").set_value("Määrä").run()
+    # Eräkoot off (the default): the card's own quantity (1), no sizes at the top.
     assert not at.exception
     assert not any(t.key == "quote_batch_sizes" for t in at.text_input)
     assert at.number_input(key="dxf_q_f0").value == 1
@@ -143,8 +140,8 @@ def test_a_dxf_part_is_priced_at_the_batch_sizes_or_at_its_own_quantity():
     # Clearing it brings the automatic quantity back.
     at.number_input(key="dxf_q_f0").set_value(None).run()
     assert at.number_input(key="dxf_q_f0").value == 1
-    # Back to Eräkoot: the sizes typed before are still there.
-    at.button_group(key="quote_qty_mode").set_value("Eräkoot").run()
+    # Eräkoot on: the sizes at the top, no Määrä on the card.
+    at.toggle(key="quote_batches").set_value(True).run()
     assert at.text_input(key="quote_batch_sizes").value == "1 5 10"
     assert not any(n.key == "dxf_q_f0" for n in at.number_input)
 
@@ -186,6 +183,7 @@ def test_clear_all_empties_the_quote_and_keeps_the_rates():
     doc.header["$INSUNITS"] = 4
     doc.modelspace().add_lwpolyline([(0, 0), (300, 0), (300, 200), (0, 200)], close=True)
     at = AppTest.from_file("../app.py", default_timeout=60)
+    at.session_state["quote_batches"] = True    # Eräkoot on
     _drop(at, {"f0": ("p.dxf", dxf_bytes(doc))})
     at.run()
     at.text_input(key="quote_batch_sizes").set_value("2 4").run()

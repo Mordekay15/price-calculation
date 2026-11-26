@@ -123,12 +123,12 @@ def _render_product(prod: Product, index: int, materials: list[str], lookup: dic
             "Korkeus (mm)", min_value=0.0, value=float(prod.height),
             step=10.0, key=f"h_{pid}",
         )
-        if per_card():   # Määrät: Määrä at the top, so the product's own quantity
+        if per_card():   # Eräkoot off: the product's own quantity
             q = q_col.number_input(
                 "Määrä (kpl)", min_value=1, value=int(prod.qty),
                 step=1, key=f"q_{pid}",
             )
-        else:            # Eräkoot: nested at the largest batch size
+        else:            # Eräkoot on: nested at the largest batch size
             q = max(current_sizes())
 
         work = render_work_inputs(pid, material=material, thickness=thickness, qty=q,

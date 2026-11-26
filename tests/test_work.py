@@ -152,7 +152,9 @@ def test_manual_tab_prices_work_per_piece(tmp_path, monkeypatch):
     rows = [{"Paksuus (mm)": "2", "S235 | 1000x2000": 900.0}]
     json.dump({"data": {"levyt": rows}, "source_file": "t.pdf", "updated_at": "x"},
               open(tmp_path / suppliers.SUPPLIERS[0].path, "w"))
-    at = AppTest.from_file("../app.py", default_timeout=60).run()
+    at = AppTest.from_file("../app.py", default_timeout=60)
+    at.session_state["quote_batches"] = True    # Eräkoot on
+    at.run()
     pid = at.session_state["calc_products"][0].id
     at.selectbox(key=f"mat_{pid}").select("S235").run()
     at.selectbox(key=f"th_{pid}").select("2").run()
@@ -183,7 +185,9 @@ def test_maara_prices_each_products_own_quantity_with_one_total(tmp_path, monkey
     rows = [{"Paksuus (mm)": "2", "S235 | 1000x2000": 900.0}]
     json.dump({"data": {"levyt": rows}, "source_file": "t.pdf", "updated_at": "x"},
               open(tmp_path / suppliers.SUPPLIERS[0].path, "w"))
-    at = AppTest.from_file("../app.py", default_timeout=60).run()
+    at = AppTest.from_file("../app.py", default_timeout=60)
+    at.session_state["quote_batches"] = True    # Eräkoot on
+    at.run()
     pid = at.session_state["calc_products"][0].id
     at.selectbox(key=f"mat_{pid}").select("S235").run()
     at.selectbox(key=f"th_{pid}").select("2").run()
@@ -191,7 +195,7 @@ def test_maara_prices_each_products_own_quantity_with_one_total(tmp_path, monkey
         at.number_input(key=f"{key}_{pid}").set_value(value).run()
     batches = next(d.value for d in at.dataframe if "10 kpl, €/kpl" in d.value.columns)
     at10 = batches.iloc[0]["10 kpl, €/kpl"]
-    at.button_group(key="quote_qty_mode").set_value("Määrä").run()
+    at.toggle(key="quote_batches").set_value(False).run()
     assert not any(t.key == "quote_batch_sizes" for t in at.text_input)
     at.session_state["menu"] = "Pikalaskuri (käsin)"     # the bar shows this tab's total
     at.number_input(key=f"q_{pid}").set_value(10).run()
@@ -242,7 +246,9 @@ def test_a_missing_pdf_package_hides_its_download_not_the_page(tmp_path, monkeyp
     json.dump({"data": {"levyt": rows}, "source_file": "t.pdf", "updated_at": "x"},
               open(tmp_path / suppliers.SUPPLIERS[0].path, "w"))
     monkeypatch.setattr(builtins, "__import__", no_reportlab)
-    at = AppTest.from_file("../app.py", default_timeout=60).run()
+    at = AppTest.from_file("../app.py", default_timeout=60)
+    at.session_state["quote_batches"] = True    # Eräkoot on
+    at.run()
     pid = at.session_state["calc_products"][0].id
     at.selectbox(key=f"mat_{pid}").select("S235").run()
     at.selectbox(key=f"th_{pid}").select("2").run()

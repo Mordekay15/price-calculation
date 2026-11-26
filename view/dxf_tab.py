@@ -62,7 +62,7 @@ from view.dxf_nesting import (
     render_nesting,
     render_nesting_angles,
 )
-from view.quote import MODE_KEY, current_sizes, per_card
+from view.quote import BATCHES_KEY, current_sizes, per_card
 from view.ui import headless, is_headless, keep, st
 from view.undo import render_undo, undoable
 from view.work import RATE_KEYS, auto_input, render_work_inputs
@@ -149,8 +149,8 @@ def _render_next(screen: str) -> None:
 
 
 # Kept by "Tyhjennä kaikki": the sidebar (price lists, copper, work rates),
-# the open menu, Eräkoot or Määrä at the top, and the drop area's counter (its old files must not return).
-_KEPT = ("upload_", "copper_", "manual_route", "menu", "dxf_inbox", MODE_KEY)
+# the open menu, the Eräkoot switch, and the drop area's counter (its old files must not return).
+_KEPT = ("upload_", "copper_", "manual_route", "menu", "dxf_inbox", BATCHES_KEY)
 
 
 def clear_all() -> None:
@@ -623,7 +623,7 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict,
         why = ((f"{per_assembly} kpl / kokoonpano × " if per_assembly else "")
                + f"suurin eräkoko {batch} (Eräkoot, sivun ylälaidassa)")
     if per_card():
-        # The card's Määrä is what is priced (Määrät: Määrä at the top).
+        # The card's Määrä is what is priced (the Eräkoot switch off).
         col = st.columns(2)[0]
         qty = max(int(auto_input(col, "Määrä (kpl)", f"dxf_q_{fid}", auto, step=1.0,
                                  fmt="%.0f", help="Osa hinnoitellaan ja levyt nestataan "

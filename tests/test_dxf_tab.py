@@ -181,6 +181,7 @@ def dxf_page(n):
     from streamlit.testing.v1 import AppTest
 
     at = AppTest.from_file("dxf_page.py")
+    at.session_state["quote_batches"] = True    # Eräkoot on
     at.session_state["n"] = n
     return at.run()
 

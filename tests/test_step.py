@@ -125,7 +125,9 @@ def test_the_flat_dxf_reads_back_with_its_bends_and_thickness():
 def test_an_assembly_becomes_cards_with_its_quantities():
     from streamlit.testing.v1 import AppTest
 
-    at = AppTest.from_file("step_page.py", default_timeout=60).run()
+    at = AppTest.from_file("step_page.py", default_timeout=60)
+    at.session_state["quote_batches"] = True    # Eräkoot on
+    at.run()
     assert not at.exception
     # Pohja's DXF and its model part are one card, priced from the DXF (it
     # matches the unfolded blank). Tappi isn't sheet.
@@ -312,7 +314,9 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
         st.session_state["store_keys"] = [k for k in st.session_state
                                           if k in ("dxf_step_models", "dxf_store")]
 
-    at = AppTest.from_function(page, default_timeout=60).run()
+    at = AppTest.from_function(page, default_timeout=60)
+    at.session_state["quote_batches"] = True    # Eräkoot on
+    at.run()
     assert not at.exception
     cards = dict((name, fid) for fid, name in at.session_state["parts"])
     # 2 × Kulma and Pohja are sheet cards; 6 × Tappi is a bought part.

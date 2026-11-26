@@ -33,9 +33,10 @@ from view.ui import is_headless, st
 from view.work import current_rates
 
 _SIZES_KEY = "quote_batch_sizes"
-# How the quantities are given: batch sizes at the top (every item priced at
-# each), or each card's own Määrä (one quantity per item, one total).
-MODE_KEY, BATCHES, PER_CARD = "quote_qty_mode", "Eräkoot", "Määrä"
+# How the quantities are given: the "Eräkoot" switch on, batch sizes at the
+# top (every item priced at each); off (the default), each card's own Määrä
+# (one quantity per item, one total).
+BATCHES_KEY = "quote_batches"
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
@@ -60,21 +61,20 @@ def render_header(clear_all=None):
     with bar:
         name, controls = st.columns([4, 7], vertical_alignment="bottom")
         brand.quote_logo(name)
-        # The controls side by side on the right: with Määrä the batch sizes
-        # go and the rest close up, leaving no gap.
+        # The controls side by side on the right: with the switch off the
+        # batch sizes go and the rest close up, leaving no gap.
         row = controls.container(horizontal=True, horizontal_alignment="right",
-                                 vertical_alignment="bottom")
-        row.segmented_control(
-            "Määrät", [BATCHES, PER_CARD], default=BATCHES, key=MODE_KEY,
-            help="Eräkoot: jokainen nimike hinnoitellaan kirjoitetuilla eräkoilla. "
-                 "Määrä: jokainen osa hinnoitellaan osakorttinsa määrällä, ja "
-                 "tarjouksella on yksi yhteissumma.")
-        if not per_card():   # Määrä: the quantities are on the cards
+                                 vertical_alignment="center")
+        row.toggle(
+            "Eräkoot", key=BATCHES_KEY,
+            help="Päällä: jokainen nimike hinnoitellaan kirjoitetuilla eräkoilla, "
+                 "esim. \"1 5 10\"; levyt nestataan suurimmalla eräkoolla ja muiden "
+                 "materiaali arvioidaan siitä. Pois: jokainen osa hinnoitellaan "
+                 "osakorttinsa määrällä, ja tarjouksella on yksi yhteissumma.")
+        if not per_card():   # off: the quantities are on the cards
             row.text_input("Eräkoot (kpl)", value=" ".join(map(str, DEFAULT_BATCH_SIZES)),
-                           key=_SIZES_KEY, width=180,
-                           help="Jokainen osa hinnoitellaan näillä kappalemäärillä, esim. "
-                                "\"1 5 10\". Levyt nestataan suurimmalla eräkoolla; "
-                                "muiden eräkokojen materiaali arvioidaan siitä.")
+                           key=_SIZES_KEY, width=160, label_visibility="collapsed",
+                           placeholder="esim. 1 5 10")
         if clear_all is not None:
             with row.popover("Tyhjennä kaikki", type="primary"):
                 st.button("Kyllä, tyhjennä", key="ui_clear_all", type="primary",
@@ -103,9 +103,9 @@ def render_totals(slot, totals: Totals | None) -> None:
 
 
 def per_card() -> bool:
-    """Whether each card's own Määrä is priced (the header's "Määrät" set to
-    Määrä) instead of the batch sizes."""
-    return st.session_state.get(MODE_KEY) == PER_CARD
+    """Whether each card's own Määrä is priced (the header's "Eräkoot" switch
+    off, the default) instead of the batch sizes."""
+    return not st.session_state.get(BATCHES_KEY)
 
 
 def price_column(q: int) -> str:
