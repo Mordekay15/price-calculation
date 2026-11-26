@@ -41,7 +41,6 @@ from view.dxf_files import (
     card_texts,
     empty_cards,
     evict,
-    evict_all,
     fill_material,
     folder_of,
     material_keys,
@@ -243,16 +242,10 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
     ss = st.session_state
     rows: dict[str, dict] = {}
     ss[_ROWS] = rows                            # filled by the cards below
-    title, view_col, _gap, clear = st.columns([3, 2, 3, 2], vertical_alignment="center")
+    title, view_col, _gap = st.columns([3, 2, 5], vertical_alignment="center")
     title.markdown("**Osat**")
     view = view_col.segmented_control("Näkymä", (CARDS, TABLE), default=CARDS, key=_VIEW,
                                       label_visibility="collapsed") or CARDS
-    if len(parts) > 1:
-        # Behind a popover: one stray click shouldn't drop every card's setup.
-        with clear.popover("Poista kaikki", width="stretch"):
-            st.button(f"Kyllä, poista kaikki {len(parts)} osaa", key="dxf_del_all",
-                      type="primary",
-                      on_click=undoable(evict_all, f"kaikki {len(parts)} osaa"))
     table_slot = st.container() if view == TABLE else None
     drawing_of = assemblies.drawings()          # assembly id: its drawing's card
     card_of = source_cards()
@@ -304,9 +297,7 @@ def _render_part_cards(parts, materials: list[str], lookup: dict,
             st.caption(f"#{i + 1} · {parts[i][1].name}: kortti on toisessa kokoonpanossa.")
         draw([i for i in mine if i not in products], f"{_PAGE}_{aid}")
 
-    assemblies.render(card_of, draw_assembly, evict,
-                      {fid: f"#{i + 1} · {part.name}" for i, (fid, part) in enumerate(parts)
-                       if fid not in drawing_of.values()})
+    assemblies.render(card_of, draw_assembly, evict)
     for idx, (fid, shape) in enumerate(parts):
         rows.setdefault(fid, {"#": idx + 1, "Osa": shape.name, "Tila": _DRAWING})
     ss[_ISSUES] = {fid: r["Tila"] for fid, r in rows.items()
@@ -526,10 +517,6 @@ def _render_preview(shape: FlatShape, bends: list | None = None) -> None:
                    f"(piirustuksessa {shape.drawn_blank_mm:.1f} mm)]",
                    help="Piirustuksen aihio ei vastaa sen profiilia, joten leveys on "
                         "laskettu profiilin poikkileikkauksesta (K = 0,44).")
-    if shape.outside_count:
-        st.caption(f"{shape.outside_count} kuviota ohitettu",
-                   help="Osan ulkopuolella olevat kuviot (esim. lisäkuvat tai irralliset "
-                        "viivat) eivät ole osaa, eikä niitä näytetä esikatselussa.")
 
 
 def _unit_reason(shape: FlatShape, item: Part | None, doc_ids) -> str | None:

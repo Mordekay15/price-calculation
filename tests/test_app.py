@@ -198,6 +198,8 @@ def test_clear_all_empties_the_quote_and_keeps_the_rates():
     assert at.number_input(key="work_weld_eur_per_h").value == 99.0     # the sidebar stays
     assert not any(n.key == "dxf_q_f0" for n in at.number_input)
     assert not any(b.key == "ui_undo_do" for b in at.button)       # nothing more to answer
+    assert "dxf_parts" not in at.session_state or not at.session_state["dxf_parts"]
+    assert not [k for k in at.session_state if k.startswith(("dxf_mat_", "dxf_q_"))]
 
 
 def test_nestaus_choices_stay_when_going_to_another_step_and_back(tmp_path, monkeypatch):

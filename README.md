@@ -13,8 +13,8 @@ A Streamlit app that prices sheet-metal parts from supplier price lists.
   other screens' inputs are kept. Upload one DXF or DWG per part. The real shapes are
   nested with the [Sparrow](https://github.com/JeroenGar/sparrow) solver. Dropped
   files become part cards and the drop area empties; a card's **Poista**
-  button removes the part, and **Poista kaikki** above the cards (asks to
-  confirm) removes them all. A file whose name is already on a card is not
+  button removes the part, and **Tyhjennä kaikki** in the bar at the top (asks
+  to confirm) empties the whole quote. A file whose name is already on a card is not
   added again: a warning names it and its card for 15 seconds (to replace a changed
   drawing, remove the old card first). Nor is any file (DXF, DWG, PDF or STEP)
   with the same name and the same bytes as one already kept, from whatever folder

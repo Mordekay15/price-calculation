@@ -123,14 +123,6 @@ def _render_summary(active: SheetOption, n_pieces: int) -> None:
     m[3].metric("Ohjelmia", str(active.programs), help=_PROGRAMS_HELP)
     m[4].metric("Käyttöaste", f"{active.utilization * 100:.1f} %",
                 help="Osien pinta-ala veloitettujen levyjen pinta-alasta.")
-    if active.utilization < _LOW_USE:
-        st.caption(":orange[Alhainen käyttöaste]",
-                   help="Suurin osa levystä jää hukaksi tai jäännökseksi. Pienempi levykoko "
-                        "taulukosta, suurempi määrä tai osien yhdistäminen samalle levylle "
-                        "(\"Laske jokainen osa erikseen\" pois) voi laskea kappalehintaa.")
-
-
-_LOW_USE = 0.20     # below this, the strip says how the material could cost less
 
 
 def _render_last_share(active: SheetOption, key: str) -> None:
@@ -138,21 +130,20 @@ def _render_last_share(active: SheetOption, key: str) -> None:
     parts need, or a share typed over it."""
     if active.mix or active.partial_index is None:
         return
+    need = active.min_share * 100
     col, note = st.columns([1, 2])
+    # One field: what the parts take is in its help, not a second line beside it.
     auto_input(col, "Viimeisestä levystä veloitetaan (%)", key,
                step_share(active.min_share) * 100, step=5.0, fmt="%.0f",
-               help="Osat sijoitellaan levyn toiseen päähän, ja loppu jää jäännöslevyksi "
-                    "varastoon. Automaattinen arvo on osien tarvitsema osuus pyöristettynä "
-                    "ylös seuraavaan 25 %:iin.")
-    need = active.min_share * 100
+               help=f"Osat vievät {need:.0f} % viimeisestä levystä. Ne sijoitellaan "
+                    "levyn toiseen päähän, ja loppu jää jäännöslevyksi varastoon "
+                    "(kuvassa veloitettu osa on rajattu katkoviivalla, jäännöslevy "
+                    "on viivoitettu). Automaattinen arvo on osien tarvitsema osuus "
+                    "pyöristettynä ylös seuraavaan 25 %:iin.")
     typed = st.session_state.get(key)
     if typed is not None and typed < need - 1e-6:
         note.warning(f"Osat tarvitsevat vähintään {need:.0f} % levystä: "
                      f"veloitetaan {active.last_share * 100:.0f} %.")
-    else:
-        note.caption(f"Osat vievät {need:.0f} % viimeisestä levystä",
-                     help="Kuvassa veloitettu osa on rajattu katkoviivalla, jäännöslevy "
-                          "on viivoitettu.")
 
 
 _PROGRAMS_HELP = (

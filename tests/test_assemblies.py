@@ -261,17 +261,10 @@ def test_only_an_assembly_drawings_own_notes_are_its_bought_parts():
         assemblies.sync_drawing_fasteners(lines, lambda cid: "RST 1.4301")
         assemblies.sync_drawing_fasteners(lines)                    # only once
         st.session_state["drawn"] = [(b.name, b.qty, b.eur) for b in store["drawing:d"].bought]
-        # Joined by hand: the parts' fasteners stay on their cards.
-        assemblies.join(["p", "q"], "Kehys")
-        hand = next(a for a in store.values() if a.by_hand)
-        st.session_state["hand"] = (sorted(store), hand.members, hand.bought)
 
     at = AppTest.from_function(page).run()
     assert not at.exception
     assert at.session_state["drawn"] == [("M6-RUUVIT", 4, 0.80)]
-    ids, members, bought = at.session_state["hand"]
-    assert ids[0] == "drawing:d" and ids[1].startswith("hand:") and len(ids) == 2
-    assert (members, bought) == ({"p": 1, "q": 1}, [])
 
 
 def test_on_the_page_a_parts_fasteners_are_its_own_bought_parts_wherever_it_goes():
@@ -298,23 +291,6 @@ def test_on_the_page_a_parts_fasteners_are_its_own_bought_parts_wherever_it_goes
     keys = {n.key for n in at.number_input}
     assert not {f"work_{k}_f0" for k in ("fasteners", "fastener_eur", "insert_eur")} & keys
     assert "work_weld_f0" in keys
-    # "Uusi kokoonpano": the press-nutted plate and an angle welded together.
-    at.multiselect(key="asm_new_parts").set_value(["f0", "f1"]).run()
-    at.text_input(key="asm_new_name").set_value("Runko").run()
-    at.button(key="asm_new_go").click().run()
-    assert not at.exception
-    store = at.session_state[ASSEMBLIES]
-    (aid, a), = store.items()
-    assert aid.startswith("hand:") and a.name == "Runko"
-    assert a.members == {"f0": 1, "f1": 1} and a.bought == []
-    # The plate keeps its nuts in the assembly; the assembly welds.
-    assert at.session_state["work"]["f0"].fasteners == 4
-    assert "work_weld_f0" not in {n.key for n in at.number_input}
-    # "Pura" leaves the parts loose.
-    at.button(key=f"asm_del_{aid}").click().run()
-    assert not at.exception
-    assert at.session_state[ASSEMBLIES] == {}
-    assert sorted(at.session_state["ids"]) == ["f0", "f1", "f2", "f3"]
     # A removed card leaves no Ostetut osat behind.
     at.button(key="dxf_del_f0").click().run()
     assert not at.exception
