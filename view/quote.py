@@ -62,7 +62,7 @@ def render_header(clear_all=None):
                               "\"1 5 10\". Osakortin määrä on se, jolla levyt nestataan; "
                               "muiden eräkokojen materiaali arvioidaan siitä.")
         if clear_all is not None:
-            with clear.popover("Tyhjennä kaikki", width="stretch"):
+            with clear.popover("Tyhjennä kaikki", type="primary", width="stretch"):
                 st.button("Kyllä, tyhjennä", key="ui_clear_all", type="primary",
                           on_click=clear_all, width="stretch",
                           help="Poistaa tiedostot ja osat. Hinnastot ja "
