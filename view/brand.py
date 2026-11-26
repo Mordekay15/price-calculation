@@ -8,7 +8,7 @@ from pathlib import Path
 import streamlit as st
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
-LOGO = ASSETS / "stremet-logo.png"          # with "Levystä tuotteeksi"; the quote bar
+LOGO = ASSETS / "stremet-logo.svg"          # with "Levystä tuotteeksi"; the quote bar
 WORDMARK = ASSETS / "stremet-wordmark.svg"  # "Stremet" only; the sidebar
 ICON = ASSETS / "stremet-icon.png"
 
