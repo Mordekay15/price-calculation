@@ -700,3 +700,13 @@ ring-shaped part, so keep frames on their own layer.
 | Material grades that are recognised | `_GRADES` in `core/materials.py` |
 | How STEP bodies are unfolded, or the default K factor | `core/step.py` |
 | How an assembly is priced | `core/assemblies.py` |
+
+## Look (Stremet style)
+
+The app uses Stremet's company look, taken from stremet.fi: the logo blue
+`#285c9f` for buttons, tabs and headings, the lighter blue `#1890d7` for links,
+the Libre Franklin font, and the Stremet logo and "S" icon. The colours and font
+are set in `.streamlit/config.toml` (`[theme]`); the logo, the browser-tab icon
+and a few extra touches are in `view/brand.py`, with the image files in `assets/`.
+To change the logo, replace `assets/stremet-logo.svg` (and `assets/stremet-icon.png`
+for the tab icon).

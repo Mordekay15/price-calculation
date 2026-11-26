@@ -7,14 +7,16 @@ from contextlib import nullcontext
 
 import streamlit as st
 
-from view import calculator_tab, dxf_tab, quote, sidebar
+from view import brand, calculator_tab, dxf_tab, quote, sidebar
 
 FROM_FILES, MANUAL = "Tarjous tiedostoista", "Pikalaskuri (käsin)"
 
 st.set_page_config(
     page_title="Stremet Price Tool",
+    page_icon=str(brand.ICON),
     layout="wide",
 )
+brand.apply()
 dxf_tab.keep_inputs()   # before anything is drawn
 
 price_data = sidebar.render()
