@@ -84,7 +84,9 @@ def test_the_quote_table_shows_an_assembly_line_with_its_parts():
             assemblies=[Assembly("x", "Runko", {"a": 1, "b": 2},
                                  [BoughtPart("Tappi", 6, 0.5)])])
 
-    at = AppTest.from_function(page, default_timeout=30).run()
+    at = AppTest.from_function(page, default_timeout=30)
+    at.session_state["quote_batches"] = True    # Eräkoot on
+    at.run()
     assert not at.exception
     rows = at.dataframe[0].value
     assert list(rows["Osa"]) == ["c.dxf", "🧩 Runko", " └ a.dxf × 1",
@@ -122,7 +124,9 @@ def test_the_quote_table_shows_a_subassembly_inside_its_parent_only():
             assemblies=[Assembly("s", "Kehys", {"a": 2}, [BoughtPart("Tappi", 1, 0.5)]),
                         Assembly("t", "Runko", {"b": 1}, children={"s": 3})])
 
-    at = AppTest.from_function(page, default_timeout=30).run()
+    at = AppTest.from_function(page, default_timeout=30)
+    at.session_state["quote_batches"] = True    # Eräkoot on
+    at.run()
     assert not at.exception
     rows = at.dataframe[0].value
     assert list(rows["Osa"]) == ["🧩 Runko", "\u2003└ b.dxf × 1", "\u2003└ 🧩 Kehys × 3",

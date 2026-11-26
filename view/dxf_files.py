@@ -69,6 +69,7 @@ def render_drop_area() -> list[tuple[str, DxfFile]]:
     uploaded = st.file_uploader(
         "Lataa DXF-, DWG-, PDF- tai STEP-tiedostot tai ZIP",
         accept_multiple_files=True,
+        label_visibility="collapsed",   # the drop area says the same in bold
         key=f"dxf_uploader_{st.session_state.get(_INBOX, 0)}",
         help="Vedä tiedostot alueelle tai valitse ne koneelta. Voit ladata useita "
              "tiedostoja kerralla. Saman osanumeron tiedostot (DXF, DWG, STEP, PDF) "

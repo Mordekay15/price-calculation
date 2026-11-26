@@ -152,11 +152,15 @@ def test_manual_tab_prices_work_per_piece(tmp_path, monkeypatch):
     rows = [{"Paksuus (mm)": "2", "S235 | 1000x2000": 900.0}]
     json.dump({"data": {"levyt": rows}, "source_file": "t.pdf", "updated_at": "x"},
               open(tmp_path / suppliers.SUPPLIERS[0].path, "w"))
-    at = AppTest.from_file("../app.py", default_timeout=60).run()
+    at = AppTest.from_file("../app.py", default_timeout=60)
+    at.session_state["quote_batches"] = True    # Eräkoot on
+    at.run()
     pid = at.session_state["calc_products"][0].id
     at.selectbox(key=f"mat_{pid}").select("S235").run()
     at.selectbox(key=f"th_{pid}").select("2").run()
-    for key, value in (("w", 300.0), ("h", 200.0), ("q", 10), ("work_bends", 2.0)):
+    # Eräkoot (the default, 1 5 10): no Määrä on the product, nested at 10.
+    assert not any(n.key == f"q_{pid}" for n in at.number_input)
+    for key, value in (("w", 300.0), ("h", 200.0), ("work_bends", 2.0)):
         at.number_input(key=f"{key}_{pid}").set_value(value).run()
     assert not at.exception
     metrics = {m.label: m.value for m in at.metric}
@@ -168,6 +172,39 @@ def test_manual_tab_prices_work_per_piece(tmp_path, monkeypatch):
     batches = next(d.value for d in at.dataframe if "10 kpl, €/kpl" in d.value.columns)
     assert batches.iloc[0]["10 kpl, €/kpl"] == row["Kpl-hinta €"]
     assert batches.iloc[0]["1 kpl, €/kpl"] > batches.iloc[0]["10 kpl, €/kpl"]
+
+
+def test_maara_prices_each_products_own_quantity_with_one_total(tmp_path, monkeypatch):
+    # Määrät: Määrä at the top: no batch sizes; the product's own Määrä is
+    # priced, the same €/kpl as batch size 10 above, and the bar has one total.
+    import json
+    from streamlit.testing.v1 import AppTest
+    from core import suppliers
+
+    monkeypatch.chdir(tmp_path)
+    rows = [{"Paksuus (mm)": "2", "S235 | 1000x2000": 900.0}]
+    json.dump({"data": {"levyt": rows}, "source_file": "t.pdf", "updated_at": "x"},
+              open(tmp_path / suppliers.SUPPLIERS[0].path, "w"))
+    at = AppTest.from_file("../app.py", default_timeout=60)
+    at.session_state["quote_batches"] = True    # Eräkoot on
+    at.run()
+    pid = at.session_state["calc_products"][0].id
+    at.selectbox(key=f"mat_{pid}").select("S235").run()
+    at.selectbox(key=f"th_{pid}").select("2").run()
+    for key, value in (("w", 300.0), ("h", 200.0), ("work_bends", 2.0)):
+        at.number_input(key=f"{key}_{pid}").set_value(value).run()
+    batches = next(d.value for d in at.dataframe if "10 kpl, €/kpl" in d.value.columns)
+    at10 = batches.iloc[0]["10 kpl, €/kpl"]
+    at.toggle(key="quote_batches").set_value(False).run()
+    assert not any(t.key == "quote_batch_sizes" for t in at.text_input)
+    at.number_input(key=f"q_{pid}").set_value(10).run()
+    assert not at.exception
+    table = next(d.value for d in at.dataframe if "€/kpl" in d.value.columns
+                 and "Määrä" in d.value.columns)
+    assert table.iloc[0]["€/kpl"] == at10 and table.iloc[0]["Määrä"] == "10"
+    [total] = [m.value for m in at.metric if m.label == "Yhteensä"]
+    eur = float(total.replace("€", "").replace(" ", "").replace(",", "."))
+    assert eur == pytest.approx(at10 * 10, abs=0.06)     # the table's €/kpl is rounded
 
 
 def test_a_fastener_put_in_costs_stremets_minimum_by_default():
@@ -208,11 +245,13 @@ def test_a_missing_pdf_package_hides_its_download_not_the_page(tmp_path, monkeyp
     json.dump({"data": {"levyt": rows}, "source_file": "t.pdf", "updated_at": "x"},
               open(tmp_path / suppliers.SUPPLIERS[0].path, "w"))
     monkeypatch.setattr(builtins, "__import__", no_reportlab)
-    at = AppTest.from_file("../app.py", default_timeout=60).run()
+    at = AppTest.from_file("../app.py", default_timeout=60)
+    at.session_state["quote_batches"] = True    # Eräkoot on
+    at.run()
     pid = at.session_state["calc_products"][0].id
     at.selectbox(key=f"mat_{pid}").select("S235").run()
     at.selectbox(key=f"th_{pid}").select("2").run()
-    for key, value in (("w", 300.0), ("h", 200.0), ("q", 10)):
+    for key, value in (("w", 300.0), ("h", 200.0)):
         at.number_input(key=f"{key}_{pid}").set_value(value).run()
     assert not at.exception
     assert any("10 kpl, €/kpl" in d.value.columns for d in at.dataframe)

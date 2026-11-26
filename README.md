@@ -25,6 +25,14 @@ A Streamlit app that prices sheet-metal parts from supplier price lists.
   shown once and goes away once answered; files dropped later are asked
   about once, between the last old card and the first new one.
 
+The **Eräkoot** switch at the top sets how quantities are given. **Off** (the
+default): every card (and every product on the manual tab) has its own
+**Määrä (kpl)**; each part is priced and nested at that quantity, and the quote
+has one total. An assembly is then priced as one piece, its parts at their
+kpl / kokoonpano. **On**: type batch sizes like "1 5 10" next to the switch;
+every item is priced at each, and the parts are nested at the largest (the
+cards show no Määrä of their own).
+
 Both tabs compare every priced sheet size and pick the cheapest, including a
 plan that cuts the parts from several sizes. Parts of the same material and
 thickness share sheets. The app looks for the plan that uses
@@ -700,3 +708,14 @@ ring-shaped part, so keep frames on their own layer.
 | Material grades that are recognised | `_GRADES` in `core/materials.py` |
 | How STEP bodies are unfolded, or the default K factor | `core/step.py` |
 | How an assembly is priced | `core/assemblies.py` |
+
+## Look (Stremet style)
+
+The app uses Stremet's company look, taken from stremet.fi: the logo blue
+`#285c9f` for buttons, tabs and headings, the lighter blue `#1890d7` for links,
+the Libre Franklin font, the Stremet logo (blue text, "Levystä tuotteeksi") in the
+quote bar, "Stremet" alone at the top of the sidebar, and the "S" icon. The colours and font
+are set in `.streamlit/config.toml` (`[theme]`); the logo, the browser-tab icon
+and a few extra touches are in `view/brand.py`, with the image files in `assets/`.
+To change the logos, replace `assets/stremet-logo.svg` (quote bar),
+`assets/stremet-wordmark.svg` (sidebar) or `assets/stremet-icon.png` (tab icon).

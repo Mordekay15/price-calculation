@@ -20,7 +20,7 @@ from view.common import (
     render_settings,
 )
 from view.drawing import draw_rect_layout
-from view.quote import render_batch_prices
+from view.quote import current_sizes, per_card, render_batch_prices
 from view.sheet_usage import render_group
 from view.work import render_work_inputs, work_costs
 
@@ -123,10 +123,13 @@ def _render_product(prod: Product, index: int, materials: list[str], lookup: dic
             "Korkeus (mm)", min_value=0.0, value=float(prod.height),
             step=10.0, key=f"h_{pid}",
         )
-        q = q_col.number_input(
-            "Määrä (kpl)", min_value=1, value=int(prod.qty),
-            step=1, key=f"q_{pid}",
-        )
+        if per_card():   # Eräkoot off: the product's own quantity
+            q = q_col.number_input(
+                "Määrä (kpl)", min_value=1, value=int(prod.qty),
+                step=1, key=f"q_{pid}",
+            )
+        else:            # Eräkoot on: nested at the largest batch size
+            q = max(current_sizes())
 
         work = render_work_inputs(pid, material=material, thickness=thickness, qty=q,
                                   cut_length_m=rect_cut_length_m(w, h))

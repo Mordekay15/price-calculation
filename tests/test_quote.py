@@ -58,6 +58,15 @@ def test_quote_xlsx_opens_with_both_sheets():
     assert [c.value for c in wb["Tarjous"][1]][0] == "Nimike"      # no header fields
 
 
+def test_a_quote_priced_per_card_says_maara_not_erakoko():
+    # Määrät: Määrä: one row per part, at its own quantity, and one total.
+    lines = [QuoteLine("osa_1", "S355MC", "2", (BatchPrice(7, 5.0, WorkCost(7, cutting=2.0), 1),))]
+    wb = openpyxl.load_workbook(io.BytesIO(quote_xlsx(lines, [1], per_card=True)))
+    assert [c.value for c in wb["Tarjous"][1]][3] == "Määrä (kpl)"
+    assert [c.value for c in wb["Tarjous"][2]][3] == 7
+    assert quote_pdf(lines, [1], [49.0], per_card=True).startswith(b"%PDF")
+
+
 def test_dxf_file_name_template():
     p = CleanPart("bracket/L.dxf", "S355MC", "2", SQUARE)
     assert dxf_file_name("{part}_{material}_{thickness}mm", p, 1) == "bracket_L_S355MC_2mm.dxf"

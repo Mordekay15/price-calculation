@@ -125,7 +125,9 @@ def test_the_flat_dxf_reads_back_with_its_bends_and_thickness():
 def test_an_assembly_becomes_cards_with_its_quantities():
     from streamlit.testing.v1 import AppTest
 
-    at = AppTest.from_file("step_page.py", default_timeout=60).run()
+    at = AppTest.from_file("step_page.py", default_timeout=60)
+    at.session_state["quote_batches"] = True    # Eräkoot on
+    at.run()
     assert not at.exception
     # Pohja's DXF and its model part are one card, priced from the DXF (it
     # matches the unfolded blank). Tappi isn't sheet.
@@ -312,7 +314,9 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
         st.session_state["store_keys"] = [k for k in st.session_state
                                           if k in ("dxf_step_models", "dxf_store")]
 
-    at = AppTest.from_function(page, default_timeout=60).run()
+    at = AppTest.from_function(page, default_timeout=60)
+    at.session_state["quote_batches"] = True    # Eräkoot on
+    at.run()
     assert not at.exception
     cards = dict((name, fid) for fid, name in at.session_state["parts"])
     # 2 × Kulma and Pohja are sheet cards; 6 × Tappi is a bought part.
@@ -324,8 +328,9 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
     assert any("Kaikki osat ovat kokoonpanoissa." in c.value for c in at.caption)
     assert [m.value.split(" · ")[1] for m in at.markdown if m.value.startswith("**#")] == [
         "Pohja.dxf", "Kulma.step"]
-    # Its cards are nested for the largest batch (10) of assemblies.
-    assert [n.value for n in at.number_input if n.key.startswith("dxf_q_")] == [10, 20]
+    # Its cards are nested for the largest batch (10) of assemblies; with
+    # Eräkoot the cards show no Määrä of their own.
+    assert not any(n.key.startswith("dxf_q_") for n in at.number_input)
     # The cards' quantity and work are on their Parts; no second store.
     assert at.session_state["on_part"] == [(10, True), (20, True)]
     assert at.session_state["store_keys"] == []

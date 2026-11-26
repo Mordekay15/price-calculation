@@ -3,3 +3,21 @@
 # opened again shows what was chosen (see view/ui.py keep); that is not a
 # duplicated default.
 disableWidgetStateDuplicationWarning = true
+
+# Stremet company look (colours and font from stremet.fi): the logo blue
+# for buttons, tabs and links, Libre Franklin text, light blue-grey sidebar.
+[theme]
+base = "light"
+primaryColor = "#285c9f"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f3f6fa"
+textColor = "#222222"
+linkColor = "#1890d7"
+borderColor = "#d9e1ec"
+baseRadius = "6px"
+font = "'Libre Franklin':https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@300;400;500;600;700&display=swap, sans-serif"
+headingFont = "'Libre Franklin':https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@300;400;500;600;700&display=swap, sans-serif"
+
+[theme.sidebar]
+backgroundColor = "#eef2f8"
+secondaryBackgroundColor = "#ffffff"

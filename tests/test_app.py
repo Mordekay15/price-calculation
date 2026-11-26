@@ -70,6 +70,7 @@ def test_each_screen_keeps_the_others_inputs_and_prices_on_hinnoittelu(tmp_path,
     doc.header["$INSUNITS"] = 4
     doc.modelspace().add_lwpolyline([(0, 0), (300, 0), (300, 200), (0, 200)], close=True)
     at = AppTest.from_file("../app.py", default_timeout=120)
+    at.session_state["quote_batches"] = True    # Eräkoot on
     _drop(at, {"f0": ("p.dxf", dxf_bytes(doc))})
     at.session_state["menu"] = FILES
     at.run()
@@ -92,13 +93,16 @@ def test_each_screen_keeps_the_others_inputs_and_prices_on_hinnoittelu(tmp_path,
     # The batch-size switchable breakdown, and the quote as the customer sees it.
     [table] = [d.value for d in at.dataframe if "Taivutus" in d.value.columns]
     assert len(table) == 1 and table["Taivutus"].iloc[0] > 0     # the card's 3 bends
+    # The totals are here, on Hinnoittelu, with the margin under them.
+    assert [m.value for m in at.metric if m.label == "10 kpl / nimike"][0] not in ("", "–")
+    assert any(c.value == "Kate 15 %" for c in at.caption)
     at.session_state["dxf_menu"] = BOM
     at.run()
     assert at.number_input(key="work_bends_f0").value == 3.0
     assert at.selectbox(key="dxf_mat_f0").value == "S235"
-    assert at.number_input(key="dxf_q_f0").value == 10   # the largest batch
-    # The bar has the total on every step, here too.
-    assert [m.value for m in at.metric if m.label == "10 kpl / nimike"][0] not in ("", "–")
+    assert not any(n.key == "dxf_q_f0" for n in at.number_input)   # Eräkoot: none
+    # Only Hinnoittelu has the totals; the bar at the top has none.
+    assert not any(m.label == "10 kpl / nimike" for m in at.metric)
     at.session_state["dxf_menu"] = NESTING
     at.run()
     assert at.number_input(key="dxf_sparrow_t").value == 1
@@ -106,14 +110,14 @@ def test_each_screen_keeps_the_others_inputs_and_prices_on_hinnoittelu(tmp_path,
     # A new quantity waits for the button: nothing is nested by itself.
     at.session_state["dxf_menu"] = BOM
     at.run()
-    at.number_input(key="dxf_q_f0").set_value(12).run()
+    at.text_input(key="quote_batch_sizes").set_value("1 5 12").run()
     at.session_state["dxf_menu"] = NESTING
     at.run()
     assert not at.exception
     assert not at.button(key="dxf_sparrow_run").disabled
 
 
-def test_a_dxf_part_is_nested_for_the_largest_batch_size_unless_typed():
+def test_a_dxf_part_is_priced_at_the_batch_sizes_or_at_its_own_quantity():
     import ezdxf
 
     from tests.conftest import dxf_bytes
@@ -125,9 +129,10 @@ def test_a_dxf_part_is_nested_for_the_largest_batch_size_unless_typed():
     _drop(at, {"f0": ("p.dxf", dxf_bytes(doc))})
     at.session_state["menu"] = FILES
     at.run()
-    assert at.number_input(key="dxf_q_f0").value == 10
-    at.text_input(key="quote_batch_sizes").set_value("2 25").run()
-    assert at.number_input(key="dxf_q_f0").value == 25
+    # Eräkoot off (the default): the card's own quantity (1), no sizes at the top.
+    assert not at.exception
+    assert not any(t.key == "quote_batch_sizes" for t in at.text_input)
+    assert at.number_input(key="dxf_q_f0").value == 1
     # A typed quantity wins, and stays when the screen changes.
     at.number_input(key="dxf_q_f0").set_value(7).run()
     at.session_state["dxf_menu"] = NESTING
@@ -135,13 +140,13 @@ def test_a_dxf_part_is_nested_for_the_largest_batch_size_unless_typed():
     at.session_state["dxf_menu"] = BOM
     at.run()
     assert at.number_input(key="dxf_q_f0").value == 7
-    at.text_input(key="quote_batch_sizes").set_value("30").run()
-    assert at.number_input(key="dxf_q_f0").value == 7
-    # Clearing it brings the automatic quantity back, which then follows again.
+    # Clearing it brings the automatic quantity back.
     at.number_input(key="dxf_q_f0").set_value(None).run()
-    assert at.number_input(key="dxf_q_f0").value == 30
-    at.text_input(key="quote_batch_sizes").set_value("40").run()
-    assert at.number_input(key="dxf_q_f0").value == 40
+    assert at.number_input(key="dxf_q_f0").value == 1
+    # Eräkoot on: the sizes at the top, no Määrä on the card.
+    at.toggle(key="quote_batches").set_value(True).run()
+    assert at.text_input(key="quote_batch_sizes").value in ("", None)   # 1 5 10 as the example
+    assert not any(n.key == "dxf_q_f0" for n in at.number_input)
 
 
 def test_an_unpriced_part_leaves_the_money_columns_numeric():
@@ -181,6 +186,7 @@ def test_clear_all_empties_the_quote_and_keeps_the_rates():
     doc.header["$INSUNITS"] = 4
     doc.modelspace().add_lwpolyline([(0, 0), (300, 0), (300, 200), (0, 200)], close=True)
     at = AppTest.from_file("../app.py", default_timeout=60)
+    at.session_state["quote_batches"] = True    # Eräkoot on
     _drop(at, {"f0": ("p.dxf", dxf_bytes(doc))})
     at.run()
     at.text_input(key="quote_batch_sizes").set_value("2 4").run()
@@ -188,7 +194,7 @@ def test_clear_all_empties_the_quote_and_keeps_the_rates():
     at.button(key="ui_clear_all").click().run()
     assert not at.exception
     assert not at.session_state["inputs"]
-    assert at.text_input(key="quote_batch_sizes").value == "1 5 10"
+    assert at.text_input(key="quote_batch_sizes").value in ("", None)   # 1 5 10 as the example
     assert at.number_input(key="work_weld_eur_per_h").value == 99.0     # the sidebar stays
     assert not any(n.key == "dxf_q_f0" for n in at.number_input)
     assert not any(b.key == "ui_undo_do" for b in at.button)       # nothing more to answer
