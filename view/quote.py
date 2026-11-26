@@ -65,9 +65,7 @@ def render_header(clear_all=None):
             help="Eräkoot: jokainen nimike hinnoitellaan kirjoitetuilla eräkoilla. "
                  "Määrä: jokainen osa hinnoitellaan osakorttinsa määrällä, ja "
                  "tarjouksella on yksi yhteissumma.")
-        if per_card():
-            sizes.caption("Määrä annetaan jokaisella osakortilla.")
-        else:
+        if not per_card():   # Määrä: the quantities are on the cards
             sizes.text_input("Eräkoot (kpl)", value=" ".join(map(str, DEFAULT_BATCH_SIZES)),
                              key=_SIZES_KEY,
                              help="Jokainen osa hinnoitellaan näillä kappalemäärillä, esim. "
