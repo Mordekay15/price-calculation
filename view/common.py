@@ -160,9 +160,9 @@ class SheetSettings:
 
 
 _NEST_HELP = (
-    "Yhdistettynä saman materiaalin ja paksuuden tuotteet sijoitellaan "
-    "samoille levyille (sekanestaus). Erikseen-vaihtoehdolla kullekin "
-    "tuotteelle lasketaan oma levytarpeensa."
+    "Pois (oletus): saman materiaalin ja paksuuden tuotteet sijoitellaan "
+    "samoille levyille (sekanestaus). Päällä: kullekin tuotteelle lasketaan "
+    "oma levytarpeensa."
 )
 _RANKAVALI_HELP = (
     "Kappaleiden välinen rankaväli (leikkausvara): vierekkäiset kappaleet "
@@ -178,27 +178,22 @@ _EDGES_HELP = (
 
 
 def _render_main_settings(*, key_prefix: str, separate_label: str) -> tuple[float, str]:
-    """The settings every quote touches, in one row: margin and "Sijoittelutapa".
+    """The settings every quote touches, in one row: margin and the switch
+    for calculating each part separately (off: same materials share sheets).
 
     Returns ``(margin_pct, nest_mode)``; ``nest_mode`` is "combined" or
     "separate".
     """
-    c1, c2 = st.columns([1, 3])
+    c1, c2 = st.columns([1, 3], vertical_alignment="bottom")
     margin_pct = c1.number_input(
         "Materiaalin kate (%)", min_value=0.0, value=15.0, step=0.5,
         key=f"{key_prefix}_margin_pct",
     )
-    nest_mode = c2.radio(
-        "Sijoittelutapa",
-        options=("combined", "separate"),
-        format_func=lambda v: {
-            "combined": "Yhdistä samat materiaalit samalle levylle",
-            "separate": separate_label,
-        }[v],
-        horizontal=True,
-        key=f"{key_prefix}_nest_mode",
-        help=_NEST_HELP,
-    )
+    # A switch, off by default: parts of the same material share sheets
+    # unless each is to be calculated on its own.
+    separate = c2.toggle(separate_label, key=f"{key_prefix}_nest_separate",
+                         help=_NEST_HELP)
+    nest_mode = "separate" if separate else "combined"
     return margin_pct, nest_mode
 
 

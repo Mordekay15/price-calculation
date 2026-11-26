@@ -127,7 +127,7 @@ def _render_summary(active: SheetOption, n_pieces: int) -> None:
         st.caption(":orange[Alhainen käyttöaste]",
                    help="Suurin osa levystä jää hukaksi tai jäännökseksi. Pienempi levykoko "
                         "taulukosta, suurempi määrä tai osien yhdistäminen samalle levylle "
-                        "(Sijoittelutapa) voi laskea kappalehintaa.")
+                        "(\"Laske jokainen osa erikseen\" pois) voi laskea kappalehintaa.")
 
 
 _LOW_USE = 0.20     # below this, the strip says how the material could cost less

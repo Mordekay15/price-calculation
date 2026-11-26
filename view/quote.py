@@ -92,16 +92,18 @@ def render_totals(slot, totals: Totals | None) -> None:
         if totals is None or not totals.totals:
             st.caption("Ei vielä hintaa")
             return
-        cols = st.columns([2] * len(totals.sizes) + [3], vertical_alignment="center")
-        for col, q, t in zip(cols, totals.sizes, totals.totals):
-            col.metric("Yhteensä" if per_card() else f"{q} kpl / nimike", fmt_eur(t) or "–",
-                       help=None if t is not None else "Osalta puuttuu hinta.")
-        notes = []
-        if totals.missing:
-            notes.append(":orange[Arvio: kaikkia ryhmiä ei ole vielä nestattu.]")
+        # The totals side by side, the notes in one small line under them.
+        row = st.container(horizontal=True, gap="large")
+        for q, t in zip(totals.sizes, totals.totals):
+            row.metric("Yhteensä" if per_card() else f"{q} kpl / nimike", fmt_eur(t) or "–",
+                       help=None if t is not None else "Osalta puuttuu hinta.",
+                       width="content")
+        notes = ["ALV 0 %"]
         if totals.margin_pct is not None:
-            notes.append(f"Materiaalin kate {totals.margin_pct:g} %")
-        cols[-1].caption("  \n".join(notes) or "ALV 0 %")
+            notes.append(f"materiaalin kate {totals.margin_pct:g} %")
+        if totals.missing:
+            notes.append(":orange[arvio: kaikkia ryhmiä ei ole vielä nestattu]")
+        st.caption(" · ".join(notes))
 
 
 def per_card() -> bool:
