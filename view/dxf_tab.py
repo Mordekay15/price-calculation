@@ -62,7 +62,7 @@ from view.dxf_nesting import (
     render_nesting,
     render_nesting_angles,
 )
-from view.quote import current_sizes
+from view.quote import MODE_KEY, current_sizes, per_card
 from view.ui import headless, is_headless, keep, st
 from view.undo import render_undo, undoable
 from view.work import RATE_KEYS, auto_input, render_work_inputs
@@ -149,8 +149,8 @@ def _render_next(screen: str) -> None:
 
 
 # Kept by "Tyhjennä kaikki": the sidebar (price lists, copper, work rates),
-# the open menu, and the drop area's counter (its old files must not return).
-_KEPT = ("upload_", "copper_", "manual_route", "menu", "dxf_inbox")
+# the open menu, Eräkoot or Määrä at the top, and the drop area's counter (its old files must not return).
+_KEPT = ("upload_", "copper_", "manual_route", "menu", "dxf_inbox", MODE_KEY)
 
 
 def clear_all() -> None:
@@ -615,13 +615,23 @@ def _render_part_inputs(fid: str, materials: list[str], lookup: dict,
     batch = max(current_sizes())
     if in_bom and not per_assembly:
         auto, why = in_bom[0], f"BOM: {in_bom[0]} kpl ({', '.join(in_bom[1])})"
+    elif per_card():
+        auto = max(per_assembly, 1)
+        why = f"{per_assembly} kpl / kokoonpano" if per_assembly else "1 kpl"
     else:
         auto = max(per_assembly, 1) * batch
         why = ((f"{per_assembly} kpl / kokoonpano × " if per_assembly else "")
                + f"suurin eräkoko {batch} (Eräkoot, sivun ylälaidassa)")
-    col = st.columns(2)[0]
-    qty = max(int(auto_input(col, "Määrä (kpl)", f"dxf_q_{fid}", auto, step=1.0, fmt="%.0f",
-                             help="Levyt nestataan tälle määrälle. Oletus: " + why + ".")), 1)
+    if per_card():
+        # The card's Määrä is what is priced (Määrät: Määrä at the top).
+        col = st.columns(2)[0]
+        qty = max(int(auto_input(col, "Määrä (kpl)", f"dxf_q_{fid}", auto, step=1.0,
+                                 fmt="%.0f", help="Osa hinnoitellaan ja levyt nestataan "
+                                                  "tälle määrälle. Oletus: " + why + ".")), 1)
+    else:
+        # Eräkoot at the top: no Määrä on the card, the parts are nested at
+        # the largest batch size (or the BOM's quantity).
+        qty = max(int(auto), 1)
     p.qty.auto, p.qty.source = int(auto), why
     p.qty.set(qty)
     return material, thickness, qty

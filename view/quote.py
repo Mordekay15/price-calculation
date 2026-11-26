@@ -33,6 +33,9 @@ from view.ui import is_headless, st
 from view.work import current_rates
 
 _SIZES_KEY = "quote_batch_sizes"
+# How the quantities are given: batch sizes at the top (every item priced at
+# each), or each card's own Määrä (one quantity per item, one total).
+MODE_KEY, BATCHES, PER_CARD = "quote_qty_mode", "Eräkoot", "Määrä"
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
@@ -55,13 +58,21 @@ def render_header(clear_all=None):
     Both tabs read the sizes back with ``current_sizes``."""
     bar = st.container(border=True)
     with bar:
-        name, sizes, clear = st.columns([7, 2, 2], vertical_alignment="bottom")
+        name, mode, sizes, clear = st.columns([5, 2.2, 2.2, 2], vertical_alignment="bottom")
         brand.quote_logo(name)
-        sizes.text_input("Eräkoot (kpl)", value=" ".join(map(str, DEFAULT_BATCH_SIZES)),
-                         key=_SIZES_KEY,
-                         help="Jokainen osa hinnoitellaan näillä kappalemäärillä, esim. "
-                              "\"1 5 10\". Osakortin määrä on se, jolla levyt nestataan; "
-                              "muiden eräkokojen materiaali arvioidaan siitä.")
+        mode.segmented_control(
+            "Määrät", [BATCHES, PER_CARD], default=BATCHES, key=MODE_KEY,
+            help="Eräkoot: jokainen nimike hinnoitellaan kirjoitetuilla eräkoilla. "
+                 "Määrä: jokainen osa hinnoitellaan osakorttinsa määrällä, ja "
+                 "tarjouksella on yksi yhteissumma.")
+        if per_card():
+            sizes.caption("Määrä annetaan jokaisella osakortilla.")
+        else:
+            sizes.text_input("Eräkoot (kpl)", value=" ".join(map(str, DEFAULT_BATCH_SIZES)),
+                             key=_SIZES_KEY,
+                             help="Jokainen osa hinnoitellaan näillä kappalemäärillä, esim. "
+                                  "\"1 5 10\". Levyt nestataan suurimmalla eräkoolla; "
+                                  "muiden eräkokojen materiaali arvioidaan siitä.")
         if clear_all is not None:
             with clear.popover("Tyhjennä kaikki", type="primary", width="stretch"):
                 st.button("Kyllä, tyhjennä", key="ui_clear_all", type="primary",
@@ -79,7 +90,7 @@ def render_totals(slot, totals: Totals | None) -> None:
             return
         cols = st.columns([2] * len(totals.sizes) + [3], vertical_alignment="center")
         for col, q, t in zip(cols, totals.sizes, totals.totals):
-            col.metric(f"{q} kpl / nimike", fmt_eur(t) or "–",
+            col.metric("Yhteensä" if per_card() else f"{q} kpl / nimike", fmt_eur(t) or "–",
                        help=None if t is not None else "Osalta puuttuu hinta.")
         notes = []
         if totals.missing:
@@ -89,9 +100,24 @@ def render_totals(slot, totals: Totals | None) -> None:
         cols[-1].caption("  \n".join(notes) or "ALV 0 %")
 
 
+def per_card() -> bool:
+    """Whether each card's own Määrä is priced (the header's "Määrät" set to
+    Määrä) instead of the batch sizes."""
+    return st.session_state.get(MODE_KEY) == PER_CARD
+
+
+def price_column(q: int) -> str:
+    """The €/kpl column's name for batch size ``q`` (just "€/kpl" when each
+    card's Määrä is priced)."""
+    return "€/kpl" if per_card() else f"{q} kpl, €/kpl"
+
+
 def current_sizes() -> list[int]:
     """The batch sizes typed in the header (the defaults before it is drawn,
-    or when nothing usable is typed)."""
+    or when nothing usable is typed). With each card's Määrä priced: [1],
+    one order of every item, each part at its card's quantity."""
+    if per_card():
+        return [1]
     return (parse_batch_sizes(st.session_state.get(_SIZES_KEY))
             or list(DEFAULT_BATCH_SIZES))
 
@@ -129,8 +155,12 @@ def render_batch_prices(products: list[Product], prices: dict[str, float],
             group_sheets[k] = GroupSheets(totals[k], sheets[k], kg)
     assemblies = [a for a in assemblies or [] if a.parts or a.bought or a.children]
     in_assembly = per_unit(assemblies)
+    # Per card: a loose part's one order is its card's Määrä; a part in an
+    # assembly is still kpl / kokoonpano (one of each assembly).
     parts = [BatchPart(pc.product.id, group_of[pc.product.id], pc.kg,
-                       pc.product.work, in_assembly.get(pc.product.id, 1))
+                       pc.product.work,
+                       in_assembly.get(pc.product.id,
+                                       max(int(pc.product.qty), 1) if per_card() else 1))
              for pc in costs]
     rates = current_rates()
     by_part = batch_prices(parts, group_sheets, sizes, rates)
@@ -170,11 +200,19 @@ def render_batch_prices(products: list[Product], prices: dict[str, float],
 
     if table:
         st.divider()
-    st.markdown("**Eräkohtaiset hinnat**", help=(
-        "Kpl-hinta jokaisella eräkoolla: materiaali + työ + erän kiinteät kulut "
-        "jaettuna eräkoolla. Materiaali: ryhmän levyt nestattuna osakorttien "
-        "määrillä; muilla eräkoilla tarvittavat kokonaiset levyt arvioidaan samalla "
-        "hukalla. Eräkoot muutetaan sivun ylälaidasta."
+    if per_card():
+        title, how = "**Hinnat**", (
+            "Kpl-hinta osakortin määrällä: materiaali + työ + erän kiinteät kulut "
+            "jaettuna määrällä. Materiaali: ryhmän levyt nestattuna osakorttien "
+            "määrillä. 🧩 Kokoonpano hinnoitellaan yhtenä kappaleena.")
+    else:
+        title, how = "**Eräkohtaiset hinnat**", (
+            "Kpl-hinta jokaisella eräkoolla: materiaali + työ + erän kiinteät kulut "
+            "jaettuna eräkoolla. Materiaali: ryhmän levyt nestattuna osakorttien "
+            "määrillä; muilla eräkoilla tarvittavat kokonaiset levyt arvioidaan samalla "
+            "hukalla. Eräkoot muutetaan sivun ylälaidasta.")
+    st.markdown(title, help=(
+        how
         + (" 🧩 Kokoonpanon └-rivit ovat sen osuuksia yhdestä kokoonpanosta "
            "(kpl / kokoonpano × €/kpl), ja niiden summa on kokoonpanon kpl-hinta."
            if assemblies and table else "")
@@ -188,12 +226,12 @@ def render_batch_prices(products: list[Product], prices: dict[str, float],
     c1, c2, c3 = st.columns([2, 2, 3])
     show_material = c3.checkbox("Näytä materiaali PDF:ssä", value=True,
                                 key=f"quote_pdf_mat_{key}")
-    pdf = _file(lambda: quote_pdf(lines, sizes, line_totals,
-                                  show_material=show_material), "reportlab", c1)
+    pdf = _file(lambda: quote_pdf(lines, sizes, line_totals, show_material=show_material,
+                                  per_card=per_card()), "reportlab", c1)
     if pdf is not None:
         c1.download_button("Lataa tarjous-PDF", type="primary", key=f"quote_pdf_{key}",
                            data=pdf, file_name=f"{stem}.pdf", mime="application/pdf")
-    xlsx = _file(lambda: quote_xlsx(lines, sizes), "openpyxl", c2)
+    xlsx = _file(lambda: quote_xlsx(lines, sizes, per_card=per_card()), "openpyxl", c2)
     if xlsx is not None:
         c2.download_button("Excel-vienti", key=f"quote_xlsx_{key}",
                            data=xlsx, file_name=f"{stem}.xlsx",
@@ -214,11 +252,13 @@ def _render_customer_view(lines: list[QuoteLine], sizes: list[int],
             row = {"Nimike": ("🧩 " if line.is_assembly else "") + line.name,
                    "Materiaali": " ".join(filter(None, [line.material, line.thickness
                                                         and f"{line.thickness} mm"]))}
+            if per_card():
+                row["Määrä"] = line.prices[0].qty
             for q, p in zip(sizes, line.prices):
-                row[f"{q} kpl, €/kpl"] = None if p.unit is None else round(p.unit, 2)
+                row[price_column(q)] = None if p.unit is None else round(p.unit, 2)
             rows.append(row)
         rows.append({"Nimike": "Yhteensä € (koko erä)", "Materiaali": "",
-                     **{f"{q} kpl, €/kpl": None if t is None else round(t, 2)
+                     **{price_column(q): None if t is None else round(t, 2)
                         for q, t in zip(sizes, totals)}})
         st.dataframe(rows, hide_index=True, width="stretch", key=f"quote_preview_{key}")
         st.caption("ALV 0 %")
@@ -296,19 +336,21 @@ def _render_table(lines: list[QuoteLine], subs: list[list[dict]], sizes: list[in
     """Every quote line's €/kpl at every batch size, its └ rows (``subs``,
     one list per line) under it."""
     def qty(per: int | None) -> str:
-        return "" if per is None else " · ".join(str(q * per) for q in sizes)
+        return "" if per is None else " · ".join(str(q * per) for q in counts)
 
     rows = []
     for line, sub in zip(lines, subs):
+        # Per card, a line's one order is its own quantity (the card's Määrä).
+        counts = [line.prices[0].qty] if per_card() else sizes
         row = {lead: ("🧩 " if line.is_assembly else "") + line.name, "Määrä": qty(1),
                "Materiaali": line.material, "Paksuus": line.thickness}
         for q, p in zip(sizes, line.prices):
-            row[f"{q} kpl, €/kpl"] = None if p.unit is None else round(p.unit, 2)
+            row[price_column(q)] = None if p.unit is None else round(p.unit, 2)
         rows.append(row)
         for m in sub:
             rows.append({lead: m["name"], "Määrä": qty(m["per"]), "Materiaali": "",
                          "Paksuus": "",
-                         **{f"{q} kpl, €/kpl": None if u is None else round(u, 2)
+                         **{price_column(q): None if u is None else round(u, 2)
                             for q, u in zip(sizes, m["units"])}})
     st.dataframe(rows, width="stretch", hide_index=True)
 
@@ -319,11 +361,15 @@ def _render_breakdown(costs, names: dict[str, str], by_part: dict[str, list],
     """At one batch size: each part's material and work per piece, and how
     each assembly's price adds up (``folded``: behind an expander)."""
     with st.expander("Näytä laskennan erittely") if folded else nullcontext():
-        q = st.segmented_control("Eräkoko", sizes, default=sizes[0],
-                                 format_func=lambda n: f"{n} kpl",
-                                 key=f"quote_breakdown_q_{key}") or sizes[0]
+        if per_card():
+            q, at = sizes[0], ""
+        else:
+            q = st.segmented_control("Eräkoko", sizes, default=sizes[0],
+                                     format_func=lambda n: f"{n} kpl",
+                                     key=f"quote_breakdown_q_{key}") or sizes[0]
+            at = f", eräkoko {q}"
         i = sizes.index(q)
-        st.markdown(f"**Työt ja materiaali, eräkoko {q}**", help=(
+        st.markdown(f"**Työt ja materiaali{at}**", help=(
             "€/kpl kullekin osalle. Kappaleet erässä = eräkoko × kpl / kokoonpano. "
             "Leikkaus sisältää levyn minimiveloituksen. Asetus ja "
             "laskurien asetus ovat €/erä, ja ne jaetaan erän kappaleille."))
@@ -332,7 +378,7 @@ def _render_breakdown(costs, names: dict[str, str], by_part: dict[str, list],
             pid = pc.product.id
             bp = by_part[pid][i]
             w = bp.work
-            row = {"Osa": names[pid], "Kpl erässä": bp.qty, "Levyjä": bp.sheets,
+            row = {"Osa": names[pid], "Määrä" if per_card() else "Kpl erässä": bp.qty, "Levyjä": bp.sheets,
                    "Materiaali": None if bp.material is None else round(bp.material, 2)}
             if w is not None:
                 row.update({
@@ -369,7 +415,7 @@ def _render_breakdown(costs, names: dict[str, str], by_part: dict[str, list],
                 ("6. Kokoonpanon kpl-hinta", "1 + 2 + 3 + 4 + 5", _eur(p.unit)),
                 ("7. Yhteensä", f"{_eur(p.unit)} × {p.qty} kok.", _eur(p.total)),
             ]
-            st.markdown(f"**🧩 {a.name}, eräkoko {q}**" if p.qty == q else
-                        f"**🧩 {a.name} (alikokoonpano, {p.qty} kpl eräkoolla {q})**")
+            st.markdown(f"**🧩 {a.name}{at}**" if p.qty == q else
+                        f"**🧩 {a.name} (alikokoonpano, {p.qty} kpl{at and f' eräkoolla {q}'})**")
             st.dataframe([{"Vaihe": v, "Laskenta": c, "Arvo €": val} for v, c, val in steps],
                          width="stretch", hide_index=True)

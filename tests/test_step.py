@@ -324,8 +324,9 @@ def test_an_assembly_step_becomes_an_assembly_of_its_cards():
     assert any("Kaikki osat ovat kokoonpanoissa." in c.value for c in at.caption)
     assert [m.value.split(" · ")[1] for m in at.markdown if m.value.startswith("**#")] == [
         "Pohja.dxf", "Kulma.step"]
-    # Its cards are nested for the largest batch (10) of assemblies.
-    assert [n.value for n in at.number_input if n.key.startswith("dxf_q_")] == [10, 20]
+    # Its cards are nested for the largest batch (10) of assemblies; with
+    # Eräkoot the cards show no Määrä of their own.
+    assert not any(n.key.startswith("dxf_q_") for n in at.number_input)
     # The cards' quantity and work are on their Parts; no second store.
     assert at.session_state["on_part"] == [(10, True), (20, True)]
     assert at.session_state["store_keys"] == []

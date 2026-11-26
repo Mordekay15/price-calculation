@@ -47,9 +47,11 @@ def fmt_eur(value: float | None) -> str:
 # ── PDF ───────────────────────────────────────────────────────────────────────
 
 def quote_pdf(lines: list[QuoteLine], sizes: list[int],
-              totals: list[float | None], *, show_material: bool = True) -> bytes:
+              totals: list[float | None], *, show_material: bool = True,
+              per_card: bool = False) -> bytes:
     """The quote as a PDF: one block of rows per part (a row per
-    batch size: quantity, unit price, sum) and the totals per batch size."""
+    batch size: quantity, unit price, sum) and the totals per batch size.
+    ``per_card``: each line priced once, at its own quantity (one total)."""
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet
@@ -67,7 +69,8 @@ def quote_pdf(lines: list[QuoteLine], sizes: list[int],
               Spacer(1, 8 * mm),
               Paragraph("<b>Tarjotut nimikkeet</b>", styles["Heading3"])]
 
-    rows = [["Nimike", "Eräkoko", "Yksikköhinta", "Summa (ALV 0 %)"]]
+    rows = [["Nimike", "Määrä" if per_card else "Eräkoko", "Yksikköhinta",
+             "Summa (ALV 0 %)"]]
     spans = []
     for line in lines:
         first = len(rows)
@@ -96,8 +99,9 @@ def quote_pdf(lines: list[QuoteLine], sizes: list[int],
     ]))
     story += [table, Spacer(1, 6 * mm)]
 
-    total_rows = [["Yhteensä eräkoolla", "Summa (ALV 0 %)"]]
-    total_rows += [[f"{q} kpl / nimike", fmt_eur(t) or "osa hinnoista puuttuu"]
+    total_rows = [["Yhteensä" if per_card else "Yhteensä eräkoolla", "Summa (ALV 0 %)"]]
+    total_rows += [["Koko tarjous" if per_card else f"{q} kpl / nimike",
+                    fmt_eur(t) or "osa hinnoista puuttuu"]
                    for q, t in zip(sizes, totals)]
     tt = Table(total_rows, colWidths=[60 * mm, 50 * mm], hAlign="RIGHT")
     tt.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 9),
@@ -117,16 +121,18 @@ def _esc(text: str | None) -> str:
 
 # ── Excel ─────────────────────────────────────────────────────────────────────
 
-def quote_xlsx(lines: list[QuoteLine], sizes: list[int]) -> bytes:
+def quote_xlsx(lines: list[QuoteLine], sizes: list[int], *, per_card: bool = False) -> bytes:
     """The quote as an Excel workbook: "Tarjous" (a row per part and batch
-    size) and "Erittely" (the cost breakdown per piece)."""
+    size) and "Erittely" (the cost breakdown per piece). ``per_card``: one
+    row per part, at its own quantity ("Määrä")."""
     from openpyxl import Workbook
     from openpyxl.styles import Font
 
+    qty_head = "Määrä (kpl)" if per_card else "Eräkoko (kpl)"
     wb = Workbook()
     ws = wb.active
     ws.title = "Tarjous"
-    header = ["Nimike", "Materiaali", "Paksuus (mm)", "Eräkoko (kpl)",
+    header = ["Nimike", "Materiaali", "Paksuus (mm)", qty_head,
               "Yksikköhinta (€)", "Summa (€, ALV 0 %)"]
     ws.append(header)
     for cell in ws[ws.max_row]:
@@ -137,7 +143,7 @@ def quote_xlsx(lines: list[QuoteLine], sizes: list[int]) -> bytes:
                        _round(p.unit), _round(p.total)])
 
     ws2 = wb.create_sheet("Erittely")
-    ws2.append(["Nimike", "Eräkoko (kpl)", "Materiaali €/kpl",
+    ws2.append(["Nimike", qty_head, "Materiaali €/kpl",
                 *(f"{phase} €/kpl" for phase in BREAKDOWN), "Asetus ym. €/kpl",
                 "Levyjä (ryhmä)", "Kpl-hinta €"])
     for cell in ws2[1]:
@@ -160,7 +166,7 @@ def quote_xlsx(lines: list[QuoteLine], sizes: list[int]) -> bytes:
     if assemblies:
         ws3 = wb.create_sheet("Kokoonpanot")
         sheets.append(ws3)
-        ws3.append(["Kokoonpano", "Eräkoko (kpl)", "Osat €/kok.", "Ostetut osat €/kok.",
+        ws3.append(["Kokoonpano", qty_head, "Osat €/kok.", "Ostetut osat €/kok.",
                     "Kokoonpanotyö €/kok.", "Yhteensä €/kok.", "Sisältö"])
         for cell in ws3[1]:
             cell.font = Font(bold=True)

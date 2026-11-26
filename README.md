@@ -25,6 +25,14 @@ A Streamlit app that prices sheet-metal parts from supplier price lists.
   shown once and goes away once answered; files dropped later are asked
   about once, between the last old card and the first new one.
 
+**Määrät** (at the top, next to the quantities) switches how quantities are
+given. **Eräkoot** (the default): type batch sizes like "1 5 10"; every item is
+priced at each, and the parts are nested at the largest (the cards show no
+Määrä of their own). **Määrä**: the batch sizes go away and every card (and
+every product on the manual tab) has its own **Määrä (kpl)**; each part is
+priced and nested at that quantity, and the quote has one total. An assembly
+is then priced as one piece, its parts at their kpl / kokoonpano.
+
 Both tabs compare every priced sheet size and pick the cheapest, including a
 plan that cuts the parts from several sizes. Parts of the same material and
 thickness share sheets. The app looks for the plan that uses
