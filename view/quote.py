@@ -57,16 +57,17 @@ def render_header(clear_all=None):
     callback), "Tyhjennä kaikki" behind one confirming click. Returns the place
     for the totals, filled once the open tab has priced (``render_totals``).
     Both tabs read the sizes back with ``current_sizes``."""
-    bar = st.container(border=True)
+    bar = st.container(border=True, key="quote_bar")   # styled in view/brand.py
     with bar:
-        name, controls = st.columns([4, 7], vertical_alignment="bottom")
+        # One row: the logo, the totals (filled by render_totals), the controls.
+        name, totals_slot, controls = st.columns([2.3, 4.5, 5.2], vertical_alignment="center")
         brand.quote_logo(name)
         # The controls side by side on the right: with the switch off the
         # batch sizes go and the rest close up, leaving no gap.
         row = controls.container(horizontal=True, horizontal_alignment="right",
-                                 vertical_alignment="center")
+                                 vertical_alignment="center", wrap=False)
         row.toggle(
-            "Eräkoot", key=BATCHES_KEY,
+            "Eräkoot", key=BATCHES_KEY, width="content",
             help="Päällä: jokainen nimike hinnoitellaan kirjoitetuilla eräkoilla, "
                  "esim. \"1 5 10\"; levyt nestataan suurimmalla eräkoolla ja muiden "
                  "materiaali arvioidaan siitä. Pois: jokainen osa hinnoitellaan "
@@ -74,7 +75,7 @@ def render_header(clear_all=None):
         if not per_card():   # off: the quantities are on the cards
             # Empty, with the defaults shown greyed as an example (and priced
             # until sizes are typed, see current_sizes).
-            row.text_input("Eräkoot (kpl)", value="", key=_SIZES_KEY, width=160,
+            row.text_input("Eräkoot (kpl)", value="", key=_SIZES_KEY, width=120,
                            label_visibility="collapsed",
                            placeholder=" ".join(map(str, DEFAULT_BATCH_SIZES)))
         if clear_all is not None:
@@ -83,7 +84,7 @@ def render_header(clear_all=None):
                           on_click=clear_all, width="stretch",
                           help="Poistaa tiedostot ja osat. Hinnastot ja "
                                "työn hinnat sivupalkissa jäävät.")
-        return st.container()
+        return totals_slot.container()
 
 
 def render_totals(slot, totals: Totals | None) -> None:
@@ -93,7 +94,7 @@ def render_totals(slot, totals: Totals | None) -> None:
             st.caption("Ei vielä hintaa")
             return
         # The totals side by side, the notes in one small line under them.
-        row = st.container(horizontal=True, gap="large")
+        row = st.container(horizontal=True, gap="medium", wrap=True)
         for q, t in zip(totals.sizes, totals.totals):
             row.metric("Yhteensä" if per_card() else f"{q} kpl / nimike", fmt_eur(t) or "–",
                        help=None if t is not None else "Osalta puuttuu hinta.",
