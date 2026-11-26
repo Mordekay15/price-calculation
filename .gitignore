@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .streamlit/*
 !.streamlit/config.toml
+.venv/
 
 # Sparrow run logs
 output/
